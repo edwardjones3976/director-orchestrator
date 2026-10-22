@@ -503,6 +503,30 @@ function Assert-NormalizedRelativePath([string]$Rel, [string]$Context) {
     }
 }
 
+function Assert-AdapterBaseIdentity([string]$AdapterDir) {
+    $recordedRepo = '<missing or unreadable>'
+    $recordedRevision = '<missing or unreadable>'
+    $doc = $null
+    try {
+        $configPath = Join-Path $AdapterDir 'adapter_config.json'
+        $doc = [System.Text.Json.JsonDocument]::Parse([IO.File]::ReadAllText($configPath), [System.Text.Json.JsonDocumentOptions]::new())
+        $repo = $doc.RootElement.GetProperty('base_model_name_or_path')
+        $recordedRepo = if ($repo.ValueKind -eq [System.Text.Json.JsonValueKind]::String) { $repo.GetString() } else { '<non-string>' }
+        $revision = $doc.RootElement.GetProperty('revision')
+        $recordedRevision = if ($revision.ValueKind -eq [System.Text.Json.JsonValueKind]::String) { $revision.GetString() } else { '<non-string>' }
+        if ($repo.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            $revision.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            $recordedRevision -cnotmatch '\A[0-9a-f]{40}\z' -or
+            $recordedRepo -cne $BaseRepo -or $recordedRevision -cne $BaseRevision) {
+            throw 'invalid or mismatched identity'
+        }
+    } catch {
+        Write-Error "adapter base identity gate: checkpoint '$AdapterDir' recorded '$recordedRepo@$recordedRevision', selected '$BaseRepo@$BaseRevision'; missing, invalid or mismatched adapter_config.json identity"
+    } finally {
+        if ($null -ne $doc) { $doc.Dispose() }
+    }
+}
+
 function Assert-AdapterHashes([string]$AdapterDir) {
     $hashFile = Join-Path $AdapterDir 'adapter-hashes.json'
     if (-not (Test-Path -LiteralPath $hashFile -PathType Leaf)) {
@@ -1133,6 +1157,10 @@ if ($RunId -and $Checkpoint.Count -gt 1) {
 if (-not (($BaseRepo -ceq 'Qwen/Qwen3-14B' -and $BaseRevision -ceq '40c069824f4251a91eefaf281ebe4c544efd3e18') -or
           ($BaseRepo -ceq 'Qwen/Qwen3-8B' -and $BaseRevision -ceq 'b968826d9c46dd6066d109eabc6255188de91218'))) {
     Write-Error "parameter BaseRepo/BaseRevision: only the pinned 14B or 8B student export is supported, got '$BaseRepo@$BaseRevision'"
+}
+
+foreach ($ckpt in $Checkpoint) {
+    Assert-AdapterBaseIdentity $ckpt
 }
 
 $utcStamp = Get-UtcStamp

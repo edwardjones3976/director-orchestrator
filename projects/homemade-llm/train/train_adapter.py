@@ -601,7 +601,7 @@ def create_run_directory(report_path: Path) -> Path:
     return run_dir
 
 
-def write_adapter_leaf(model: Any, leaf_dir: Path) -> Path:
+def write_adapter_leaf(model: Any, leaf_dir: Path, *, base_repo: str, base_revision: str) -> Path:
     """Explicit adapter-only save into a clean ``epoch-NN`` leaf directory.
 
     Assumption to confirm on the real host: the pinned ``peft`` writes exactly
@@ -610,8 +610,19 @@ def write_adapter_leaf(model: Any, leaf_dir: Path) -> Path:
     (optimizer/RNG/trainer state) is never copied into the leaf, so leaves are
     export inputs, not resume checkpoints.
     """
+    if not is_allowed_epoch_pin(base_repo, base_revision):
+        fail("adapter leaf requires a verified student pin")
     leaf_dir.mkdir(parents=True, exist_ok=False)
     model.save_pretrained(str(leaf_dir))
+    config_path = leaf_dir / "adapter_config.json"
+    if config_path.is_symlink() or _is_directory_link(config_path) or not config_path.is_file():
+        fail("adapter leaf config must be a regular file")
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    if not isinstance(config, dict):
+        fail("adapter leaf config must be a JSON object")
+    config["base_model_name_or_path"] = base_repo
+    config["revision"] = base_revision
+    config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     return leaf_dir
 
 
@@ -1145,8 +1156,9 @@ class DevEvaluationCallback(TrainerCallback):
                  frozen_dev_context: dict[str, Any], max_epochs: int,
                  predict_fn: Any = None, score_fn: Any = None,
                  requested_epochs: int | None = None, *,
-                 use_gradient_checkpointing: str | bool) -> None:
+                 use_gradient_checkpointing: str | bool, base_repo: str) -> None:
         self.model, self.run_dir, self.checkpoints = model, run_dir, checkpoints
+        self.base_repo = base_repo
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self.best_primary = None
         self.best_per_field = {}
@@ -1314,7 +1326,8 @@ class DevEvaluationCallback(TrainerCallback):
             if progress is None:
                 raise ValueError("missing epoch progress")
             if 0.5 <= progress < 1 and 1 not in self.midpoints_done:
-                leaf_dir = write_adapter_leaf(self.model, self.run_dir / "midpoint-epoch-01")
+                leaf_dir = write_adapter_leaf(self.model, self.run_dir / "midpoint-epoch-01",
+                    base_repo=self.base_repo, base_revision=self.identity["base_revision"])
                 _, digest = write_leaf_manifest(leaf_dir)
                 self._evaluate(1, "midpoint", digest, control, kwargs.get("processing_class") or kwargs.get("tokenizer"))
                 self.midpoints_done.add(1)
@@ -1339,7 +1352,8 @@ class DevEvaluationCallback(TrainerCallback):
             step = getattr(state, "global_step", None)
             if type(step) is not int or step < 0:
                 raise ValueError("invalid global step")
-            leaf_dir = write_adapter_leaf(self.model, self.run_dir / epoch_leaf_name(epoch))
+            leaf_dir = write_adapter_leaf(self.model, self.run_dir / epoch_leaf_name(epoch),
+                base_repo=self.base_repo, base_revision=self.identity["base_revision"])
             entry = leaf_report_entry(leaf_dir, epoch=epoch, global_step=step)
             _require_hex(entry.get("manifest_sha256"), 64, "leaf manifest digest")
             self.checkpoints.append(entry)
@@ -2022,7 +2036,7 @@ def train(
             })
             callback = DevEvaluationCallback(None, run_dir, checkpoints, context,
                 max_epochs=EPOCH_MODE_MAX, requested_epochs=epochs,
-                use_gradient_checkpointing=use_gradient_checkpointing)
+                use_gradient_checkpointing=use_gradient_checkpointing, base_repo=base)
             callbacks.append(callback)
         set_seed(SEED)
         torch.cuda.reset_peak_memory_stats()

@@ -269,8 +269,8 @@ try {
         [IO.File]::WriteAllText((Join-Path $Dir 'adapter-hashes.json'), ($doc | ConvertTo-Json -Compress))
     }
 
-    New-AdapterDir $adapter1 '{"name":"a1"}' 'ADAPTER-MODEL-ONE'
-    New-AdapterDir $adapter2 '{"name":"a2"}' 'ADAPTER-MODEL-TWO'
+    New-AdapterDir $adapter1 ('{"name":"a1","base_model_name_or_path":"Qwen/Qwen3-14B","revision":"' + $rev + '"}') 'ADAPTER-MODEL-ONE'
+    New-AdapterDir $adapter2 ('{"name":"a2","base_model_name_or_path":"Qwen/Qwen3-14B","revision":"' + $rev + '"}') 'ADAPTER-MODEL-TWO'
 
     $guardPaths = @(
         $sentinelPath,
@@ -684,6 +684,50 @@ try {
         $text = Out-Text $r.Lines
         Assert ($r.Code -ne 0 -and $text -match 'parameter BaseRepo' -and (Get-ShimLogLines).Count -eq 0) "param: unsupported or differently cased repository $unsupported refused before cache access"
     }
+
+    # Adapter identity is checked for every leaf before planning or any export effects.
+    $rev8 = 'b968826d9c46dd6066d109eabc6255188de91218'
+    $config14 = [ordered]@{ base_model_name_or_path = 'Qwen/Qwen3-14B'; revision = $rev }
+    $identityCases = @(
+        @{ Name = '8B-leaf-14B-defaults'; Config = @{ base_model_name_or_path = 'Qwen/Qwen3-8B'; revision = $rev8 } }
+        @{ Name = '14B-leaf-8B-arguments'; Config = $config14; Repo = 'Qwen/Qwen3-8B'; Revision = $rev8 }
+        @{ Name = 'missing-file'; Config = $config14 }
+        @{ Name = 'malformed-json'; Text = '{not json}' }
+        @{ Name = 'missing-repo'; Config = @{ revision = $rev } }
+        @{ Name = 'missing-revision'; Config = @{ base_model_name_or_path = 'Qwen/Qwen3-14B' } }
+        @{ Name = 'non-string-repo'; Config = @{ base_model_name_or_path = @('Qwen/Qwen3-14B'); revision = $rev } }
+        @{ Name = 'non-string-revision'; Config = @{ base_model_name_or_path = 'Qwen/Qwen3-14B'; revision = 123 } }
+        @{ Name = 'null-revision'; Config = @{ base_model_name_or_path = 'Qwen/Qwen3-14B'; revision = $null } }
+        @{ Name = 'short-revision'; Config = @{ base_model_name_or_path = 'Qwen/Qwen3-14B'; revision = '40c0698' } }
+        @{ Name = 'uppercase-revision'; Config = @{ base_model_name_or_path = 'Qwen/Qwen3-14B'; revision = $rev.ToUpperInvariant() } }
+        @{ Name = 'repository-case-mismatch'; Config = @{ base_model_name_or_path = 'qwen/Qwen3-14B'; revision = $rev } }
+        @{ Name = 'revision-mismatch'; Config = @{ base_model_name_or_path = 'Qwen/Qwen3-14B'; revision = ('a' * 40) } }
+        @{ Name = 'non-object-json'; Text = '[]' }
+        @{ Name = 'second-checkpoint-mismatch'; Config = @{ base_model_name_or_path = 'Qwen/Qwen3-8B'; revision = $rev8 } }
+    )
+    foreach ($case in $identityCases) {
+        Clear-Artifacts
+        $identityDir = Join-Path $root ('identity-' + $case.Name)
+        $configText = if ($case.ContainsKey('Text')) { $case.Text } else { $case.Config | ConvertTo-Json -Compress }
+        New-AdapterDir $identityDir $configText 'IDENTITY-FIXTURE'
+        if ($case.Name -eq 'missing-file') { Remove-Item -LiteralPath (Join-Path $identityDir 'adapter_config.json') }
+        $selectedRepo = if ($case.Repo) { $case.Repo } else { 'Qwen/Qwen3-14B' }
+        $selectedRevision = if ($case.Revision) { $case.Revision } else { $rev }
+        $checkpoints = if ($case.Name -eq 'second-checkpoint-mismatch') { @($adapter1, $identityDir) } else { @($identityDir) }
+        $r = Invoke-Export (New-ExportArgs -Checkpoint $checkpoints -Execute -BaseRepoArg $selectedRepo -BaseRevisionArg $selectedRevision)
+        $text = Out-Text $r.Lines
+        $noEffects = (Get-ShimLogLines).Count -eq 0 -and (Get-ExportReports).Count -eq 0 -and
+            @(Get-ChildItem -LiteralPath $eRoot -Force).Count -eq 0 -and -not (Test-Path -LiteralPath $outCkpt1)
+        Assert ($r.Code -ne 0 -and $text.Contains('adapter base identity gate:') -and
+            $text.Contains($identityDir) -and $text.Contains('recorded') -and
+            $text.Contains("$selectedRepo@$selectedRevision") -and -not $text.Contains('PLAN ') -and $noEffects) "identity: $($case.Name) refused before planning or effects"
+    }
+    Clear-Artifacts
+    $matching8 = Join-Path $root 'identity-matching-8B'
+    New-AdapterDir $matching8 (@{ base_model_name_or_path = 'Qwen/Qwen3-8B'; revision = $rev8 } | ConvertTo-Json -Compress) 'IDENTITY-FIXTURE'
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($matching8) -BaseRepoArg 'Qwen/Qwen3-8B' -BaseRevisionArg $rev8)
+    Assert ($r.Code -eq 0 -and (Out-Text $r.Lines).Contains('PLAN mode=dry-run') -and
+        (Get-ShimLogLines).Count -eq 0) 'identity: matching 8B leaf proceeds to dry-run'
 
     # --- 3. Happy path, one checkpoint ---
     Clear-Artifacts

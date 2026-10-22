@@ -3428,6 +3428,41 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
             self.assertIsNone(payload["final_adapter"])
             self.assertTrue((root / "models" / "maintenance").is_dir())
 
+    def test_saved_leaves_stamp_both_student_pins_before_hashing(self):
+        for base, revision in ((train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION),
+                               (train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION)):
+            with self.subTest(base=base), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                self._maintenance_epoch_run(root, Slice3CompleteTrainer, epochs=1, student=(base, revision))
+                for name in ("midpoint-epoch-01", "epoch-01"):
+                    leaf = root / "models" / "maintenance" / name
+                    config_path = leaf / "adapter_config.json"
+                    config = json.loads(config_path.read_bytes())
+                    self.assertEqual(config, {"r": 16, "base_model_name_or_path": base, "revision": revision})
+                    self.assertEqual(config_path.read_text(encoding="utf-8"), json.dumps(config, indent=2) + "\n")
+                    manifest = json.loads((leaf / "adapter-hashes.json").read_bytes())
+                    self.assertEqual(manifest["files"]["adapter_config.json"],
+                                     hashlib.sha256(config_path.read_bytes()).hexdigest())
+
+    def test_saved_leaf_overwrites_stale_identity_and_preserves_other_config(self):
+        for base, revision in ((train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION),
+                               (train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION)):
+            with self.subTest(base=base), tempfile.TemporaryDirectory() as tmp:
+                original = {"r": 16, "target_modules": ["q_proj"], "base_model_name_or_path": "/local/snapshot",
+                            "revision": None, "inference_mode": True}
+                model = mock.Mock()
+                def save(directory):
+                    Path(directory, "adapter_config.json").write_text(json.dumps(original), encoding="utf-8")
+                    Path(directory, "adapter_model.safetensors").write_bytes(b"synthetic adapter")
+                model.save_pretrained.side_effect = save
+                leaf = train_adapter.write_adapter_leaf(model, Path(tmp) / "epoch-01",
+                    base_repo=base, base_revision=revision)
+                config_path = leaf / "adapter_config.json"
+                self.assertEqual(json.loads(config_path.read_bytes()),
+                                 {**original, "base_model_name_or_path": base, "revision": revision})
+                files, _ = train_adapter.write_leaf_manifest(leaf)
+                self.assertEqual(files["adapter_config.json"], hashlib.sha256(config_path.read_bytes()).hexdigest())
+
     def _scratch_leaf(self, root: Path, extra: dict[str, bytes] | None = None) -> Path:
         leaf = root / "epoch-01"
         leaf.mkdir(parents=True)
@@ -4020,7 +4055,7 @@ def slice3_context():
         "train_ids": {item["row_id"] for item in training},
         "roster": sorted(item["source_group"] for item in dev),
         "expected_packets": {item["source_group"]: [item["row_id"]] for item in dev},
-        "identity": {"base_revision": train_adapter.SMOKE_REVISION,
+        "identity": {"base_revision": train_adapter.WINNER_REVISION,
                      "weights_manifest_sha256": "b" * 64,
                      "template_sha256": train_adapter.ADMITTED_TEMPLATE_SHA256},
     }
@@ -4101,7 +4136,7 @@ class TestFrozenDevCadence(unittest.TestCase):
         cb = train_adapter.DevEvaluationCallback(model, root, checkpoints,
             context or slice3_context(), max_epochs=max_epochs,
             predict_fn=self.predict_hook, score_fn=self.score_hook,
-            use_gradient_checkpointing=use_gradient_checkpointing)
+            use_gradient_checkpointing=use_gradient_checkpointing, base_repo=train_adapter.WINNER_BASE)
         return cb, types.SimpleNamespace(should_training_stop=False), checkpoints, root
 
     def _event(self, cb, control, progress, *, end=False, tokenizer=True):
@@ -4431,7 +4466,7 @@ class TestFrozenDevCadence(unittest.TestCase):
                     with self.assertRaises((ValueError, ImportError, SystemExit)):
                         train_adapter.DevEvaluationCallback(mock.Mock(), Path(tmp), [], context, max_epochs=6,
                             predict_fn=slice3_predictions, score_fn=lambda *_a, **_k: slice3_score(1),
-                            use_gradient_checkpointing="unsloth")
+                            use_gradient_checkpointing="unsloth", base_repo=train_adapter.WINNER_BASE)
                 self._assert_failed(Path(tmp))
 
     def test_callback_maximum_above_six_is_refused_with_failed_state(self):
@@ -4439,7 +4474,7 @@ class TestFrozenDevCadence(unittest.TestCase):
             with self.assertRaises((ValueError, SystemExit)):
                 train_adapter.DevEvaluationCallback(mock.Mock(), Path(tmp), [], slice3_context(), max_epochs=7,
                     predict_fn=slice3_predictions, score_fn=lambda *_a, **_k: slice3_score(1),
-                    use_gradient_checkpointing="unsloth")
+                    use_gradient_checkpointing="unsloth", base_repo=train_adapter.WINNER_BASE)
             self._assert_failed(Path(tmp))
 
     def test_load_dev_rows_refuses_bad_json_instead_of_silently_skipping(self):
