@@ -145,7 +145,11 @@ if ($Base -ceq $StudentBase -and $Revision -ceq $StudentRevision -and [string]::
 $TrustedDigestRoot = ''
 $TrustedDigestRootSHA256 = '37ff31d7e9c11502d6795c93028ba8a617c6d427f2d6b830381f50d9157348af'
 $TrustedDigestRootV4SHA256 = '6795b16f0ccfb2ae48b358784b979f92a4f19fb1ef09262fbbd31339dbd79e87'
-if ($Base -eq $WinnerBase -or $Base -eq $FallbackBase -or $Base -eq $StudentBase) {
+# Every consumer, including smoke, needs an approved root and complete snapshot list.
+if ([string]::IsNullOrWhiteSpace($ExpectedDigests)) {
+    Write-Error 'verified-read loading requires -ExpectedDigests and an approved model entry; unverified smoke loading is disabled'
+}
+if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
     $TrustedDigestRoot = 'C:\llm\reports\m2-trusted-digest-manifest-v3.json'
     if ($Base -ceq $StudentBase -and $Revision -ceq $StudentRevision) {
         # The Director installs the final filename only after owner approval.
