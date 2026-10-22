@@ -1839,11 +1839,116 @@ def build_primary_committee_resolver(
     return committee
 
 
+class TrustedPaidAcceptanceHandler:
+    """Revalidate trusted evidence and authority before admission and replay.
+
+    Construction grants no live authority. The normal factory has no enrolled
+    acceptance plan; missing verified bounds refuse before any transport.
+    """
+
+    def __init__(self, *, resolver, candidate_resolver, journal, transport,
+                 plan_resolver=None, authority_recheck=None):
+        self.resolver = resolver
+        self.candidate_resolver = candidate_resolver
+        self.journal = journal
+        self.transport = transport
+        self.plan_resolver = plan_resolver
+        self.authority_recheck = authority_recheck
+
+    def _evidence(self, context):
+        from .packet_contracts import validate_packet, document_digest
+        binding = self.resolver(context)
+        if binding is None or binding.expected_context_digest != context.provider_result_digest:
+            raise ValueError("acceptance lacks authenticated context")
+        work = validate_packet("work", binding.work_packet)
+        result = validate_packet("result", binding.outcome.result_packet)
+        if (work["task_id"] != context.task_id or result["task_id"] != context.task_id
+                or binding.record.task_id != context.task_id
+                or result["provider"] != context.producer_id
+                or result["assignment_id"] != work["assignment_id"]
+                or result["authority_snapshot_digest"] != context.authority_snapshot_digest
+                or work["authority_snapshot_digest"] != context.authority_snapshot_digest
+                or document_digest(result) != binding.outcome.result_packet_digest
+                or self.candidate_resolver(work, result) != context.candidate_sha
+                or not result_acceptance_passes(result, work.get("acceptance_checks"))):
+            raise ValueError("acceptance evidence identity/checks refused")
+        for field in ("task_id", "assignment_id", "idempotency_key", "authority_snapshot_digest", "correlation"):
+            if work[field] != result[field]:
+                raise ValueError("acceptance work/result linkage mismatch")
+        return {"task_id": context.task_id, "candidate_sha": context.candidate_sha,
+                "revision": context.revision_count, "producer": context.producer_id,
+                "work_digest": document_digest(work), "result_digest": document_digest(result),
+                "graph_result_digest": context.provider_result_digest,
+                "work": work, "result": result}
+
+    def prepare_acceptance(self, context):
+        evidence = self._evidence(context)
+        if self.plan_resolver is None or self.authority_recheck is None:
+            raise ValueError("paid acceptance enrollment inactive; verified authority/bounds required")
+        self.authority_recheck(context)
+        from .primary_transports import AcceptanceRequestPlan, ACCEPTANCE_RESPONSE_SCHEMA, acceptance_request_body
+        from .langgraph_primary import _canonical_digest
+        plan = self.plan_resolver(context)
+        if not isinstance(plan, AcceptanceRequestPlan):
+            raise ValueError("paid acceptance requires trusted immutable request plan")
+        if plan.schema_digest != _canonical_digest(ACCEPTANCE_RESPONSE_SCHEMA):
+            raise ValueError("paid acceptance schema drift")
+        return {"evidence": evidence, "plan": plan.binding(),
+                "request_digest": _canonical_digest(acceptance_request_body(plan, evidence)),
+                "configuration_digest": self.transport.configuration_digest()}, plan.reservation()
+
+    def execute_acceptance(self, context, journal, key, owner):
+        # The exact request must still match the durable pre-I/O admission.
+        binding, _ = self.prepare_acceptance(context)
+        from .langgraph_primary import acceptance_identity
+        expected_key, admitted = acceptance_identity(context, binding)
+        row = journal.acceptance_read(key)
+        if (key != expected_key or row is None or row["owner"] != owner
+                or json.loads(row["binding"]) != admitted):
+            raise ValueError("acceptance request/evidence changed after durable admission")
+        plan = self.plan_resolver(context)
+        if binding["plan"] != plan.binding():
+            raise ValueError("acceptance request plan changed")
+        def recheck():
+            current, _ = self.prepare_acceptance(context)
+            if current != binding:
+                raise ValueError("acceptance evidence/authority changed before HTTP")
+        return self.transport.execute(plan=plan, evidence=binding["evidence"], context=context,
+            journal=journal, key=key, owner=owner, recheck=recheck)
+
+    def __call__(self, context):
+        from .langgraph_primary import durable_acceptance
+        return durable_acceptance(self, context, self.journal)
+
+    def reconcile(self, context, *, cancel=False):
+        """Explicit bounded known-ID reconciliation; never another create."""
+        from .langgraph_primary import acceptance_identity, AcceptanceUnresolved
+        binding, _ = self.prepare_acceptance(context)
+        key, identity = acceptance_identity(context, binding)
+        row = self.journal.acceptance_read(key)
+        if row is None or json.loads(row["binding"]) != identity:
+            raise AcceptanceUnresolved("reconciliation admission missing or stale")
+        if row["state"] in {"COMPLETED", "REFUSED"}:
+            return self.journal.acceptance_replay(row, context.candidate_sha)
+        if not row["response_id"]:
+            raise AcceptanceUnresolved("unknown response ID cannot be reconciled automatically")
+        def recheck():
+            current, _ = self.prepare_acceptance(context)
+            if current != binding:
+                raise ValueError("acceptance reconciliation authority drift")
+        result = self.transport.execute(plan=self.plan_resolver(context), evidence=binding["evidence"],
+            context=context, journal=self.journal, key=key, owner=row["owner"], recheck=recheck,
+            response_id=row["response_id"], cancel=cancel)
+        self.journal.acceptance_finish(key, row["owner"], result)
+        return result
+
+
 def build_automatic_primary_live_dependencies(
     settings: Settings,
     handle: PostgresCheckpointHandle,
     services: "DefaultDryRunServices",
-    *, team_routing=None,
+    *, team_routing=None, acceptance_plan_resolver=None, acceptance_authority_recheck=None,
+    acceptance_transport=None,
 ) -> DefaultPrimaryLiveDependencies:
     """Discover installed exact lanes and compose graph-owned durable resolvers.
 
@@ -2002,28 +2107,11 @@ def build_automatic_primary_live_dependencies(
             reason_code=reason_code,
         )
 
-    def acceptance_from_result(context: HandlerContext) -> AcceptanceResult:
-        packet = authenticated_result(context)
-        binding = packet_result(context) if packet is not None else None
-        accepted = binding is not None and result_acceptance_passes(
-            packet, binding.work_packet.get("acceptance_checks"))
-        return AcceptanceResult(
-            _digest(
-                {
-                    "task": context.task_id,
-                    "candidate_sha": context.candidate_sha,
-                    "provider_result_digest": context.provider_result_digest,
-                    "accepted": accepted,
-                }
-            ),
-            context.candidate_sha,
-            AcceptanceDecision.ACCEPT if accepted else AcceptanceDecision.REJECT,
-            reason_code=(
-                "authenticated_result_acceptance_passed"
-                if accepted
-                else "owner_decision_required"
-            ),
-        )
+    from .primary_transports import OpenAIAcceptanceTransport
+    acceptance_handler = TrustedPaidAcceptanceHandler(
+        resolver=packet_result, candidate_resolver=candidate_sha, journal=handle.claim_store,
+        transport=acceptance_transport or OpenAIAcceptanceTransport(settings.openai_api_key),
+        plan_resolver=acceptance_plan_resolver, authority_recheck=acceptance_authority_recheck)
 
     def external_effect(context: HandlerContext) -> ExternalEffectEvidence | None:
         if context.effect_attempt_digest is None or context.effect_key_digest is None:
@@ -2108,7 +2196,7 @@ def build_automatic_primary_live_dependencies(
         completion_evidence_resolver=completion_evidence,
         external_effect_resolver=external_effect,
         evidence_debate_handler=evidence_from_result,
-        acceptance_handler=acceptance_from_result,
+        acceptance_handler=acceptance_handler,
     )
 
 

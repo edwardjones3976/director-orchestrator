@@ -6380,6 +6380,85 @@ with TestClient(app) as client:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:57 UTC | BEGIN]]
 # Request budgets are immutable, non-zero units derived from the validated plan.
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:57 UTC | END]]
+class TrustedPaidAcceptanceTests(unittest.TestCase):
+    def setUp(self):
+        from copy import deepcopy
+        from types import SimpleNamespace
+        from tests.test_primary_live import DefaultLiveServicesTests
+        from director_orchestrator.langgraph_primary import SqliteAcceptanceJournal, AcceptanceResult, AcceptanceDecision
+        from director_orchestrator.primary_default import TrustedPaidAcceptanceHandler
+        from director_orchestrator.primary_transports import AcceptanceRequestPlan, ACCEPTANCE_RESPONSE_SCHEMA
+        from director_orchestrator.langgraph_primary import _canonical_digest
+        fixture = DefaultLiveServicesTests()
+        fixture.setUp()
+        self.context = fixture.context
+        self.work, self.result = deepcopy(fixture.work), deepcopy(fixture.result)
+        self.directory = tempfile.TemporaryDirectory(prefix="paid-acceptance-handler-")
+        self.addCleanup(self.directory.cleanup)
+        self.journal = SqliteAcceptanceJournal(str(Path(self.directory.name) / "journal.sqlite3"))
+        self.plan = AcceptanceRequestPlan(model="fixture-immutable-model", authority_digest=digest("authority"),
+            tariff_digest=digest("tariff"), schema_digest=_canonical_digest(ACCEPTANCE_RESPONSE_SCHEMA),
+            valid_until=int(time.time()) + 300, max_input=50000, max_output=8000,
+            max_cache_write=50000, input_rate="2", output_rate="10", cache_write_rate="2.5",
+            fee_bound="0", scope="fixture-acceptance-only")
+        self.calls = []
+        def transport(**kwargs):
+            self.calls.append(kwargs)
+            return AcceptanceResult(digest("paid-completed"), self.context.candidate_sha, AcceptanceDecision.ACCEPT)
+        self.outcome = SimpleNamespace(result_packet=self.result, result_packet_digest=document_digest(self.result))
+        self.binding = SimpleNamespace(expected_context_digest=self.context.provider_result_digest,
+            work_packet=self.work, outcome=self.outcome, record=SimpleNamespace(task_id=self.context.task_id))
+        self.handler = TrustedPaidAcceptanceHandler(resolver=lambda _: self.binding,
+            candidate_resolver=lambda *_: self.context.candidate_sha,
+            journal=self.journal, transport=SimpleNamespace(execute=transport,
+                configuration_digest=lambda: digest("fixture-transport-config")),
+            plan_resolver=lambda _: self.plan, authority_recheck=lambda _: None)
+
+    def test_valid_handler_commits_then_replays_without_transport(self):
+        first = self.handler(self.context)
+        self.assertEqual(self.handler(self.context), first)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_missing_enrollment_or_in_process_store_refuses_without_transport(self):
+        from director_orchestrator.langgraph_primary import InProcessConditionalClaimStore
+        self.handler.plan_resolver = None
+        with self.assertRaises(ValueError):
+            self.handler(self.context)
+        self.handler.journal = InProcessConditionalClaimStore()
+        with self.assertRaises(ValueError):
+            self.handler(self.context)
+        self.assertEqual(self.calls, [])
+
+    def test_bad_evidence_refuses_before_transport(self):
+        from copy import deepcopy
+        original = deepcopy(self.result)
+        mutations = (
+            lambda packet: packet.update(status="FAILED"),
+            lambda packet: packet.update(provider="openai"),
+            lambda packet: packet.update(task_id="wrong-task"),
+            lambda packet: packet["acceptance"].append(deepcopy(packet["acceptance"][0])),
+            lambda packet: packet["acceptance"][0].update(status="FAIL"),
+            lambda packet: packet.update(risks=["unresolved risk"]),
+            lambda packet: packet.update(blockers=["blocked"]),
+            lambda packet: packet.update(requested_decisions=["owner required"]),
+        )
+        for mutate in mutations:
+            self.result.clear()
+            self.result.update(deepcopy(original))
+            mutate(self.result)
+            self.outcome.result_packet_digest = document_digest(self.result)
+            with self.subTest(packet=self.result), self.assertRaises(ValueError):
+                self.handler(self.context)
+        self.assertEqual(self.calls, [])
+
+    def test_completed_replay_rechecks_evidence_and_current_authority(self):
+        self.handler(self.context)
+        self.binding.expected_context_digest = digest("stale-context")
+        with self.assertRaises(ValueError):
+            self.handler(self.context)
+        self.assertEqual(len(self.calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
 

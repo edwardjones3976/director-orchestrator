@@ -61,6 +61,8 @@ import json
 import re
 import threading
 import uuid
+import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
@@ -139,6 +141,209 @@ class AcceptanceDecision(StrEnum):
     ACCEPT = "accept"
     REVISE = "revise"
     REJECT = "reject"
+
+
+class AcceptanceUnresolved(ValueError):
+    """A durable acceptance may have executed; it must never be created again."""
+
+
+class AcceptanceSubjectMismatch(ValueError):
+    """Preserve the graph's exact-SHA refusal for a stale handler result."""
+
+
+def acceptance_journal_ddl(prefix: str = "") -> tuple[str, ...]:
+    """New durable records only; existing checkpoints are not migrated."""
+    return (
+        f"CREATE TABLE IF NOT EXISTS {prefix}acceptance_budget ("
+        "scope TEXT PRIMARY KEY, cents BIGINT NOT NULL, requests BIGINT NOT NULL, "
+        "limit_cents BIGINT NOT NULL, limit_requests BIGINT NOT NULL)",
+        f"CREATE TABLE IF NOT EXISTS {prefix}acceptance_operation ("
+        "operation_key TEXT PRIMARY KEY, binding TEXT NOT NULL, owner TEXT NOT NULL, "
+        "state TEXT NOT NULL, response_id TEXT, result TEXT, result_digest TEXT, "
+        "reserved_cents BIGINT NOT NULL, reserved_requests BIGINT NOT NULL, used_requests BIGINT NOT NULL)",
+        f"CREATE TABLE IF NOT EXISTS {prefix}acceptance_http ("
+        "operation_key TEXT NOT NULL, sequence BIGINT NOT NULL, kind TEXT NOT NULL, "
+        "PRIMARY KEY(operation_key, sequence))",
+    )
+
+
+class AcceptanceSQL:
+    """Small SQL dialect seam shared by the SQLite and Postgres journals."""
+
+    def __init__(self, connection, prefix="", postgres=False):
+        self.connection, self.prefix, self.postgres = connection, prefix, postgres
+
+    def execute(self, sql, args=()):
+        if self.postgres:
+            sql = sql.replace("?", "%s")
+        for table in ("acceptance_budget", "acceptance_operation", "acceptance_http"):
+            sql = sql.replace(table, self.prefix + table)
+        return self.connection.execute(sql, args)
+
+
+class AcceptanceJournal:
+    """Non-expiring single winner plus conservative aggregate reservations.
+
+    Subclasses must commit the enclosing transaction before returning. No
+    release/reset operation exists. Failed and ambiguous requests keep their
+    entire reservation, including all planned reconciliation requests.
+    """
+
+    def acceptance_claim(self, key, binding, *, cents=0, requests=0,
+                         scope="pure-local-v1", limit_cents=0, limit_requests=0):
+        _require_digest(key, "operation_key")
+        for value in (cents, requests, limit_cents, limit_requests):
+            if type(value) is not int or value < 0:
+                raise ValueError("acceptance reservations require nonnegative integers")
+        encoded = json.dumps(binding, sort_keys=True, separators=(",", ":"))
+        owner = uuid.uuid4().hex
+        with self.acceptance_transaction() as sql:
+            # A write locks the same budget row across processes before either
+            # admission or summation, even for a zero-cost pure handler.
+            sql.execute("INSERT INTO acceptance_budget VALUES (?,0,0,?,?) "
+                        "ON CONFLICT (scope) DO NOTHING", (scope, limit_cents, limit_requests))
+            sql.execute("UPDATE acceptance_budget SET cents=cents WHERE scope=?", (scope,))
+            budget = dict(sql.execute("SELECT * FROM acceptance_budget WHERE scope=?", (scope,)).fetchone())
+            if (budget["limit_cents"], budget["limit_requests"]) != (limit_cents, limit_requests):
+                raise ValueError("acceptance budget identity drift")
+            row = sql.execute("SELECT * FROM acceptance_operation WHERE operation_key=?", (key,)).fetchone()
+            if row is not None:
+                row = dict(row)
+                if row["binding"] != encoded or row["reserved_cents"] != cents or row["reserved_requests"] != requests:
+                    raise ValueError("acceptance binding drift")
+                return False, row
+            if budget["cents"] + cents > limit_cents or budget["requests"] + requests > limit_requests:
+                raise ValueError("acceptance aggregate budget exhausted")
+            sql.execute("UPDATE acceptance_budget SET cents=cents+?, requests=requests+? WHERE scope=?",
+                        (cents, requests, scope))
+            sql.execute("INSERT INTO acceptance_operation VALUES (?,?,?,'CLAIMED',NULL,NULL,NULL,?,?,0)",
+                        (key, encoded, owner, cents, requests))
+            row = dict(sql.execute("SELECT * FROM acceptance_operation WHERE operation_key=?", (key,)).fetchone())
+        return True, row
+
+    def acceptance_http(self, key, owner, kind):
+        if kind not in {"input_tokens", "create", "retrieve", "cancel"}:
+            raise ValueError("unknown acceptance HTTP operation")
+        with self.acceptance_transaction() as sql:
+            changed = sql.execute("UPDATE acceptance_operation SET used_requests=used_requests+1 "
+                "WHERE operation_key=? AND owner=? AND state IN ('CLAIMED','RESPONSE_ID_RECORDED') "
+                "AND used_requests < reserved_requests", (key, owner)).rowcount
+            if changed != 1:
+                raise AcceptanceUnresolved("acceptance HTTP reservation exhausted")
+            row = dict(sql.execute("SELECT * FROM acceptance_operation WHERE operation_key=?", (key,)).fetchone())
+            if kind == "create" and row["state"] != "CLAIMED":
+                raise AcceptanceUnresolved("acceptance response ID already exists")
+            # An immutable request ledger also excludes application create
+            # retries, even when the first call failed before an ID arrived.
+            existing = sql.execute("SELECT * FROM acceptance_http WHERE operation_key=? AND kind='create'", (key,)).fetchone()
+            if kind == "create" and existing is not None:
+                raise AcceptanceUnresolved("second acceptance create prohibited")
+            sql.execute("INSERT INTO acceptance_http VALUES (?,?,?)", (key, row["used_requests"], kind))
+
+    def acceptance_response_id(self, key, owner, response_id):
+        _require_id(response_id, "response_id")
+        with self.acceptance_transaction() as sql:
+            changed = sql.execute("UPDATE acceptance_operation SET state='RESPONSE_ID_RECORDED', response_id=? "
+                "WHERE operation_key=? AND owner=? AND state='CLAIMED' AND response_id IS NULL",
+                (response_id, key, owner)).rowcount
+            if changed != 1:
+                raise AcceptanceUnresolved("response ID commit uncertain or already recorded")
+
+    def acceptance_read(self, key):
+        with self.acceptance_transaction() as sql:
+            row = sql.execute("SELECT * FROM acceptance_operation WHERE operation_key=?", (key,)).fetchone()
+            return dict(row) if row is not None else None
+
+    def acceptance_finish(self, key, owner, result):
+        payload = {"acceptance_digest": result.acceptance_digest, "subject_sha": result.subject_sha,
+                   "decision": result.decision.value, "reason_code": result.reason_code}
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        with self.acceptance_transaction() as sql:
+            changed = sql.execute("UPDATE acceptance_operation SET state=?, result=?, result_digest=? "
+                "WHERE operation_key=? AND owner=? AND state IN ('CLAIMED','RESPONSE_ID_RECORDED')",
+                ("REFUSED" if result.decision == AcceptanceDecision.REJECT else "COMPLETED", encoded,
+                 _canonical_digest(payload), key, owner)).rowcount
+            if changed != 1:
+                raise AcceptanceUnresolved("acceptance result commit uncertain")
+
+    def acceptance_replay(self, row, subject_sha):
+        if row["state"] not in {"COMPLETED", "REFUSED"} or not row["result"]:
+            raise AcceptanceUnresolved("claimed acceptance remains unresolved")
+        payload = json.loads(row["result"])
+        if _canonical_digest(payload) != row["result_digest"]:
+            raise ValueError("stored acceptance digest mismatch")
+        result = AcceptanceResult(**payload)
+        if result.subject_sha != subject_sha:
+            raise ValueError("stored acceptance subject mismatch")
+        return result
+
+
+class SqliteAcceptanceJournal(AcceptanceJournal):
+    """File-backed durable acceptance journal; never an in-process substitute."""
+
+    def __init__(self, path):
+        from pathlib import Path
+        if not path or str(path) == ":memory:" or str(path).startswith("file:"):
+            raise ValueError("acceptance requires a durable file")
+        self.path = str(Path(path).resolve())
+        with self.acceptance_transaction() as sql:
+            for ddl in acceptance_journal_ddl():
+                sql.execute(ddl)
+
+    @contextmanager
+    def acceptance_transaction(self):
+        connection = sqlite3.connect(self.path, timeout=10, isolation_level=None)
+        connection.row_factory = sqlite3.Row
+        try:
+            connection.execute("PRAGMA synchronous=FULL")
+            connection.execute("BEGIN IMMEDIATE")
+            yield AcceptanceSQL(connection)
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+
+def acceptance_identity(context, binding):
+    binding = {**binding, "schema": "durable-acceptance/v1", "context": {
+        name: getattr(context, name) for name in context.__dataclass_fields__}}
+    key = _canonical_digest({"schema": "acceptance-key/v1", "task": context.task_id,
+                             "sha": context.candidate_sha, "revision": context.revision_count})
+    return key, binding
+
+
+def durable_acceptance(handler, context, journal):
+    """The shared boundary, including directly injected graph handlers."""
+    durable = (isinstance(journal, SqliteAcceptanceJournal)
+               and type(journal).acceptance_transaction is SqliteAcceptanceJournal.acceptance_transaction)
+    if not durable:
+        from .langgraph_postgres import PostgresConditionalClaimStore
+        durable = (isinstance(journal, PostgresConditionalClaimStore)
+                   and journal.is_factory_bound_control_plane())
+    if not durable:
+        raise AcceptanceUnresolved("durable acceptance store unavailable")
+    if hasattr(handler, "prepare_acceptance"):
+        binding, reservation = handler.prepare_acceptance(context)
+    else:
+        # The public generic-handler contract is pure. Paid handlers must use
+        # prepare_acceptance and reserve their entire bounded HTTP plan.
+        binding, reservation = {}, {}
+    key, binding = acceptance_identity(context, binding)
+    won, row = journal.acceptance_claim(key, binding, **reservation)
+    if not won:
+        return journal.acceptance_replay(row, context.candidate_sha)
+    if hasattr(handler, "execute_acceptance"):
+        result = handler.execute_acceptance(context, journal, key, row["owner"])
+    else:
+        result = handler(context)
+    if not isinstance(result, AcceptanceResult):
+        raise TypeError("acceptance result type mismatch")
+    if result.subject_sha != context.candidate_sha:
+        raise AcceptanceSubjectMismatch("acceptance result subject mismatch")
+    journal.acceptance_finish(key, row["owner"], result)
+    return result
 
 
 class EffectDisposition(StrEnum):
@@ -1334,7 +1539,7 @@ def _approval_payload_failure(update: PrimaryGraphState) -> PrimaryGraphState:
     )
 
 
-def _build_nodes(handlers: PrimaryHandlers) -> dict[str, Callable[..., PrimaryGraphState]]:
+def _build_nodes(handlers: PrimaryHandlers, acceptance_store=None) -> dict[str, Callable[..., PrimaryGraphState]]:
     def authenticate_scope(state: PrimaryGraphState) -> PrimaryGraphState:
         update = _validate_initial_state(state)
         if update.get("terminal_classification"):
@@ -1719,9 +1924,17 @@ def _build_nodes(handlers: PrimaryHandlers) -> dict[str, Callable[..., PrimaryGr
         if not proceed:
             return update
         try:
-            result = handlers.openai_acceptance_revision(_context(state))
+            result = durable_acceptance(handlers.openai_acceptance_revision, _context(state), acceptance_store)
             if not isinstance(result, AcceptanceResult):
                 raise TypeError("acceptance handler returned the wrong result type")
+        except AcceptanceUnresolved:
+            return _handler_failure(update,
+                classification=TerminalClassification.RECONCILIATION_REQUIRED,
+                reason_code="acceptance_unresolved")
+        except AcceptanceSubjectMismatch:
+            return _handler_failure(update,
+                classification=TerminalClassification.EXACT_SHA_INVALID,
+                reason_code="stale_acceptance_sha")
         except Exception:
             return _handler_failure(update, reason_code="acceptance_handler_error")
         if not _secure_equal(result.subject_sha, state["candidate_sha"]):
@@ -2184,10 +2397,11 @@ def build_primary_graph(
     *,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     interrupt_after: Sequence[str] | None = None,
+    acceptance_store: AcceptanceJournal | None = None,
 ) -> CompiledStateGraph:
     """Compile the bounded parent graph around caller-provided pure handlers."""
 
-    nodes = _build_nodes(handlers)
+    nodes = _build_nodes(handlers, acceptance_store)
     graph = StateGraph(
         PrimaryGraphState,
         input_schema=PrimaryGraphInput,
@@ -2287,6 +2501,7 @@ class PrimaryWorkflowRuntime:
         reconcile_executing_effect: bool = False,
         claim_store: ConditionalClaimStore | None = None,
         owner_token: str | None = None,
+        acceptance_store: AcceptanceJournal | None = None,
     ) -> None:
         _require_id(checkpoint_namespace, "checkpoint_namespace")
         if type(auto_execute_provider) is not bool:
@@ -2326,6 +2541,7 @@ class PrimaryWorkflowRuntime:
             handlers,
             checkpointer=checkpointer,
             interrupt_after=interrupt_after,
+            acceptance_store=acceptance_store if acceptance_store is not None else claim_store,
         )
 
     @staticmethod

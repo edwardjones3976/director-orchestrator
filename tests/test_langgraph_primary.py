@@ -284,6 +284,23 @@ class _ClaimOnlyTestRuntime(PrimaryWorkflowRuntime):
     def _requires_factory_bound_control_plane(self) -> bool:
         return False
 
+    def __init__(self, saver, handlers, **kwargs):
+        from director_orchestrator.langgraph_primary import AcceptanceJournal, SqliteAcceptanceJournal
+        store = kwargs.get("claim_store")
+        while hasattr(store, "_inner"):
+            store = store._inner
+        if isinstance(store, AcceptanceJournal):
+            journal = store
+        else:
+            journal = getattr(saver, "_test_acceptance_journal", None)
+            if journal is None:
+                directory = tempfile.TemporaryDirectory(prefix="acceptance-test-")
+                journal = SqliteAcceptanceJournal(os.path.join(directory.name, "acceptance.sqlite3"))
+                journal._test_directory = directory
+                saver._test_acceptance_journal = journal
+        kwargs.setdefault("acceptance_store", journal)
+        super().__init__(saver, handlers, **kwargs)
+
 
 def _runtime(
     handlers: PrimaryHandlers | None = None,
@@ -323,7 +340,10 @@ def _approval(outcome, event_id: str) -> ApprovalResume:
     )
 
 
-class _SqlConditionalClaimStore:
+from director_orchestrator.langgraph_primary import SqliteAcceptanceJournal
+
+
+class _SqlConditionalClaimStore(SqliteAcceptanceJournal):
     """A conditional claim store whose grant is decided by real SQL.
 
     The statement below is the one a Postgres deployment runs, and the grant is
@@ -373,6 +393,8 @@ class _SqlConditionalClaimStore:
             )
         finally:
             connection.close()
+
+        super().__init__(self._path)
 
     def _connect(self) -> sqlite3.Connection:
         """Open one private autocommit connection to the shared database file."""
@@ -2296,6 +2318,98 @@ class PrimaryNodeContractTests(unittest.TestCase):
             ProviderDispatchStatus.RECONCILIATION_REQUIRED.value,
         )
         self.assertIsNone(values["provider_result_digest"])
+
+
+class AcceptanceJournalTests(unittest.TestCase):
+    """Real SQLite transactions, never provider transports."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix="acceptance-journal-")
+        self.addCleanup(self.directory.cleanup)
+        self.path = os.path.join(self.directory.name, "journal.sqlite3")
+        self.store = SqliteAcceptanceJournal(self.path)
+        self.key = _digest("acceptance-key")
+        self.binding = {"task": "task", "candidate": SHA_A, "revision": 0}
+        self.result = AcceptanceResult(_digest("accepted"), SHA_A, AcceptanceDecision.ACCEPT)
+
+    def test_concurrent_connections_have_one_non_expiring_winner(self):
+        results, errors = _race(lambda _: SqliteAcceptanceJournal(self.path).acceptance_claim(
+            self.key, self.binding), CONTENDERS)
+        self.assertEqual(errors, [])
+        self.assertEqual(sum(won for won, _ in results), 1)
+        won, row = SqliteAcceptanceJournal(self.path).acceptance_claim(self.key, self.binding)
+        self.assertFalse(won)
+        self.assertEqual(row["state"], "CLAIMED")
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved
+        with self.assertRaises(AcceptanceUnresolved):
+            self.store.acceptance_replay(row, SHA_A)
+
+    def test_completed_result_survives_restart_and_detects_tampering(self):
+        _, row = self.store.acceptance_claim(self.key, self.binding)
+        self.store.acceptance_finish(self.key, row["owner"], self.result)
+        restarted = SqliteAcceptanceJournal(self.path)
+        won, completed = restarted.acceptance_claim(self.key, self.binding)
+        self.assertFalse(won)
+        self.assertEqual(restarted.acceptance_replay(completed, SHA_A), self.result)
+        with self.assertRaises(ValueError):
+            restarted.acceptance_replay(completed, SHA_B)
+        with self.assertRaises(ValueError):
+            restarted.acceptance_replay({**completed, "result_digest": _digest("tampered")}, SHA_A)
+        with self.assertRaises(ValueError):
+            restarted.acceptance_claim(self.key, {**self.binding, "revision": 1})
+
+    def test_response_id_and_failed_result_commit_cannot_recreate(self):
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved
+        _, row = self.store.acceptance_claim(self.key, self.binding, cents=155, requests=5,
+            scope="envelope", limit_cents=1000, limit_requests=5)
+        self.store.acceptance_http(self.key, row["owner"], "create")
+        with self.assertRaises(AcceptanceUnresolved):
+            self.store.acceptance_http(self.key, row["owner"], "create")
+        self.store.acceptance_response_id(self.key, row["owner"], "resp-one")
+        with self.assertRaises(AcceptanceUnresolved):
+            self.store.acceptance_finish(self.key, "wrong-owner", self.result)
+        held = SqliteAcceptanceJournal(self.path).acceptance_read(self.key)
+        self.assertEqual(held["state"], "RESPONSE_ID_RECORDED")
+        self.assertEqual(held["response_id"], "resp-one")
+        self.assertEqual(held["reserved_cents"], 155)
+        self.assertEqual(held["used_requests"], 1)
+
+    def test_aggregate_reservation_race_and_http_exhaustion(self):
+        def reserve(index):
+            try:
+                return self.store.acceptance_claim(_digest(f"cost-{index}"), self.binding,
+                    cents=200, requests=1, scope="envelope", limit_cents=1000, limit_requests=5)
+            except ValueError:
+                return None
+        results, errors = _race(reserve, CONTENDERS)
+        self.assertEqual(errors, [])
+        self.assertEqual(sum(item is not None for item in results), 5)
+        for item in results:
+            if item is not None:
+                _, row = item
+                self.store.acceptance_http(row["operation_key"], row["owner"], "retrieve")
+                from director_orchestrator.langgraph_primary import AcceptanceUnresolved
+                with self.assertRaises(AcceptanceUnresolved):
+                    self.store.acceptance_http(row["operation_key"], row["owner"], "cancel")
+        with self.store.acceptance_transaction() as sql:
+            budget = dict(sql.execute("SELECT * FROM acceptance_budget WHERE scope=?", ("envelope",)).fetchone())
+        self.assertEqual((budget["cents"], budget["requests"]), (1000, 5))
+
+    def test_refused_state_and_distinct_candidate_reservations(self):
+        _, row = self.store.acceptance_claim(self.key, self.binding)
+        rejected = replace(self.result, decision=AcceptanceDecision.REJECT)
+        self.store.acceptance_finish(self.key, row["owner"], rejected)
+        held = self.store.acceptance_read(self.key)
+        self.assertEqual(held["state"], "REFUSED")
+        self.assertEqual(self.store.acceptance_replay(held, SHA_A), rejected)
+        won, _ = self.store.acceptance_claim(_digest("different-candidate"), {**self.binding, "candidate": SHA_B})
+        self.assertTrue(won)
+
+    def test_missing_or_in_process_storage_never_invokes_handler(self):
+        from director_orchestrator.langgraph_primary import durable_acceptance, AcceptanceUnresolved
+        for store in (None, InProcessConditionalClaimStore()):
+            with self.subTest(store=store), self.assertRaises(AcceptanceUnresolved):
+                durable_acceptance(lambda _: self.fail("handler must not run"), None, store)
 
 
 if __name__ == "__main__":
