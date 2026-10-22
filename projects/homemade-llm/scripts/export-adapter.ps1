@@ -9,7 +9,7 @@ param(
     [string]$BaseRevision = '40c069824f4251a91eefaf281ebe4c544efd3e18',
     [string]$CHotRoot = 'C:\llm',
     [string]$StagingRoot = 'E:\llm-staging\m2-export',
-    [string]$TrustedDigestManifest = (Join-Path $CHotRoot 'reports\m2-trusted-digest-manifest-v2.json'),
+    [string]$TrustedDigestManifest = (Join-Path $CHotRoot 'reports\m2-trusted-digest-manifest-v3.json'),
     [string]$ExpectedShardsJson = (Join-Path $CHotRoot 'reports\m2-expected-qwen3-14b-v2.json'),
     [string]$BaseTemplateSha256 = 'a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8',
     [double]$MinCFreeGiB = 150,
@@ -30,7 +30,7 @@ $ErrorActionPreference = 'Stop'
 
 # Pinned authority: the root trust manifest's bytes must hash to exactly this value.
 # No parameter may override this constant; only its path (-TrustedDigestManifest) may move.
-$script:PinnedTrustedDigestManifestSha256 = 'd1a4a2d921c3f5197c2867dcdb50dbfb46d2189bbb88141ed56d3f3eb19d36af'
+$script:PinnedTrustedDigestManifestSha256 = '37ff31d7e9c11502d6795c93028ba8a617c6d427f2d6b830381f50d9157348af'
 
 $MergePy = @'
 import os, sys, json, hashlib
@@ -500,6 +500,30 @@ function Assert-NormalizedRelativePath([string]$Rel, [string]$Context) {
     }
     if (-not $ok) {
         Write-Error "${Context}: invalid relative path $Rel"
+    }
+}
+
+function Assert-AdapterBaseIdentity([string]$AdapterDir) {
+    $recordedRepo = '<missing or unreadable>'
+    $recordedRevision = '<missing or unreadable>'
+    $doc = $null
+    try {
+        $configPath = Join-Path $AdapterDir 'adapter_config.json'
+        $doc = [System.Text.Json.JsonDocument]::Parse([IO.File]::ReadAllText($configPath), [System.Text.Json.JsonDocumentOptions]::new())
+        $repo = $doc.RootElement.GetProperty('base_model_name_or_path')
+        $recordedRepo = if ($repo.ValueKind -eq [System.Text.Json.JsonValueKind]::String) { $repo.GetString() } else { '<non-string>' }
+        $revision = $doc.RootElement.GetProperty('revision')
+        $recordedRevision = if ($revision.ValueKind -eq [System.Text.Json.JsonValueKind]::String) { $revision.GetString() } else { '<non-string>' }
+        if ($repo.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            $revision.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
+            $recordedRevision -cnotmatch '\A[0-9a-f]{40}\z' -or
+            $recordedRepo -cne $BaseRepo -or $recordedRevision -cne $BaseRevision) {
+            throw 'invalid or mismatched identity'
+        }
+    } catch {
+        Write-Error "adapter base identity gate: checkpoint '$AdapterDir' recorded '$recordedRepo@$recordedRevision', selected '$BaseRepo@$BaseRevision'; missing, invalid or mismatched adapter_config.json identity"
+    } finally {
+        if ($null -ne $doc) { $doc.Dispose() }
     }
 }
 
@@ -1130,8 +1154,13 @@ if ($RunId -and $RunId -cnotmatch '^[a-z0-9][a-z0-9-]{0,80}$') {
 if ($RunId -and $Checkpoint.Count -gt 1) {
     Write-Error "parameter RunId: cannot be used with more than one checkpoint"
 }
-if ($BaseRepo -cne 'Qwen/Qwen3-14B') {
-    Write-Error "parameter BaseRepo: only the approved Qwen/Qwen3-14B export is supported, got '$BaseRepo'"
+if (-not (($BaseRepo -ceq 'Qwen/Qwen3-14B' -and $BaseRevision -ceq '40c069824f4251a91eefaf281ebe4c544efd3e18') -or
+          ($BaseRepo -ceq 'Qwen/Qwen3-8B' -and $BaseRevision -ceq 'b968826d9c46dd6066d109eabc6255188de91218'))) {
+    Write-Error "parameter BaseRepo/BaseRevision: only the pinned 14B or 8B student export is supported, got '$BaseRepo@$BaseRevision'"
+}
+
+foreach ($ckpt in $Checkpoint) {
+    Assert-AdapterBaseIdentity $ckpt
 }
 
 $utcStamp = Get-UtcStamp

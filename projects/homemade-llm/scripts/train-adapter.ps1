@@ -60,8 +60,9 @@ if ($PSBoundParameters.ContainsKey('Epochs')) {
     if ($Fallback) { Write-Error '-Epochs cannot be combined with -Fallback' }
     if (-not $PSBoundParameters.ContainsKey('TimeoutMinutes')) { Write-Error '-Epochs requires explicit positive -TimeoutMinutes' }
     if (-not $PSBoundParameters.ContainsKey('Base') -or -not $PSBoundParameters.ContainsKey('Revision') -or
-        $Base -cne $WinnerBase -or $Revision -cne $WinnerRevision) {
-        Write-Error "-Epochs requires explicit -Base $WinnerBase -Revision $WinnerRevision"
+        -not (($Base -ceq $WinnerBase -and $Revision -ceq $WinnerRevision) -or
+              ($Base -ceq $FallbackBase -and $Revision -ceq $FallbackRevision))) {
+        Write-Error "-Epochs requires explicit -Base and -Revision for $WinnerBase@$WinnerRevision or $FallbackBase@$FallbackRevision"
     }
     if (-not $PSBoundParameters.ContainsKey('Batch')) { Write-Error '-Epochs requires -Batch (the publication batch id to resolve and stage)' }
     if (-not $PSBoundParameters.ContainsKey('EpochContextLimit') -or $EpochContextLimit -le 2048) { Write-Error '-Epochs requires explicit -EpochContextLimit greater than max_new_tokens' }
@@ -114,16 +115,16 @@ if ($Winner -and [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
     $ExpectedDigests = Join-Path $HotRoot 'reports\m2-expected-qwen3-14b-v2.json'
 }
 if ($Fallback -and [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
-    $ExpectedDigests = Join-Path $HotRoot 'reports\m1-expected-qwen3-8b.json'
+    $ExpectedDigests = Join-Path $HotRoot 'reports\m2-expected-qwen3-8b-v2.json'
 }
 # The approved root has a different schema from ExpectedDigests. Authenticate
 # both byte sequences before GPU ownership or any model/cache access.
 # The trainer also requires approved digests for every snapshot file, including
 # tokenizer/config/index metadata; a weights-only list cannot authorize a load.
 $TrustedDigestRoot = ''
-$TrustedDigestRootSHA256 = 'd1a4a2d921c3f5197c2867dcdb50dbfb46d2189bbb88141ed56d3f3eb19d36af'
+$TrustedDigestRootSHA256 = '37ff31d7e9c11502d6795c93028ba8a617c6d427f2d6b830381f50d9157348af'
 if ($Base -eq $WinnerBase -or $Base -eq $FallbackBase) {
-    $TrustedDigestRoot = 'C:\llm\reports\m2-trusted-digest-manifest-v2.json'
+    $TrustedDigestRoot = 'C:\llm\reports\m2-trusted-digest-manifest-v3.json'
     $rootBytes = [IO.File]::ReadAllBytes($TrustedDigestRoot)
     $sha = [Security.Cryptography.SHA256]::Create()
     try {

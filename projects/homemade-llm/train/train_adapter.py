@@ -52,7 +52,7 @@ WINNER_REVISION = "40c069824f4251a91eefaf281ebe4c544efd3e18"
 FALLBACK_BASE = "Qwen/Qwen3-8B"
 FALLBACK_REVISION = "b968826d9c46dd6066d109eabc6255188de91218"
 # Approved root bytes, not a caller-supplied digest or a weight-list self-check.
-TRUSTED_DIGEST_ROOT_SHA256 = "d1a4a2d921c3f5197c2867dcdb50dbfb46d2189bbb88141ed56d3f3eb19d36af"
+TRUSTED_DIGEST_ROOT_SHA256 = "37ff31d7e9c11502d6795c93028ba8a617c6d427f2d6b830381f50d9157348af"
 PROBE_STEPS = 20
 WINNER_VRAM_GIB = 11.0
 CARD_VRAM_GIB = 12.0
@@ -90,6 +90,11 @@ def is_smoke_pin(base: str, revision: str) -> bool:
 
 def is_fallback_pin(base: str, revision: str) -> bool:
     return base == FALLBACK_BASE and revision == FALLBACK_REVISION
+
+
+def is_allowed_epoch_pin(base: str, revision: str) -> bool:
+    """Exact supported students; manifest authentication still precedes loading."""
+    return is_winner_pin(base, revision) or is_fallback_pin(base, revision)
 
 
 def is_allowed_probe_pin(base: str, revision: str) -> bool:
@@ -596,7 +601,7 @@ def create_run_directory(report_path: Path) -> Path:
     return run_dir
 
 
-def write_adapter_leaf(model: Any, leaf_dir: Path) -> Path:
+def write_adapter_leaf(model: Any, leaf_dir: Path, *, base_repo: str, base_revision: str) -> Path:
     """Explicit adapter-only save into a clean ``epoch-NN`` leaf directory.
 
     Assumption to confirm on the real host: the pinned ``peft`` writes exactly
@@ -605,8 +610,19 @@ def write_adapter_leaf(model: Any, leaf_dir: Path) -> Path:
     (optimizer/RNG/trainer state) is never copied into the leaf, so leaves are
     export inputs, not resume checkpoints.
     """
+    if not is_allowed_epoch_pin(base_repo, base_revision):
+        fail("adapter leaf requires a verified student pin")
     leaf_dir.mkdir(parents=True, exist_ok=False)
     model.save_pretrained(str(leaf_dir))
+    config_path = leaf_dir / "adapter_config.json"
+    if config_path.is_symlink() or _is_directory_link(config_path) or not config_path.is_file():
+        fail("adapter leaf config must be a regular file")
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    if not isinstance(config, dict):
+        fail("adapter leaf config must be a JSON object")
+    config["base_model_name_or_path"] = base_repo
+    config["revision"] = base_revision
+    config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     return leaf_dir
 
 
@@ -1140,8 +1156,9 @@ class DevEvaluationCallback(TrainerCallback):
                  frozen_dev_context: dict[str, Any], max_epochs: int,
                  predict_fn: Any = None, score_fn: Any = None,
                  requested_epochs: int | None = None, *,
-                 use_gradient_checkpointing: str | bool) -> None:
+                 use_gradient_checkpointing: str | bool, base_repo: str) -> None:
         self.model, self.run_dir, self.checkpoints = model, run_dir, checkpoints
+        self.base_repo = base_repo
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self.best_primary = None
         self.best_per_field = {}
@@ -1309,7 +1326,8 @@ class DevEvaluationCallback(TrainerCallback):
             if progress is None:
                 raise ValueError("missing epoch progress")
             if 0.5 <= progress < 1 and 1 not in self.midpoints_done:
-                leaf_dir = write_adapter_leaf(self.model, self.run_dir / "midpoint-epoch-01")
+                leaf_dir = write_adapter_leaf(self.model, self.run_dir / "midpoint-epoch-01",
+                    base_repo=self.base_repo, base_revision=self.identity["base_revision"])
                 _, digest = write_leaf_manifest(leaf_dir)
                 self._evaluate(1, "midpoint", digest, control, kwargs.get("processing_class") or kwargs.get("tokenizer"))
                 self.midpoints_done.add(1)
@@ -1334,7 +1352,8 @@ class DevEvaluationCallback(TrainerCallback):
             step = getattr(state, "global_step", None)
             if type(step) is not int or step < 0:
                 raise ValueError("invalid global step")
-            leaf_dir = write_adapter_leaf(self.model, self.run_dir / epoch_leaf_name(epoch))
+            leaf_dir = write_adapter_leaf(self.model, self.run_dir / epoch_leaf_name(epoch),
+                base_repo=self.base_repo, base_revision=self.identity["base_revision"])
             entry = leaf_report_entry(leaf_dir, epoch=epoch, global_step=step)
             _require_hex(entry.get("manifest_sha256"), 64, "leaf manifest digest")
             self.checkpoints.append(entry)
@@ -1985,8 +2004,8 @@ def train(
                 raise ValueError("epoch caller rows differ from the admitted publication")
             if type(epochs) is not int or not 1 <= epochs <= EPOCH_MODE_MAX:
                 raise ValueError("invalid requested epochs")
-            if not is_winner_pin(base, revision):
-                raise ValueError("epoch mode requires the explicit winner pin")
+            if not is_allowed_epoch_pin(base, revision):
+                raise ValueError("epoch mode requires an explicit supported student pin")
             if type(epoch_context_limit) is not int or epoch_context_limit <= SEQ:
                 raise ValueError("epoch mode requires an explicit context limit greater than max_new_tokens")
             # Validate the cohort before any model or GPU operation. The approved
@@ -2000,11 +2019,12 @@ def train(
             # update is already epoch end, so no interior midpoint can exist.
             if len(rows) <= TRAIN_GRAD_ACCUM:
                 raise ValueError("epoch mode needs more than 8 training rows for an interior first-epoch update")
-        resolved: list[Path] = []
+        snapshot_paths: list[Path] = []
         digest_verification = digest_verification_before_load(
-            base, revision, expected_digests_path, trusted_digest_root_path, resolved=resolved)
-        # The one resolution (the verified snapshot when digests were checked), before any CUDA or model effect.
-        snapshot = resolved[0] if resolved else local_snapshot_dir(base, revision)
+            base, revision, expected_digests_path, trusted_digest_root_path, resolved=snapshot_paths)
+        # Keep the report's resolved commit separate from snapshot discovery,
+        # including when authentication or model loading fails before resolution.
+        snapshot = snapshot_paths[0] if snapshot_paths else local_snapshot_dir(base, revision)
         callbacks = []
         if epochs is not None:
             if not isinstance(digest_verification, dict):
@@ -2016,7 +2036,7 @@ def train(
             })
             callback = DevEvaluationCallback(None, run_dir, checkpoints, context,
                 max_epochs=EPOCH_MODE_MAX, requested_epochs=epochs,
-                use_gradient_checkpointing=use_gradient_checkpointing)
+                use_gradient_checkpointing=use_gradient_checkpointing, base_repo=base)
             callbacks.append(callback)
         set_seed(SEED)
         torch.cuda.reset_peak_memory_stats()
@@ -2058,6 +2078,8 @@ def train(
         peak = torch.cuda.max_memory_reserved() / 2**30
         if epochs is not None:
             require_vram(peak, winner=winner)
+            if not math.isfinite(peak) or peak < 0 or not probe_memory_pass(peak):
+                fail(f"epoch peak reserved VRAM must be finite, non-negative and strictly below {WINNER_VRAM_GIB:.1f} GiB")
             # Refuse absent callback termination; do not synthesize completion
             # from a Trainer result or from files alone.
             selected = callback.completed_selection()
@@ -2444,8 +2466,9 @@ def main(argv: list[str] | None = None) -> None:
             fail(f"--epochs must be {EPOCH_MODE_MIN} to {EPOCH_MODE_MAX}")
         if args.probe:
             fail("--epochs cannot be combined with --probe")
-        if not explicit_pin or not is_winner_pin(args.base, args.revision):
-            fail(f"epoch mode requires explicit --base {WINNER_BASE} --revision {WINNER_REVISION}")
+        if not explicit_pin or not is_allowed_epoch_pin(args.base, args.revision):
+            fail(f"epoch mode requires explicit --base and --revision for {WINNER_BASE}@{WINNER_REVISION} "
+                 f"or {FALLBACK_BASE}@{FALLBACK_REVISION}")
         if args.publication_binding is None:
             fail("--publication-binding is required in epoch mode")
         if args.epoch_context_limit is None or args.epoch_context_limit <= SEQ:
