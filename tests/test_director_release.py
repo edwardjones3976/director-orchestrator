@@ -3193,13 +3193,30 @@ except m['ReleaseError']: pass
             self.assertEqual(kwargs["env"]["DIRECTOR_ENV_FILE"], self.spec["runtime_env"]["path"])
             calls.append(argv)
             environment = dict(kwargs["env"])
+            subprocess_argv = [docker, *argv[1:]]
             if windows_cli_from_wsl:
+                def windows_path(path):
+                    try:
+                        converted = subprocess.run(
+                            ["wslpath", "-w", path], capture_output=True,
+                            text=True, timeout=10, check=True,
+                        ).stdout.strip()
+                    except (OSError, subprocess.SubprocessError):
+                        raise self.failureException("stock Compose WSL path conversion failed") from None
+                    if not converted:
+                        self.fail("stock Compose WSL path conversion failed")
+                    return converted
+
+                for index, operand in enumerate(argv[:-1]):
+                    if operand in {"--env-file", "-f", "--file"}:
+                        subprocess_argv[index + 1] = windows_path(argv[index + 1])
+                environment["DIRECTOR_ENV_FILE"] = windows_path(environment["DIRECTOR_ENV_FILE"])
                 # A WSL Docker shim may invoke Windows Docker.exe. Forward the
                 # synthetic inputs across that boundary, preserving the bound
                 # file identity. Native Linux and Windows paths stay unchanged.
                 forwarded = (set(runtime) | {"DIRECTOR_COMPOSE_PROJECT_NAME"}) - {"DIRECTOR_ENV_FILE"}
-                environment["WSLENV"] = ":".join(["DIRECTOR_ENV_FILE/pw", *sorted(key + "/w" for key in forwarded)])
-            result = subprocess.run([docker, *argv[1:]], cwd=kwargs["cwd"], env=environment,
+                environment["WSLENV"] = ":".join(["DIRECTOR_ENV_FILE/w", *sorted(key + "/w" for key in forwarded)])
+            result = subprocess.run(subprocess_argv, cwd=kwargs["cwd"], env=environment,
                                     capture_output=True, timeout=30)
             write_compose_render_diagnostic_if_failed(result, [docker, *argv[1:]])
             self.assertEqual(
@@ -3671,6 +3688,85 @@ class ReleaseInputAndProcessTests(unittest.TestCase):
         with self.assertRaisesRegex(release.ReleaseError, "^platform_check_failed$"):
             release.command([sys.executable, "-c", "import sys; sys.stderr.write('fixture-secret'); sys.exit(1)"],
                             cwd=ROOT, env=release.child_environment(), deadline=time.monotonic() + 5)
+
+
+class ComposeRenderWslPathTests(unittest.TestCase):
+    def adapter(self, env_path, windows_cli_from_wsl):
+        import ast
+        import inspect
+        import textwrap
+
+        # Exercise the nested adapter itself without Docker or the release fixture.
+        source = inspect.getsource(
+            ReleasePreparationTests.test_stock_compose_source_renders_bound_runtime_and_future_modes_without_daemon)
+        method = ast.parse(textwrap.dedent(source)).body[0]
+        adapter = next(node for node in method.body if isinstance(node, ast.FunctionDef) and node.name == "actual_config")
+        self.spec = {"runtime_env": {"path": env_path}}
+        namespace = dict(globals(), self=self, docker="fixture-docker", calls=[],
+                         runtime={"FIXTURE_BOUND_INPUT": "synthetic", "DIRECTOR_ENV_FILE": env_path},
+                         windows_cli_from_wsl=windows_cli_from_wsl)
+        exec(compile(ast.Module(body=[adapter], type_ignores=[]), __file__, "exec"), namespace)
+        return namespace["actual_config"]
+
+    def test_converts_all_path_operands_and_environment_without_mutating_bindings(self):
+        env_path = "/tmp/fixture with spaces/runtime.env"
+        argv = ["docker", "compose", "--env-file", env_path,
+                "-f", "/tmp/compose.yml", "--file", "/tmp/override with spaces.yml",
+                "config", "--format", "json"]
+        environment = {"DIRECTOR_ENV_FILE": env_path, "FIXTURE_BOUND_INPUT": "synthetic",
+                       "DIRECTOR_COMPOSE_PROJECT_NAME": "fixture-director"}
+        original_argv, original_environment = list(argv), dict(environment)
+        paths = [env_path, argv[5], argv[7], env_path]
+        converted = {path: "C:\\fixture with spaces\\" + path.rsplit("/", 1)[-1] for path in paths}
+        adapter = self.adapter(env_path, True)
+        def run(command, **kwargs):
+            if command[0] == "wslpath":
+                self.assertEqual(command[:2], ["wslpath", "-w"])
+                self.assertEqual(kwargs, dict(capture_output=True, text=True, timeout=10, check=True))
+                return subprocess.CompletedProcess(command, 0, converted[command[2]] + "\n")
+            expected = ["fixture-docker", *original_argv[1:]]
+            for index in (3, 5, 7):
+                expected[index] = converted[original_argv[index]]
+            self.assertEqual(command, expected)
+            self.assertEqual(kwargs, dict(cwd="fixture-cwd", capture_output=True, timeout=30,
+                env={**original_environment, "DIRECTOR_ENV_FILE": converted[env_path],
+                     "WSLENV": "DIRECTOR_ENV_FILE/w:DIRECTOR_COMPOSE_PROJECT_NAME/w:FIXTURE_BOUND_INPUT/w"}))
+            return subprocess.CompletedProcess(command, 0, b"{}")
+        with patch.object(subprocess, "run", side_effect=run) as mocked:
+            self.assertEqual(adapter(argv, env=environment, cwd="fixture-cwd"), b"{}")
+        self.assertEqual([call.args[0][2] for call in mocked.call_args_list[:-1]], paths)
+        self.assertEqual(mocked.call_count, 5)
+        self.assertEqual(argv, original_argv)
+        self.assertEqual(environment, original_environment)
+
+    def test_conversion_failures_are_explicit_and_do_not_echo_paths(self):
+        env_path = "/tmp/private-path/runtime.env"
+        argv = ["docker", "compose", "--env-file", env_path, "-f", "/tmp/compose.yml",
+                "config", "--format", "json"]
+        failures = [subprocess.CalledProcessError(1, ["wslpath", "-w", env_path]),
+                    subprocess.TimeoutExpired(["wslpath", "-w", env_path], 10),
+                    FileNotFoundError(env_path), subprocess.CompletedProcess([], 0, " \n")]
+        for failure in failures:
+            for position in range(3):
+                with self.subTest(failure=type(failure).__name__, position=position):
+                    adapter = self.adapter(env_path, True)
+                    replies = [subprocess.CompletedProcess([], 0, "C:\\fixture\\file\n")] * position + [failure]
+                    with patch.object(subprocess, "run", side_effect=replies) as mocked:
+                        with self.assertRaisesRegex(AssertionError, "^stock Compose WSL path conversion failed$"):
+                            adapter(argv, env={"DIRECTOR_ENV_FILE": env_path}, cwd="fixture-cwd")
+                    self.assertEqual(mocked.call_count, position + 1)
+
+    def test_native_paths_and_environment_are_unchanged(self):
+        for env_path in ("/tmp/fixture with spaces/runtime.env", "C:\\fixture with spaces\\runtime.env"):
+            with self.subTest(env_path=env_path):
+                adapter = self.adapter(env_path, False)
+                argv = ["docker", "compose", "--env-file", env_path, "-f", env_path + ".yml",
+                        "config", "--format", "json"]
+                environment = {"DIRECTOR_ENV_FILE": env_path, "WSLENV": "EXISTING/w"}
+                with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"{}")) as mocked:
+                    self.assertEqual(adapter(argv, env=environment, cwd="fixture-cwd"), b"{}")
+                mocked.assert_called_once_with(["fixture-docker", *argv[1:]], cwd="fixture-cwd",
+                                               env=environment, capture_output=True, timeout=30)
 
 
 class ComposeRenderDiagnosticTests(unittest.TestCase):
