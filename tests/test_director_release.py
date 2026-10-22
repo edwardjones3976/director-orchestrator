@@ -2930,7 +2930,12 @@ except m['ReleaseError']: pass
                 environment["WSLENV"] = ":".join(["DIRECTOR_ENV_FILE/pw", *sorted(key + "/w" for key in forwarded)])
             result = subprocess.run([docker, *argv[1:]], cwd=kwargs["cwd"], env=environment,
                                     capture_output=True, timeout=30)
-            self.assertEqual(result.returncode, 0, "configuration-only stock Compose producer failed")
+            self.assertEqual(
+                result.returncode, 0,
+                f"configuration-only stock Compose producer failed: rc={result.returncode}, "
+                f"stdout_bytes={len(result.stdout)}, "
+                f"stderr_tail={result.stderr.decode('utf-8', errors='replace')[-1500:]!r}",
+            )
             return result.stdout
         tool = release.Release(self.descriptor)
         runtime = dict(tool.runtime)
