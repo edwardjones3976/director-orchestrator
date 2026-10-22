@@ -514,10 +514,18 @@ function Assert-AdapterBaseIdentity([string]$AdapterDir) {
         $recordedRepo = if ($repo.ValueKind -eq [System.Text.Json.JsonValueKind]::String) { $repo.GetString() } else { '<non-string>' }
         $revision = $doc.RootElement.GetProperty('revision')
         $recordedRevision = if ($revision.ValueKind -eq [System.Text.Json.JsonValueKind]::String) { $revision.GetString() } else { '<non-string>' }
+        # Only this exact quantized training identity may use the paired bf16 source.
+        $studentMerge = $false
+        if ($recordedRepo -ceq 'unsloth/Qwen3-8B-unsloth-bnb-4bit' -and
+            $recordedRevision -ceq '62efd7f9d748e394734a7adae2adf96e13a2abc8' -and
+            $BaseRepo -ceq 'Qwen/Qwen3-8B' -and $BaseRevision -ceq 'b968826d9c46dd6066d109eabc6255188de91218') {
+            $studentMerge = ($doc.RootElement.GetProperty('merge_source').GetString() -ceq $BaseRepo -and
+                             $doc.RootElement.GetProperty('merge_revision').GetString() -ceq $BaseRevision)
+        }
         if ($repo.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
             $revision.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or
             $recordedRevision -cnotmatch '\A[0-9a-f]{40}\z' -or
-            $recordedRepo -cne $BaseRepo -or $recordedRevision -cne $BaseRevision) {
+            (-not $studentMerge -and ($recordedRepo -cne $BaseRepo -or $recordedRevision -cne $BaseRevision))) {
             throw 'invalid or mismatched identity'
         }
     } catch {

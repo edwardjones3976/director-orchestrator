@@ -15,6 +15,7 @@
 #       Smoke/probe reports and trainer scratch are under reports\adapter-output\<run id>.
 # -Winner is only valid together with -Probe; -Epochs is a training mode and
 #   excludes -Steps, -Probe, -Winner and -Fallback.
+# -Student4Bit selects the pre-quantized 8B pin for -Probe or -Epochs.
 # Refuses a short revision, a winner probe pointed at any other base, a hot root
 # off C:, a stored Hugging Face token in the mounted cache, and a second GPU job.
 [CmdletBinding()]
@@ -32,6 +33,7 @@ param(
     [int]$EpochContextLimit,
     [switch]$Winner,
     [switch]$Fallback,
+    [switch]$Student4Bit,
     [switch]$Probe,
     [string]$ExpectedDigests,
     [int]$ProbeRowsTotal,
@@ -48,7 +50,18 @@ $WinnerBase = 'Qwen/Qwen3-14B'
 $WinnerRevision = '40c069824f4251a91eefaf281ebe4c544efd3e18'
 $FallbackBase = 'Qwen/Qwen3-8B'
 $FallbackRevision = 'b968826d9c46dd6066d109eabc6255188de91218'
+$StudentBase = 'unsloth/Qwen3-8B-unsloth-bnb-4bit'
+$StudentRevision = '62efd7f9d748e394734a7adae2adf96e13a2abc8'
 if ($Winner -and $Fallback) { Write-Error '-Winner and -Fallback are mutually exclusive' }
+if ($Student4Bit -and ($Winner -or $Fallback)) { Write-Error '-Student4Bit, -Winner and -Fallback are mutually exclusive' }
+if ($Student4Bit) {
+    if (-not $Probe -and -not $PSBoundParameters.ContainsKey('Epochs')) { Write-Error '-Student4Bit requires -Probe or -Epochs' }
+    foreach ($name in 'Base', 'Revision', 'MergeSource', 'MergeRevision') {
+        if ($PSBoundParameters.ContainsKey($name)) { Write-Error "-Student4Bit is pinned to $StudentBase@$StudentRevision; do not pass -$name" }
+    }
+    $Base = $StudentBase
+    $Revision = $StudentRevision
+}
 if ($Winner -and -not $Probe) { Write-Error '-Winner is only valid together with -Probe' }
 if ($Fallback -and -not $Probe) { Write-Error '-Fallback is only valid together with -Probe' }
 if ($PSBoundParameters.ContainsKey('Epochs')) {
@@ -59,10 +72,11 @@ if ($PSBoundParameters.ContainsKey('Epochs')) {
     if ($Winner) { Write-Error '-Epochs cannot be combined with -Winner (winner pinning is probe-only)' }
     if ($Fallback) { Write-Error '-Epochs cannot be combined with -Fallback' }
     if (-not $PSBoundParameters.ContainsKey('TimeoutMinutes')) { Write-Error '-Epochs requires explicit positive -TimeoutMinutes' }
-    if (-not $PSBoundParameters.ContainsKey('Base') -or -not $PSBoundParameters.ContainsKey('Revision') -or
+    if ((-not $Student4Bit -and (-not $PSBoundParameters.ContainsKey('Base') -or -not $PSBoundParameters.ContainsKey('Revision'))) -or
         -not (($Base -ceq $WinnerBase -and $Revision -ceq $WinnerRevision) -or
-              ($Base -ceq $FallbackBase -and $Revision -ceq $FallbackRevision))) {
-        Write-Error "-Epochs requires explicit -Base and -Revision for $WinnerBase@$WinnerRevision or $FallbackBase@$FallbackRevision"
+              ($Base -ceq $FallbackBase -and $Revision -ceq $FallbackRevision) -or
+              ($Base -ceq $StudentBase -and $Revision -ceq $StudentRevision))) {
+        Write-Error "-Epochs requires explicit -Base and -Revision for $WinnerBase@$WinnerRevision, $FallbackBase@$FallbackRevision or $StudentBase@$StudentRevision (or -Student4Bit)"
     }
     if (-not $PSBoundParameters.ContainsKey('Batch')) { Write-Error '-Epochs requires -Batch (the publication batch id to resolve and stage)' }
     if (-not $PSBoundParameters.ContainsKey('EpochContextLimit') -or $EpochContextLimit -le 2048) { Write-Error '-Epochs requires explicit -EpochContextLimit greater than max_new_tokens' }
@@ -99,6 +113,10 @@ if ($Fallback) {
     $MergeSource = $FallbackBase
     $MergeRevision = $FallbackRevision
 }
+if ($Base -ceq $StudentBase -and $Revision -ceq $StudentRevision) {
+    $MergeSource = $FallbackBase
+    $MergeRevision = $FallbackRevision
+}
 if ($Steps -lt 1) { Write-Error '-Steps must be positive' }
 if ($PSBoundParameters.ContainsKey('ProbeRowsTotal') -and $ProbeRowsTotal -lt 1) { Write-Error '-ProbeRowsTotal must be positive' }
 if ($ProbeSeqLen -lt 1) { Write-Error '-ProbeSeqLen must be positive' }
@@ -117,14 +135,23 @@ if ($Winner -and [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
 if ($Fallback -and [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
     $ExpectedDigests = Join-Path $HotRoot 'reports\m2-expected-qwen3-8b-v2.json'
 }
+if ($Base -ceq $StudentBase -and $Revision -ceq $StudentRevision -and [string]::IsNullOrWhiteSpace($ExpectedDigests)) {
+    $ExpectedDigests = Join-Path $HotRoot 'reports\m2-expected-qwen3-8b-4bit-v1.json'
+}
 # The approved root has a different schema from ExpectedDigests. Authenticate
 # both byte sequences before GPU ownership or any model/cache access.
 # The trainer also requires approved digests for every snapshot file, including
 # tokenizer/config/index metadata; a weights-only list cannot authorize a load.
 $TrustedDigestRoot = ''
 $TrustedDigestRootSHA256 = '37ff31d7e9c11502d6795c93028ba8a617c6d427f2d6b830381f50d9157348af'
-if ($Base -eq $WinnerBase -or $Base -eq $FallbackBase) {
+$TrustedDigestRootV4SHA256 = '6795b16f0ccfb2ae48b358784b979f92a4f19fb1ef09262fbbd31339dbd79e87'
+if ($Base -eq $WinnerBase -or $Base -eq $FallbackBase -or $Base -eq $StudentBase) {
     $TrustedDigestRoot = 'C:\llm\reports\m2-trusted-digest-manifest-v3.json'
+    if ($Base -ceq $StudentBase -and $Revision -ceq $StudentRevision) {
+        # The Director installs the final filename only after owner approval.
+        $TrustedDigestRoot = 'C:\llm\reports\m2-trusted-digest-manifest-v4.json'
+        $TrustedDigestRootSHA256 = $TrustedDigestRootV4SHA256
+    }
     $rootBytes = [IO.File]::ReadAllBytes($TrustedDigestRoot)
     $sha = [Security.Cryptography.SHA256]::Create()
     try {
