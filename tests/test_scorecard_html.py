@@ -18,6 +18,38 @@ from unittest.mock import patch
 from director_orchestrator import scorecard_html as html
 
 
+def _g67b_diag(category, observe):
+    """Best-effort sanitized observations; never expose an exception or affect checks."""
+    try:
+        payload = observe()
+        print("WO-G67B-DIAG " + category + " " + json.dumps(payload, sort_keys=True),
+              file=sys.__stderr__, flush=True)
+    except Exception:
+        try:
+            print("WO-G67B-DIAG diag_error:" + category, file=sys.__stderr__, flush=True)
+        except Exception:
+            pass
+
+
+def _g67b_tempdir(tmp):
+    path = Path(tmp)
+    return {
+        "tempdir_changes_under_resolve": str(path) != str(path.resolve()),
+        "tempdir_has_tilde_component": any("~" in part for part in path.parts),
+    }
+
+
+def _g67b_path_pair(expected, actual):
+    expected, actual = Path(expected), Path(actual)
+    observations = {
+        "expected_equals_actual": expected == actual,
+        "expected_equals_actual_after_resolve": expected.resolve() == actual.resolve(),
+    }
+    if expected.exists() and actual.exists():
+        observations["samefile"] = expected.samefile(actual)
+    return observations
+
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -191,6 +223,10 @@ class ScorecardHtmlTests(unittest.TestCase):
                                             "--output-dir", str(output)]), redirect_stdout(io.StringIO()) as stdout:
             self.assertEqual(cli.main(), 0)
         metadata = json.loads(stdout.getvalue().splitlines()[-1])
+        _g67b_diag("scorecard_tempdir", lambda: _g67b_tempdir(self.folder))
+        for kind in ("html", "json"):
+            _g67b_diag("scorecard_" + kind, lambda kind=kind: _g67b_path_pair(
+                output / ("completion-scorecard." + kind), metadata[kind]))
         self.assertEqual(Path(metadata["html"]), output / "completion-scorecard.html")
         self.assertNotIn("markdown", metadata)
         self.assertFalse((output / "completion-scorecard.md").exists())

@@ -6,10 +6,34 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
 import yaml
+
+
+def _g67b_diag(category, observe):
+    """Best-effort sanitized observations; never expose an exception or affect checks."""
+    try:
+        payload = observe()
+        if payload is None:
+            return
+        print("WO-G67B-DIAG " + category + " " + json.dumps(payload, sort_keys=True),
+              file=sys.__stderr__, flush=True)
+    except Exception:
+        try:
+            print("WO-G67B-DIAG diag_error:" + category, file=sys.__stderr__, flush=True)
+        except Exception:
+            pass
+
+
+def _g67b_tempdir(tmp):
+    path = Path(tmp)
+    return {
+        "tempdir_changes_under_resolve": str(path) != str(path.resolve()),
+        "tempdir_has_tilde_component": any("~" in part for part in path.parts),
+    }
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -173,7 +197,58 @@ class HtmlDocumentationTests(unittest.TestCase):
              'source_sha256': hashlib.sha256(git('show', 'HEAD:' + source)).hexdigest()}
             for source, target in self.manifest['mapping'].items()]
         (self.root/'docs/guide.md').write_bytes(b'# Guide\r\n')
-        self.assertEqual(guard._provenance_errors(self.root, self.manifest), [])
+        _g67b_diag("html_tempdir", lambda: _g67b_tempdir(self.root))
+        _g67b_diag("html_root", lambda: {"root_equals_resolved_root": self.root == self.root.resolve()})
+        for index, record in enumerate(self.manifest['documents']):
+            for field in ('source', 'target'):
+                _g67b_diag("html_containment_" + str(index) + "_" + field, lambda record=record, field=field: {
+                    "resolved_child_under_root": (self.root / record[field]).resolve().is_relative_to(self.root),
+                    "resolved_child_under_resolved_root": (self.root / record[field]).resolve().is_relative_to(self.root.resolve()),
+                })
+        def git_observations():
+            base = self.manifest['migration_base']
+            ancestor = subprocess.run(['git', 'merge-base', '--is-ancestor', base, 'HEAD'],
+                                      cwd=self.root, capture_output=True, timeout=20)
+            return {"ancestor_returncode": ancestor.returncode}
+        _g67b_diag("html_ancestor", git_observations)
+        def blob_observations():
+            records = self.manifest['documents']
+            result = subprocess.run(['git', 'cat-file', '--batch'], cwd=self.root,
+                                    input=''.join(self.manifest['migration_base'] + ':' + r['source'] + '\n'
+                                                  for r in records).encode(),
+                                    capture_output=True, timeout=20)
+            data, offset = result.stdout, 0
+            for index, record in enumerate(records):
+                end = data.index(b'\n', offset)
+                fields = data[offset:end].split()
+                valid = len(fields) == 3 and fields[1] == b'blob' and fields[2].isdigit()
+                _g67b_diag("html_blob_header_" + str(index), lambda valid=valid: {"blob_header_valid": valid})
+                if not valid:
+                    return None
+                size = int(fields[2])
+                blob = data[end + 1:end + 1 + size]
+                offset = end + 2 + size
+                match = len(blob) == size and hashlib.sha256(blob).hexdigest() == record['source_sha256']
+                _g67b_diag("html_blob_digest_" + str(index), lambda match=match: {"digest_match": match})
+            return None
+        _g67b_diag("html_blobs", blob_observations)
+        provenance_errors = guard._provenance_errors(self.root, self.manifest)
+        def provenance_category():
+            # Fixed allowlist; never print producer messages or appended paths.
+            categories = (
+                ('invalid migration base', 'invalid_base'),
+                ('invalid migration source record:', 'invalid_record'),
+                ('migration source records do not match', 'mapping_mismatch'),
+                ('migration base is unavailable or not an ancestor', 'ancestor_unavailable'),
+                ('missing migration source blob:', 'missing_blob'),
+                ('migration source digest mismatch:', 'digest_mismatch'),
+                ('migration source provenance could not be verified', 'verification_failed'),
+            )
+            return {"category": next((category for prefix, category in categories
+                                      if any(error.startswith(prefix) for error in provenance_errors)), 'other')}
+        if provenance_errors:
+            _g67b_diag("html_provenance_failure", provenance_category)
+        self.assertEqual(provenance_errors, [])
         original = json.loads(json.dumps(self.manifest))
         git('commit', '--allow-empty', '-qm', 'Later candidate')
         shallow = self.root/'shallow-checkout'

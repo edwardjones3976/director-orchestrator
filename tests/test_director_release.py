@@ -24,6 +24,19 @@ from director_orchestrator.primary_generation import resolved_deployment_digest
 from director_orchestrator import process_isolation
 
 
+def _g67b_diag(category, observe):
+    """Best-effort sanitized observations; never expose an exception or affect checks."""
+    try:
+        payload = observe()
+        print("WO-G67B-DIAG " + category + " " + json.dumps(payload, sort_keys=True),
+              file=sys.__stderr__, flush=True)
+    except Exception:
+        try:
+            print("WO-G67B-DIAG diag_error:" + category, file=sys.__stderr__, flush=True)
+        except Exception:
+            pass
+
+
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("director_release_under_test", ROOT / "scripts/director-release.py")
 release = importlib.util.module_from_spec(SPEC)
@@ -1788,6 +1801,30 @@ class ReleasePreparationTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, "configuration-only Compose producer failed")
             graphs.append(json.loads(result.stdout))
             self.assertRegex(resolved_deployment_digest(graphs[-1], self.image), r"^[0-9a-f]{64}$")
+        def compose_version():
+            version = subprocess.run(
+                ["docker", "compose", "version", "--short"], cwd=self.root,
+                env=release.child_environment(), capture_output=True, timeout=20,
+            )
+            identifier = version.stdout.decode("ascii", errors="replace").strip()
+            return {"version": identifier if version.returncode == 0 and re.fullmatch(
+                r"v?[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(?:-(?:alpha|beta|rc)[0-9]{1,3})?", identifier
+            ) else "unparsed"}
+        _g67b_diag("release_version", compose_version)
+        for index, graph in enumerate(graphs):
+            def mount_observations(graph=graph):
+                mount = next(item for item in graph["services"]["orchestrator"]["volumes"]
+                             if item.get("target") == "/repository")
+                # JSON key names only: reject unexpected text instead of printing it.
+                keys = sorted(mount)
+                bind_keys = sorted(mount["bind"]) if isinstance(mount.get("bind"), dict) else []
+                if any(not re.fullmatch(r"[a-z_]{1,40}", key) for key in keys + bind_keys):
+                    raise ValueError
+                return {"mount_keys": keys, "bind_keys": bind_keys,
+                        "type_is_bind": mount.get("type") == "bind",
+                        "read_only_is_true": mount.get("read_only") is True,
+                        "bind_equals_expected": mount.get("bind") == {"create_host_path": False}}
+            _g67b_diag("release_mount_primary" if index == 0 else "release_mount_sibling", mount_observations)
         release.isolated_sibling(*graphs, 18080)
         graphs[1]["services"]["orchestrator"]["ports"][0]["published"] = "8080"
         with self.assertRaisesRegex(release.ReleaseError, "sibling_port_not_isolated"):

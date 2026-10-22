@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from dataclasses import asdict, replace
@@ -37,6 +38,38 @@ from director_orchestrator.primary_activation_evidence import (
     load_pinned_owner_local_adoption,
     owner_local_acceptance_facts,
 )
+
+
+def _g67b_diag(category, observe):
+    """Best-effort sanitized observations; never expose an exception or affect checks."""
+    try:
+        payload = observe()
+        print("WO-G67B-DIAG " + category + " " + json.dumps(payload, sort_keys=True),
+              file=sys.__stderr__, flush=True)
+    except Exception:
+        try:
+            print("WO-G67B-DIAG diag_error:" + category, file=sys.__stderr__, flush=True)
+        except Exception:
+            pass
+
+
+def _g67b_tempdir(tmp):
+    path = Path(tmp)
+    return {
+        "tempdir_changes_under_resolve": str(path) != str(path.resolve()),
+        "tempdir_has_tilde_component": any("~" in part for part in path.parts),
+    }
+
+
+def _g67b_path_pair(expected, actual):
+    expected, actual = Path(expected), Path(actual)
+    observations = {
+        "expected_equals_actual": expected == actual,
+        "expected_equals_actual_after_resolve": expected.resolve() == actual.resolve(),
+    }
+    if expected.exists() and actual.exists():
+        observations["samefile"] = expected.samefile(actual)
+    return observations
 
 
 def identity(**changes: str) -> ActivationIdentity:
@@ -171,6 +204,11 @@ class LocalActivationEvidenceTests(unittest.TestCase):
             read_only=True,
         )
         replay.require_accepted(ident)
+        _g67b_diag("local_tempdir", lambda: _g67b_tempdir(self.temporary.name))
+        _g67b_diag("local_selected_path", lambda: {
+            **_g67b_path_pair(Path(self.temporary.name) / "selected.evidence.json", replay.path),
+            "selected_basename_correct": replay.path.name == "selected.evidence.json",
+        })
         self.assertEqual(replay.path, Path(self.temporary.name) / "selected.evidence.json")
         (Path(self.temporary.name) / "security.txt").write_bytes(b"changed after store construction")
         with self.assertRaises(ActivationEvidenceError):
