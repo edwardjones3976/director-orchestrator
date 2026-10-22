@@ -935,7 +935,7 @@ def prepare(*, archive, tree, census, license_file, policy=None, policy_sha256=N
     frozen_at = rule.get("frozen_at")
     utc(frozen_at)
     started_at = next_clock(clock, frozen_at)
-    if utc(started_at) <= utc(frozen_at):
+    if not count_only and utc(started_at) <= utc(frozen_at):
         raise Refusal("INVALID_CHRONOLOGY")
     metadata, upstream = strict_json(raw_census), strict_json(raw_tree)
     if not isinstance(metadata, dict) or metadata.get("repo") != REPOSITORY or metadata.get("commit") != COMMIT or metadata.get("archive_sha256") != pins["archive"] or not isinstance(metadata.get("items"), list):

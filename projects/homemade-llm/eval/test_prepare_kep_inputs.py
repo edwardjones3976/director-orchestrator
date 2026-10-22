@@ -1961,6 +1961,13 @@ class KepInputSelectionV4Tests(unittest.TestCase):
                     fixture.prepare(rule_version="v4")
                 fixture.policy[field] = previous
 
+    def test_v4_publication_refuses_start_equal_to_policy_freeze(self):
+        fixture = self.fixture()
+        with patch.object(tool, "_Publication", side_effect=AssertionError("invalid chronology must not publish")):
+            with self.assertRaisesRegex(tool.Refusal, "^INVALID_CHRONOLOGY$"):
+                fixture.prepare(rule_version="v4", clock=lambda: fixture.policy["frozen_at"])
+        self.assertFalse((self.root / "out").exists())
+
     def test_count_only_cli_no_writes_ranks_and_jsonl_refusals(self):
         from contextlib import redirect_stdout, redirect_stderr
         items = [dict(number=n, sig="sig-example", status="implemented",
@@ -1975,8 +1982,15 @@ class KepInputSelectionV4Tests(unittest.TestCase):
                 patch.object(tool, "_Publication", side_effect=AssertionError("count-only must not publish")), \
                 redirect_stdout(stdout), redirect_stderr(stderr):
             self.assertEqual(tool.main(argv), 0)
+            equal_stdout, equal_stderr = io.StringIO(), io.StringIO()
+            with patch.object(tool.prepare, "__kwdefaults__", tool.prepare.__kwdefaults__ | {
+                    "clock": lambda: "2020-01-02T00:00:00Z"}), \
+                    redirect_stdout(equal_stdout), redirect_stderr(equal_stderr):
+                self.assertEqual(tool.main(argv), 0)
         result = json.loads(stdout.getvalue())
         counts = result["stage_counts"]
+        self.assertEqual(json.loads(equal_stdout.getvalue())["stage_counts"], counts)
+        self.assertEqual(equal_stderr.getvalue(), stderr.getvalue())
         self.assertEqual([counts[k] for k in ("eligible_groups", "lexical", "whole_source_bound", "allocation_valid")], [3, 2, 2, 2])
         kept = result["kept_groups"]
         self.assertEqual([r["sha256_rank"] for r in kept], [0, 1])
