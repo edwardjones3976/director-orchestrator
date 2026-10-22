@@ -51,8 +51,12 @@ WINNER_BASE = "Qwen/Qwen3-14B"
 WINNER_REVISION = "40c069824f4251a91eefaf281ebe4c544efd3e18"
 FALLBACK_BASE = "Qwen/Qwen3-8B"
 FALLBACK_REVISION = "b968826d9c46dd6066d109eabc6255188de91218"
+STUDENT_BASE = "unsloth/Qwen3-8B-unsloth-bnb-4bit"
+STUDENT_REVISION = "62efd7f9d748e394734a7adae2adf96e13a2abc8"
 # Approved root bytes, not a caller-supplied digest or a weight-list self-check.
 TRUSTED_DIGEST_ROOT_SHA256 = "37ff31d7e9c11502d6795c93028ba8a617c6d427f2d6b830381f50d9157348af"
+# Draft bytes; the wrapper requires the final v4 filename after owner approval.
+TRUSTED_DIGEST_ROOT_V4_SHA256 = "6795b16f0ccfb2ae48b358784b979f92a4f19fb1ef09262fbbd31339dbd79e87"
 PROBE_STEPS = 20
 WINNER_VRAM_GIB = 11.0
 CARD_VRAM_GIB = 12.0
@@ -92,15 +96,21 @@ def is_fallback_pin(base: str, revision: str) -> bool:
     return base == FALLBACK_BASE and revision == FALLBACK_REVISION
 
 
+def is_student_4bit_pin(base: str, revision: str) -> bool:
+    return base == STUDENT_BASE and revision == STUDENT_REVISION
+
+
 def is_allowed_epoch_pin(base: str, revision: str) -> bool:
     """Exact supported students; manifest authentication still precedes loading."""
-    return is_winner_pin(base, revision) or is_fallback_pin(base, revision)
+    return (is_winner_pin(base, revision) or is_fallback_pin(base, revision)
+            or is_student_4bit_pin(base, revision))
 
 
 def is_allowed_probe_pin(base: str, revision: str) -> bool:
     return (
         is_winner_pin(base, revision)
         or is_fallback_pin(base, revision)
+        or is_student_4bit_pin(base, revision)
         or is_smoke_pin(base, revision)
     )
 
@@ -110,6 +120,8 @@ def probe_pin_name(base: str, revision: str) -> str:
         return "winner"
     if is_fallback_pin(base, revision):
         return "fallback"
+    if is_student_4bit_pin(base, revision):
+        return "student_4bit"
     if is_smoke_pin(base, revision):
         return "smoke"
     fail(f"probe pin is not recognized for {base}@{revision}")
@@ -127,7 +139,7 @@ def probe_is_authoritative(
     projection_row_count: int,
 ) -> bool:
     return (
-        (is_winner_pin(base, revision) or is_fallback_pin(base, revision))
+        is_allowed_epoch_pin(base, revision)
         and probe_seq_len == SEQ
         and projection_row_count == loaded_row_count
     )
@@ -360,7 +372,9 @@ def load_authenticated_digests(
     except OSError as exc:
         fail(f"trusted digest root is not usable: {exc}")
     root_sha = hashlib.sha256(root_bytes).hexdigest()
-    if root_sha != TRUSTED_DIGEST_ROOT_SHA256:
+    expected_root_sha = (TRUSTED_DIGEST_ROOT_V4_SHA256 if is_student_4bit_pin(base, revision)
+                         else TRUSTED_DIGEST_ROOT_SHA256)
+    if root_sha != expected_root_sha:
         fail("trusted digest root does not match the approved SHA-256")
     try:
         root = json.loads(root_bytes.decode("utf-8"))
@@ -409,7 +423,7 @@ def digest_verification_before_load(
         fail("--expected-digests is required for the winner pin")
     if is_fallback_pin(base, revision) and expected_digests_path is None:
         fail("--expected-digests is required for the fallback pin")
-    requires_root = base in (WINNER_BASE, FALLBACK_BASE)
+    requires_root = base in (WINNER_BASE, FALLBACK_BASE, STUDENT_BASE)
     if requires_root and expected_digests_path is None:
         fail("--expected-digests is required for pinned M2 models")
     if expected_digests_path is None:
@@ -622,6 +636,10 @@ def write_adapter_leaf(model: Any, leaf_dir: Path, *, base_repo: str, base_revis
         fail("adapter leaf config must be a JSON object")
     config["base_model_name_or_path"] = base_repo
     config["revision"] = base_revision
+    if is_student_4bit_pin(base_repo, base_revision):
+        # GGUF export merges into the paired bf16 source, not quantized weights.
+        config["merge_source"] = FALLBACK_BASE
+        config["merge_revision"] = FALLBACK_REVISION
     config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     return leaf_dir
 
@@ -2468,7 +2486,7 @@ def main(argv: list[str] | None = None) -> None:
             fail("--epochs cannot be combined with --probe")
         if not explicit_pin or not is_allowed_epoch_pin(args.base, args.revision):
             fail(f"epoch mode requires explicit --base and --revision for {WINNER_BASE}@{WINNER_REVISION} "
-                 f"or {FALLBACK_BASE}@{FALLBACK_REVISION}")
+                 f"or {FALLBACK_BASE}@{FALLBACK_REVISION} or {STUDENT_BASE}@{STUDENT_REVISION}")
         if args.publication_binding is None:
             fail("--publication-binding is required in epoch mode")
         if args.epoch_context_limit is None or args.epoch_context_limit <= SEQ:
@@ -2491,7 +2509,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.probe and not is_allowed_probe_pin(args.base, args.revision):
         fail(
             f"D-M1-F probe is pinned to {WINNER_BASE}@{WINNER_REVISION}, "
-            f"{FALLBACK_BASE}@{FALLBACK_REVISION}, or {SMOKE_BASE}@{SMOKE_REVISION}"
+            f"{FALLBACK_BASE}@{FALLBACK_REVISION}, {STUDENT_BASE}@{STUDENT_REVISION}, or {SMOKE_BASE}@{SMOKE_REVISION}"
         )
     if args.winner and (args.base != WINNER_BASE or args.revision != WINNER_REVISION):
         fail(f"winner probe is pinned to {WINNER_BASE}@{WINNER_REVISION}")
