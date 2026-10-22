@@ -36,6 +36,115 @@ PREFLIGHT_SPEC = importlib.util.spec_from_file_location("preflight_contract_fixt
 PREFLIGHT_FIXTURE = importlib.util.module_from_spec(PREFLIGHT_SPEC)
 PREFLIGHT_SPEC.loader.exec_module(PREFLIGHT_FIXTURE)
 
+COMPOSE_RENDER_DIAGNOSTIC_FILENAME = "compose-render-diagnostic.txt"
+_COMPOSE_STDERR_LINE_REDACTED = "[stderr line redacted]"
+_COMPOSE_STDERR_INVALID_TEMPLATE = "[invalid template redacted]"
+_COMPOSE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_COMPOSE_UNSET_VARIABLE = re.compile(
+    r'The ["\']([A-Za-z_][A-Za-z0-9_]*)["\'] variable is not set',
+    re.IGNORECASE,
+)
+_COMPOSE_REQUIRED_VARIABLE = re.compile(
+    r"required variable ([A-Za-z_][A-Za-z0-9_]*) is missing a value",
+    re.IGNORECASE,
+)
+_COMPOSE_INVALID_TEMPLATE = re.compile(
+    r"invalid template|template syntax error",
+    re.IGNORECASE,
+)
+
+
+def compose_render_diagnostic_path(environ=None):
+    environ = os.environ if environ is None else environ
+    base = environ.get("RUNNER_TEMP") or tempfile.gettempdir()
+    return Path(base) / COMPOSE_RENDER_DIAGNOSTIC_FILENAME
+
+
+def _label_temp_absolute_path(operand, environ):
+    try:
+        path = Path(operand)
+        if not path.is_absolute():
+            return operand
+        resolved = path.resolve()
+        runner = environ.get("RUNNER_TEMP")
+        if runner:
+            root = Path(runner).resolve()
+            try:
+                return "<runner-temp>/" + resolved.relative_to(root).as_posix()
+            except ValueError:
+                pass
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        try:
+            return "<temp-path>/" + resolved.relative_to(temp_root).as_posix()
+        except ValueError:
+            pass
+    except OSError:
+        pass
+    return operand
+
+
+def sanitize_compose_render_docker_argv(argv, environ=None):
+    environ = os.environ if environ is None else environ
+    if not argv:
+        return []
+    sanitized = []
+    executable = Path(argv[0])
+    sanitized.append(f"<docker-bin>/{executable.name}")
+    for operand in argv[1:]:
+        sanitized.append(_label_temp_absolute_path(operand, environ))
+    return sanitized
+
+
+def filter_compose_render_stderr_tail(stderr_bytes):
+    text = stderr_bytes.decode("utf-8", errors="replace")[-1500:]
+    filtered = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        normalized = line.replace('\\"', '"').replace("\\'", "'")
+        unset = _COMPOSE_UNSET_VARIABLE.search(normalized)
+        if unset and _COMPOSE_IDENTIFIER.fullmatch(unset.group(1)):
+            filtered.append(f"unset variable: {unset.group(1)}")
+            continue
+        required = _COMPOSE_REQUIRED_VARIABLE.search(normalized)
+        if required and _COMPOSE_IDENTIFIER.fullmatch(required.group(1)):
+            filtered.append(f"required variable missing: {required.group(1)}")
+            continue
+        if _COMPOSE_INVALID_TEMPLATE.search(normalized):
+            filtered.append(_COMPOSE_STDERR_INVALID_TEMPLATE)
+            continue
+        filtered.append(_COMPOSE_STDERR_LINE_REDACTED)
+    return filtered
+
+
+def format_compose_render_diagnostic_record(result, argv, environ=None):
+    environ = os.environ if environ is None else environ
+    payload = {
+        "rc": result.returncode,
+        "stdout_bytes": len(result.stdout or b""),
+        "argv": sanitize_compose_render_docker_argv(argv, environ),
+        "stderr_tail": filter_compose_render_stderr_tail(result.stderr or b""),
+    }
+    return json.dumps(payload, ensure_ascii=False) + "\n"
+
+
+def write_compose_render_diagnostic_if_failed(result, argv, environ=None):
+    if result.returncode == 0:
+        return
+    try:
+        compose_render_diagnostic_path(environ).write_text(
+            format_compose_render_diagnostic_record(result, argv, environ),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def print_compose_render_diagnostic_for_ci():
+    path = Path(os.environ["RUNNER_TEMP"]) / COMPOSE_RENDER_DIAGNOSTIC_FILENAME
+    if path.is_file():
+        print(path.read_text(encoding="utf-8"), end="")
+
 
 class ReleasePreparationTests(unittest.TestCase):
     def setUp(self):
@@ -2930,11 +3039,11 @@ except m['ReleaseError']: pass
                 environment["WSLENV"] = ":".join(["DIRECTOR_ENV_FILE/pw", *sorted(key + "/w" for key in forwarded)])
             result = subprocess.run([docker, *argv[1:]], cwd=kwargs["cwd"], env=environment,
                                     capture_output=True, timeout=30)
+            write_compose_render_diagnostic_if_failed(result, [docker, *argv[1:]])
             self.assertEqual(
                 result.returncode, 0,
-                f"configuration-only stock Compose producer failed: rc={result.returncode}, "
-                f"stdout_bytes={len(result.stdout)}, "
-                f"stderr_tail={result.stderr.decode('utf-8', errors='replace')[-1500:]!r}",
+                "configuration-only stock Compose producer failed; "
+                "see compose-render-diagnostic.txt on self-hosted CI lanes",
             )
             return result.stdout
         tool = release.Release(self.descriptor)
@@ -3400,6 +3509,91 @@ class ReleaseInputAndProcessTests(unittest.TestCase):
         with self.assertRaisesRegex(release.ReleaseError, "^platform_check_failed$"):
             release.command([sys.executable, "-c", "import sys; sys.stderr.write('fixture-secret'); sys.exit(1)"],
                             cwd=ROOT, env=release.child_environment(), deadline=time.monotonic() + 5)
+
+
+class ComposeRenderDiagnosticTests(unittest.TestCase):
+    sentinel = "SENTINEL_COMPOSE_DIAG_SECRET"
+
+    def _failed_result(self, *, stdout=b"", stderr=b"", returncode=1):
+        return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
+
+    def test_compose_render_diagnostic_writes_on_nonzero_return(self):
+        with tempfile.TemporaryDirectory() as runner_temp, tempfile.TemporaryDirectory() as shard_temp:
+            environ = {"RUNNER_TEMP": runner_temp, "TMP": shard_temp, "TEMP": shard_temp}
+            docker = str(Path(shard_temp) / "bin" / "docker.exe")
+            argv = [docker, "compose", "--env-file", str(Path(shard_temp) / "runtime.env"), "config"]
+            stderr = (
+                b'level=warning msg="The \\"MISSING_VAR\\" variable is not set. Defaulting to a blank string."\n'
+            )
+            write_compose_render_diagnostic_if_failed(self._failed_result(stderr=stderr), argv, environ)
+            record = json.loads(compose_render_diagnostic_path(environ).read_text(encoding="utf-8"))
+            self.assertEqual(record["rc"], 1)
+            self.assertEqual(record["stdout_bytes"], 0)
+            self.assertEqual(record["argv"][0], "<docker-bin>/docker.exe")
+            self.assertTrue(any(
+                entry.startswith("<temp-path>/") and entry.endswith("/runtime.env") for entry in record["argv"]
+            ))
+            self.assertEqual(record["stderr_tail"], ["unset variable: MISSING_VAR"])
+
+    def test_compose_render_diagnostic_skipped_on_success(self):
+        with tempfile.TemporaryDirectory() as runner_temp:
+            environ = {"RUNNER_TEMP": runner_temp}
+            write_compose_render_diagnostic_if_failed(self._failed_result(returncode=0), ["docker"], environ)
+            self.assertFalse(compose_render_diagnostic_path(environ).exists())
+
+    def test_compose_render_diagnostic_prefers_runner_temp_over_shard_temp(self):
+        with tempfile.TemporaryDirectory() as runner_temp, tempfile.TemporaryDirectory() as shard_temp:
+            environ = {"RUNNER_TEMP": runner_temp, "TMP": shard_temp, "TEMP": shard_temp}
+            write_compose_render_diagnostic_if_failed(self._failed_result(stderr=b"noise\n"), ["docker"], environ)
+            self.assertTrue(compose_render_diagnostic_path(environ).is_file())
+            self.assertFalse((Path(shard_temp) / COMPOSE_RENDER_DIAGNOSTIC_FILENAME).exists())
+
+    def test_compose_render_diagnostic_never_copies_sentinel_secrets(self):
+        with tempfile.TemporaryDirectory() as runner_temp:
+            environ = {"RUNNER_TEMP": runner_temp}
+            stderr = (
+                f"error while interpolating services.orchestrator.environment.X: "
+                f"required variable MISSING is missing a value: ${{MISSING:?{self.sentinel}}}\n"
+                f"arbitrary failure line containing {self.sentinel}\n"
+            ).encode()
+            stdout = self.sentinel.encode()
+            write_compose_render_diagnostic_if_failed(
+                self._failed_result(stdout=stdout, stderr=stderr),
+                ["docker", "compose"],
+                environ,
+            )
+            raw = compose_render_diagnostic_path(environ).read_text(encoding="utf-8")
+            self.assertNotIn(self.sentinel, raw)
+            record = json.loads(raw)
+            self.assertEqual(record["stdout_bytes"], len(stdout))
+            self.assertEqual(record["stderr_tail"], [
+                "required variable missing: MISSING",
+                _COMPOSE_STDERR_LINE_REDACTED,
+            ])
+
+    def test_compose_render_diagnostic_ci_consumer_prints_record(self):
+        runner_spec = importlib.util.spec_from_file_location(
+            "run_tests_parallel_fixture", ROOT / "scripts/run-tests-parallel.py")
+        runner = importlib.util.module_from_spec(runner_spec)
+        runner_spec.loader.exec_module(runner)
+        payload = format_compose_render_diagnostic_record(
+            self._failed_result(stderr=b'The "SAFE" variable is not set.\n'),
+            ["docker", "compose"],
+            {"RUNNER_TEMP": "unused"},
+        )
+        with tempfile.TemporaryDirectory() as runner_temp:
+            path = Path(runner_temp) / COMPOSE_RENDER_DIAGNOSTIC_FILENAME
+            path.write_text(payload, encoding="utf-8")
+            with patch.dict(os.environ, {"RUNNER_TEMP": runner_temp}), redirect_stdout(io.StringIO()) as output:
+                print_compose_render_diagnostic_for_ci()
+            printed = output.getvalue()
+            self.assertIn("unset variable: SAFE", printed)
+            self.assertNotIn("[stderr line redacted]", runner.sanitized_tail(printed))
+
+    def test_compose_render_diagnostic_ci_consumer_absent_file_is_no_op(self):
+        with tempfile.TemporaryDirectory() as runner_temp, patch.dict(os.environ, {"RUNNER_TEMP": runner_temp}), redirect_stdout(io.StringIO()) as output:
+            print_compose_render_diagnostic_for_ci()
+        self.assertEqual(output.getvalue(), "")
 
 
 if __name__ == "__main__":
