@@ -1853,6 +1853,11 @@ class PrimaryWorkflowTests(unittest.TestCase):
 
         owner_token = "owner-durable"
         control_plane = _DurableControlPlane(owner_token, events)
+        acceptance_directory = tempfile.TemporaryDirectory(prefix="acceptance-ordering-")
+        self.addCleanup(acceptance_directory.cleanup)
+        acceptance_store = SqliteAcceptanceJournal(
+            os.path.join(acceptance_directory.name, "acceptance.sqlite3")
+        )
         runtime = _DurableTestRuntime(
             InMemorySaver(),
             _handlers(
@@ -1861,6 +1866,7 @@ class PrimaryWorkflowTests(unittest.TestCase):
                 effect_execution_readback=effect,
             ),
             claim_store=control_plane,
+            acceptance_store=acceptance_store,
             owner_token=owner_token,
         )
         request = _request(

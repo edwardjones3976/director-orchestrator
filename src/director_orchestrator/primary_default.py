@@ -2109,7 +2109,8 @@ def build_automatic_primary_live_dependencies(
 
     from .primary_transports import OpenAIAcceptanceTransport
     acceptance_handler = TrustedPaidAcceptanceHandler(
-        resolver=packet_result, candidate_resolver=candidate_sha, journal=handle.claim_store,
+        resolver=packet_result, candidate_resolver=candidate_sha,
+        journal=getattr(handle, "claim_store", None),
         transport=acceptance_transport or OpenAIAcceptanceTransport(settings.openai_api_key),
         plan_resolver=acceptance_plan_resolver, authority_recheck=acceptance_authority_recheck)
 
