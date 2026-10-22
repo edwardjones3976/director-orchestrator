@@ -1,3 +1,4 @@
+<!-- [[Cursor | composer-2.5 | 2026-10-22 | 19:30 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:29 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:19 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:00 UTC | BEGIN]] -->
@@ -137,7 +138,7 @@ plan mode (owner direction, 2026-09-29).
 7. Verify webhook signatures or bearer secrets before processing callbacks. Use constant-time comparison for secrets and signatures.
 8. Add or update tests for behavioral changes. Run the relevant tests and report exact commands and results.
 9. Prefer reversible changes. Do not delete data or rewrite history without explicit owner authorization.
-10. Stop in `OWNER_DECISION_REQUIRED` when an action involves deployment, publishing, deletion, purchases, external representation, sensitive data, credentials, or expanded access. As policy, merges follow the thorough-reviewer owner law below; current runtime enforcement still requires the live grant and non-protected target described below. All deterministic CI, security, exact-SHA, budget, and safety checks still run. Stopping is the default and stays the default. The only exception is a decision class the owner has explicitly delegated under `docs/human-out-of-the-loop-operation.html`, which is off unless configured and which never removes a deterministic gate.
+10. Stop in `OWNER_DECISION_REQUIRED` when an action involves deployment, publishing, deletion, purchases, external representation, sensitive data, credentials, or expanded access. **Merge execution:** MERGE_AUTHORITY = owner-merge-law-2026-09-26, reconciled by WO-G48 under explicit owner delegation. The eligible non-contributing accepting reviewer carries the merge into protected or non-protected branches only after every deterministic gate passes. No separate deployment grant is required for merge execution; no protection bypass or other action class is authorized. Governing reference: `docs/human-out-of-the-loop-operation.html#standing-owner-authority-for-pull-request-merge-execution`. As policy, merges follow the thorough-reviewer owner law below. **Superseded for merge execution only by WO-G48 Matter 4; retained as historical instruction.** Governing reference: `docs/human-out-of-the-loop-operation.html#standing-owner-authority-for-pull-request-merge-execution` (`owner-merge-law-2026-09-26`). Previously: current runtime enforcement still requires the live grant and non-protected target described below. All deterministic CI, security, exact-SHA, budget, and safety checks still run. Stopping is the default and stays the default. The only exception is a decision class the owner has explicitly delegated under `docs/human-out-of-the-loop-operation.html`, which is off unless configured and which never removes a deterministic gate.
 11. Allocation targets and the ±3-point normal band are prospective routing preferences over the rolling twenty-assignment window; the owner retired the target+5 rolling-twenty hard ceiling on 2026-09-21 as outdated. A zero-target lane remains ineligible regardless of history, and this retirement changes no other deterministic gate (approval, budget, attempt, retry, cancellation, enrollment, or review).
 
 ## Contribution attribution
@@ -159,11 +160,12 @@ its result validates Git revisions/event structure, not authenticated authorship
 
 ## Human-out-of-the-loop operation
 
-- `docs/human-out-of-the-loop-operation.html` defines the current framework enforcement for decisions that would otherwise stop in `OWNER_DECISION_REQUIRED`, including merges. The owner merge law below is policy; its runtime limits remain in force until a separately authorized framework change aligns them. Read the framework before assuming any decision is yours to make.
+- **Merge execution:** MERGE_AUTHORITY = owner-merge-law-2026-09-26, reconciled by WO-G48 under explicit owner delegation. The eligible non-contributing accepting reviewer carries the merge into protected or non-protected branches only after every deterministic gate passes. No separate deployment grant is required for merge execution; no protection bypass or other action class is authorized. Governing reference: `docs/human-out-of-the-loop-operation.html#standing-owner-authority-for-pull-request-merge-execution`.
+- `docs/human-out-of-the-loop-operation.html` defines the current framework enforcement for decisions that would otherwise stop in `OWNER_DECISION_REQUIRED`, including merges. The owner merge law below is policy. **Superseded for merge execution only by WO-G48 Matter 4; retained as historical instruction.** Governing reference: `docs/human-out-of-the-loop-operation.html#standing-owner-authority-for-pull-request-merge-execution` (`owner-merge-law-2026-09-26`). Previously: its runtime limits remain in force until a separately authorized framework change aligns them. Read the framework before assuming any decision is yours to make.
 - It is **default off**. A deployment operates in `ATTENDED` state unless the owner has configured a live grant, and it returns to `ATTENDED` whenever configuration is absent, invalid, expired, or unreadable. The document's presence grants nothing, and no phase past documented authority is built yet.
 - Delegation changes who supplies a verdict. It never changes whether a gate runs. No deterministic gate in `src/director_orchestrator/policy.py` is removed, relaxed, or made advisory by any grant, and rule 4 still forbids model output from removing an approval requirement.
 - Deployment, publication, deletion, history rewrite, purchases, billing, credential or access changes, and edits to the framework itself are never delegable under any configuration. A decision that is not plainly an enumerated delegable class is treated as non-delegable.
-- Current runtime enforcement: a protected-branch merge remains tier 0, never delegable under any configuration. A delegated merge requires one author and one reviewer who are distinct identities, plus one exact-SHA `ACCEPT` verdict from that non-author reviewer, who then performs the merge.
+- **Superseded for merge execution only by WO-G48 Matter 4; retained as historical instruction.** Governing reference: `docs/human-out-of-the-loop-operation.html#standing-owner-authority-for-pull-request-merge-execution` (`owner-merge-law-2026-09-26`). Previously — current runtime enforcement: a protected-branch merge remains tier 0, never delegable under any configuration. A delegated merge requires one author and one reviewer who are distinct identities, plus one exact-SHA `ACCEPT` verdict from that non-author reviewer, who then performs the merge.
 - Rule 3 is unaffected: no agent merges its own pull request. A merge requires one exact-SHA `ACCEPT` verdict from an eligible reviewer, who then performs the merge, except that any reviewer with counted lines, whether an assisting contributor or the exactly-48 % co-author, hands the merge to a non-contributing reviewer that has thoroughly reviewed the work under `docs/contribution-attribution-policy.html#sole-author-rule`. Owner ruling, 2026-09-12, verbatim: "it's a one-non-author-reviewer project-wide".
 - Sole author (owner ruling, 2026-09-26): the 52 % sole-author and 48 % co-author thresholds remain the owner's identity and review-eligibility policy. Only the sole author and its provider family are excluded from review on authorship grounds; a smaller assisting contribution does not confer merger eligibility. No contributor, including a maintenance-only contributor, may merge that PR. Any eligible contributing reviewer hands it to a non-contributing reviewer who thoroughly reviews the exact candidate.
 - The later owner direction, 2026-10-01, retires mandatory percentage/share paperwork, prescribed author headers, MX receipts and custom contribution trailers. Use existing Git and authenticated producer/run records to establish the actual producer, contributors and eligibility. Missing or conflicting identity evidence still prevents acceptance until reconciled; never invent a share, author line or receipt. No separate percentage table or share_record_sha256 document is required by these operating instructions.
@@ -177,7 +179,9 @@ Owner protocol decision, 2026-09-08 UTC. The owner's instruction, verbatim:
 
 > If they approve it, they should merge it as well.
 
-**Current runtime enforcement. One `ACCEPT` is not merge authority.** A single exact-SHA `ACCEPT` obliges the
+**Merge execution:** MERGE_AUTHORITY = owner-merge-law-2026-09-26, reconciled by WO-G48 under explicit owner delegation. The eligible non-contributing accepting reviewer carries the merge into protected or non-protected branches only after every deterministic gate passes. No separate deployment grant is required for merge execution; no protection bypass or other action class is authorized. Governing reference: `docs/human-out-of-the-loop-operation.html#standing-owner-authority-for-pull-request-merge-execution`.
+
+**Superseded for merge execution only by WO-G48 Matter 4; retained as historical instruction.** Governing reference: `docs/human-out-of-the-loop-operation.html#standing-owner-authority-for-pull-request-merge-execution` (`owner-merge-law-2026-09-26`). Previously — **Current runtime enforcement. One `ACCEPT` is not merge authority.** A single exact-SHA `ACCEPT` obliges the
 approver to carry the candidate towards a terminal result rather than hand it
 back to a queue; it does not authorise the merge and does not skip
 `OWNER_DECISION_REQUIRED`. A merge that would otherwise stop for the owner
@@ -192,7 +196,7 @@ merge itself; a rejection goes back to the author with notes. Owner protocol, 20
 The current framework requires the author and reviewer to be distinct identities.
 The no-self-merge bar never lifts.
 
-Current runtime enforcement: Scope is non-protected branches only. Merging into a protected
+**Superseded for merge execution only by WO-G48 Matter 4; retained as historical instruction.** Governing reference: `docs/human-out-of-the-loop-operation.html#standing-owner-authority-for-pull-request-merge-execution` (`owner-merge-law-2026-09-26`). Previously — Current runtime enforcement: Scope is non-protected branches only. Merging into a protected
 branch remains tier 0, never delegable under any configuration, and owner-only
 for every lane under the current framework. Tier 1 enumerates "Executing an
 eligible merge of a pull request into a non-protected branch" as a delegable
@@ -216,11 +220,10 @@ follow the sole-author rule; they never lift the merge bar.
 As policy, merging is the thorough reviewer's responsibility, not an owner-only
 or owner-gated action. Branch protections and all
 deterministic CI, security, exact-SHA, budget, allowlist, actor-binding, and safety
-checks still apply; this documentation change does not alter runtime enforcement
-or authorize bypassing a refusing gate. Earlier live-grant and `ATTENDED` merge
+checks still apply; no documentation alignment authorizes bypassing a refusing gate. Earlier live-grant and `ATTENDED` merge
 restrictions in the human-out-of-the-loop document do not define this owner law.
 
-Until the separately authorized framework alignment lands, protected-branch merges (including `main`) remain tier 0 under `docs/human-out-of-the-loop-operation.html`, so an accepting reviewer records the `ACCEPT` and the framework blocker instead of merging; non-protected merges still require a live grant.
+**Superseded for merge execution only by WO-G48 Matter 4; retained as historical instruction.** Governing reference: `docs/human-out-of-the-loop-operation.html#standing-owner-authority-for-pull-request-merge-execution` (`owner-merge-law-2026-09-26`). Previously: Until the separately authorized framework alignment lands, protected-branch merges (including `main`) remain tier 0 under `docs/human-out-of-the-loop-operation.html`, so an accepting reviewer records the `ACCEPT` and the framework blocker instead of merging; non-protected merges still require a live grant.
 
 The Director records the review outcome and merges only when it is an eligible,
 non-contributing reviewer that has thoroughly reviewed the exact candidate.
@@ -344,6 +347,7 @@ During dual operation, exactly one engine may own provider dispatch and GitHub/S
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 08:00 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:19 UTC | END]] -->
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-27 | 09:29 UTC | END]] -->
+<!-- [[Cursor | composer-2.5 | 2026-10-22 | 19:30 UTC | END]] -->
 
 
 ## Canonical HTML documentation
