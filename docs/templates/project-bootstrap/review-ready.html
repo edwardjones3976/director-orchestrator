@@ -35,7 +35,8 @@ Workflow skills are procedure overlays, not permission grants.</p>
 <li><strong>Project/task:</strong> &lt;project ID and Director task ID&gt;</li>
 <li><strong>Assignment:</strong> &lt;producer assignment ID&gt;</li>
 <li><strong>Logical producer:</strong> &lt;provider&gt;</li>
-<li><strong>Material authors:</strong> &lt;all providers/people that materially shaped the artifact&gt;</li>
+<li><strong>Sole author:</strong> &lt;the one logical producer responsible for the artifact&gt;</li>
+<li><strong>Other actual contributors, including material or maintenance contributions, if any:</strong> &lt;names needed to assess eligibility; do not relabel actual material contributors as non-contributors&gt;</li>
 <li><strong>Repository:</strong> &lt;exact owner/name or not applicable&gt;</li>
 <li><strong>Base branch/ref:</strong> &lt;exact durable ref&gt;</li>
 <li><strong>Target-tip base_sha:</strong> &lt;PR current target-tip, exact 40-hex SHA; exact-candidate binding&gt;</li>
@@ -74,7 +75,7 @@ Review exact candidate: &lt;repository&gt;
 Target-tip base_sha: &lt;PR current target-tip, exact 40-hex SHA; exact-candidate binding&gt;
 Review merge_base_sha: &lt;exact 40-hex SHA; base used for the reviewed diff&gt;
 Head SHA: &lt;exact 40-hex SHA or artifact digest&gt;
-Producer/material authors: &lt;names&gt;
+Sole author: &lt;name&gt;; other actual contributors (material or maintenance), if any: &lt;names&gt;
 PR URL: &lt;pull-request URL or none&gt;
 Author/independence evidence: &lt;ordinary Git and authenticated run references; no prescribed header or share table&gt;
 Scope: &lt;changed files or artifact scope&gt;
@@ -88,10 +89,12 @@ A real identity conflict must be reconciled; never invent evidence.
 Return only: ACCEPT, CHANGES_REQUIRED, or SERIOUS_SAFETY_STOP, followed by
 evidence and actionable findings.
 Do not review a PR candidate whose sole author is you or shares your provider
-family. An assisting contributor may review under the owner rule, subject to
-the material-author gate limitations above. Under the owner's merge law, the
-thorough non-contributing reviewer merges after an exact-SHA ACCEPT and green
-checks; no contributor merges, including one with only uncounted maintenance.
+family. The same designated eligible non-contributing engineering reviewer
+thoroughly reviews the exact candidate, issues the exact-SHA verdict and carries
+the authorized merge after an exact-SHA ACCEPT and green checks; no contributor
+merges, including one with only uncounted maintenance. Assisting contributors
+may supply findings that inform that reviewer; they do not constitute a second
+required engineering acceptance stage.
 Immediately before an authorized merge, run the current merge preflight on
 the exact PR, full head SHA and reviewer family. Use only the command it prints
 on success. The owner lifted the temporary B2 hold; retain current live holds
