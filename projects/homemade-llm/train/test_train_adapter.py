@@ -255,6 +255,15 @@ class VerifiedSourceLoaderTests(unittest.TestCase):
 
 class AuthorityFixtureCase(unittest.TestCase):
     def setUp(self):
+        # These orchestration fixtures have no tensors. The real admission and
+        # loader refusal/CPU/CUDA contracts live in test_verified_read.py.
+        loader = mock.patch.object(train_adapter, "load_verified_model", side_effect=
+            lambda snapshot, verification, *, max_seq_length:
+                train_adapter.FastLanguageModel.from_pretrained(str(snapshot),
+                    max_seq_length=max_seq_length, load_in_4bit=True,
+                    use_exact_model_name=True, local_files_only=True))
+        self.loader_stub = loader.start()
+        self.addCleanup(loader.stop)
         import epoch_authority
         self._authority_patch = mock.patch.object(train_adapter, '_epoch_authority', return_value=epoch_authority)
         self._authority_patch.start()
@@ -1056,14 +1065,15 @@ Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
         snapshot = Path("hub", "models--org--m", "snapshots", "a" * 40)
         resolved = []
         with mock.patch.object(train_adapter, "local_snapshot_dir", return_value=snapshot) as resolver, \
-                mock.patch.object(train_adapter, "load_expected_digests", return_value=[]), \
+                mock.patch.object(train_adapter, "load_authenticated_digests", return_value=([], {})), \
                 mock.patch.object(train_adapter, "verify_expected_digests", return_value={"files": 0}) as verify:
-            train_adapter.digest_verification_before_load("org/m", "a" * 40, Path("digests.json"), resolved=resolved)
+            train_adapter.digest_verification_before_load("org/m", "a" * 40, Path("digests.json"),
+                Path("root.json"), resolved=resolved)
         resolver.assert_called_once_with("org/m", "a" * 40)
         self.assertIs(verify.call_args.args[0], snapshot)
         self.assertEqual(resolved, [snapshot])
 
-    def test_every_mode_loads_the_verified_snapshot_by_path_without_revision(self):
+    def test_every_mode_hands_the_snapshot_to_the_shared_loader(self):
         snapshot = Path("hub", "models--org--m", "snapshots", train_adapter.SMOKE_REVISION)
 
         def verified(*_a, resolved=None, **_k):  # admission and verification pass, handing back the verified snapshot
@@ -1102,7 +1112,7 @@ Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
                 self.assertTrue(kwargs["local_files_only"])
                 self.assertTrue(kwargs["use_exact_model_name"])
 
-    def test_unverified_mode_resolves_once_and_loads_that_path(self):
+    def test_smoke_orchestration_resolves_once_before_the_stubbed_loader(self):
         snapshot = Path("hub", "models--org--m", "snapshots", train_adapter.SMOKE_REVISION)
         flm = mock.MagicMock()
         flm.from_pretrained = mock.MagicMock(side_effect=SystemExit("stop after load"))
@@ -2234,7 +2244,7 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
                 with self.assertRaisesRegex(SystemExit, "trusted-digest-root is required"):
                     train_adapter.digest_verification_before_load(base, revision, listing)
                 trusted.rename(root / "m2-trusted-digest-manifest-v4.draft.json")
-                with self.assertRaisesRegex(SystemExit, "trusted digest root is not usable"):
+                with self.assertRaisesRegex(SystemExit, r"verified read refused for .*m2-trusted-digest-manifest-v4\.json on read 1:"):
                     train_adapter.digest_verification_before_load(base, revision, listing,
                         root / "m2-trusted-digest-manifest-v4.json")
                 snapshot.assert_not_called()
@@ -2329,7 +2339,7 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
             self.skipTest("PowerShell is required to evaluate metadata preflight")
         source = (Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1").read_text(encoding="utf-8")
         start = source.index("$TrustedDigestRoot = ''")
-        end = source.index("if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests))", start)
+        end = source.index("foreach ($sub in", start)
         self.assertLess(end, source.index("$gpuLock ="))
         block = source[start:end]
         with tempfile.TemporaryDirectory() as tmp:
@@ -2477,27 +2487,29 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
             trusted, listing, pin = self._complete_trusted_snapshot(root)
             snapshot = root / "snapshot"
             seen = []
-            real_hash = train_adapter._sha256_file
+            real_hash = train_adapter._read_file_once
             real_parse = train_adapter._index_weight_map_shards
 
-            def record_hash(path):
+            def record_hash(path, *args):
                 seen.append(path.name)
-                return real_hash(path)
+                return real_hash(path, *args)
 
-            def parse_after_hashes(path):
-                self.assertEqual(len(seen), 8)
-                for name in ("model.safetensors", "config.json", "tokenizer.json", "model.safetensors.index.json"):
+            def parse_after_hashes(path, **kwargs):
+                self.assertEqual(len(seen), 12)
+                for name in (trusted.name, listing.name, "model.safetensors", "config.json", "tokenizer.json", "model.safetensors.index.json"):
                     self.assertEqual(seen.count(name), 2)
-                return real_parse(path)
+                return real_parse(path, **kwargs)
 
             with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
                  mock.patch.object(train_adapter, "local_snapshot_dir", return_value=snapshot), \
-                 mock.patch.object(train_adapter, "_sha256_file", side_effect=record_hash), \
+                 mock.patch.object(train_adapter, "_read_file_once", side_effect=record_hash), \
                  mock.patch.object(train_adapter, "_index_weight_map_shards", side_effect=parse_after_hashes) as parse:
                 train_adapter.digest_verification_before_load(
                     train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted,
                 )
-            parse.assert_called_once_with(snapshot)
+            self.assertEqual(parse.call_count, 1)
+            self.assertEqual(parse.call_args.args, (snapshot,))
+            self.assertIn("payloads", parse.call_args.kwargs)
 
     def test_authenticated_snapshot_file_links_support_repo_and_shared_blobs(self):
         for layout in ("repo", "shared", "two_hops"):
@@ -2544,7 +2556,9 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
     def test_authenticated_cache_links_with_synthetic_file_link_emulation(self):
         # Windows may deny native file symlinks. Emulate only these fixture file
         # links; directory ancestry and all authentication/hash/index code run
-        # unchanged against real synthetic files. This is no native cache smoke.
+        # unchanged against real synthetic files. Redirect os.open as well as
+        # Path.open: otherwise fstat sees the placeholder and stat sees the blob.
+        # This is no native cache smoke.
         for layout in ("repo", "shared", "two_hops", "external", "other_repo", "other_revision", "blob_ancestor"):
             with self.subTest(layout=layout), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -2579,6 +2593,7 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
 
                 original_symlink, original_readlink = Path.is_symlink, Path.readlink
                 original_stat, original_open = Path.stat, Path.open
+                original_os_open = os.open
 
                 def resolve_file(path):
                     for _ in range(5):
@@ -2591,9 +2606,21 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
                      mock.patch.object(Path, "readlink", lambda p: links[p] if p in links else original_readlink(p)), \
                      mock.patch.object(Path, "stat", lambda p, **kw: original_stat(resolve_file(p), **kw)), \
                      mock.patch.object(Path, "open", lambda p, *a, **kw: original_open(resolve_file(p), *a, **kw)), \
+                     mock.patch.object(os, "open", lambda p, *a, **kw: original_os_open(resolve_file(Path(p)), *a, **kw)), \
                      mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
                      mock.patch.object(train_adapter, "local_snapshot_dir", return_value=snapshot):
                     if layout in ("repo", "shared", "two_hops"):
+                        sample = snapshot / "config.json"
+                        fd = original_os_open(sample, os.O_RDONLY)
+                        try:
+                            self.assertNotEqual(os.fstat(fd).st_ino, sample.stat().st_ino)
+                        finally:
+                            os.close(fd)
+                        fd = os.open(sample, os.O_RDONLY)
+                        try:
+                            self.assertEqual(os.fstat(fd).st_ino, sample.stat().st_ino)
+                        finally:
+                            os.close(fd)
                         payload = train_adapter.digest_verification_before_load(
                             train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted)
                         self.assertEqual(payload["snapshot_files"], 4)
@@ -2836,34 +2863,35 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
             data = b"stable"
             entry = self._digest_entry(root, "stable.bin", data)
             calls = 0
-            real = train_adapter._sha256_file
+            real = train_adapter._read_file_once
 
-            def flaky(path: Path) -> str:
+            def flaky(path: Path, *args) -> bytes:
                 nonlocal calls
                 calls += 1
+                data = real(path, *args)
                 if calls == 2:
-                    return "c" * 64
-                return real(path)
+                    return b"Stable"
+                return data
 
-            with mock.patch.object(train_adapter, "_sha256_file", side_effect=flaky):
+            with mock.patch.object(train_adapter, "_read_file_once", side_effect=flaky):
                 with self.assertRaises(SystemExit) as raised:
                     train_adapter.verify_expected_digests(root, [entry], reads=2)
                 self.assertIn("read 2", str(raised.exception))
 
     def test_load_expected_digests_returns_matching_key(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "digests.json"
-            key = f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"
-            files = [{"path": "config.json", "sha256": "a" * 64, "size": 3}]
-            path.write_text(json.dumps({key: {"files": files}}), encoding="utf-8")
-            loaded = train_adapter.load_expected_digests(path, train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION)
-            self.assertEqual(loaded, files)
+            trusted, listing, pin = self._trusted_chain(Path(tmp))
+            files = json.loads(listing.read_bytes())[f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"]["files"]
+            with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin):
+                loaded = train_adapter.load_expected_digests(listing, train_adapter.WINNER_BASE,
+                    train_adapter.WINNER_REVISION, trusted_root_path=trusted)
+                self.assertEqual(loaded, files)
 
-    def test_load_expected_digests_absent_key(self):
+    def test_load_expected_digests_refuses_unparented_list(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "digests.json"
             path.write_text("{}", encoding="utf-8")
-            with self.assertRaises(SystemExit):
+            with self.assertRaisesRegex(SystemExit, "trusted-digest-root is required"):
                 train_adapter.load_expected_digests(path, train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION)
 
     def test_main_probe_smoke_pin_calls_run_probe(self):

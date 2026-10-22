@@ -18,12 +18,18 @@ Runs inside the pinned Unsloth image (see ``scripts/train-adapter.ps1``).
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import math
+import mmap
 import os
 import re
+import signal
+import stat
+import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -178,13 +184,15 @@ def _sha256_file(path: Path) -> str:
 
 
 def _index_weight_map_shards(
-    snapshot_dir: Path, *, blob_roots: tuple[Path, ...] = (),
+    snapshot_dir: Path, *, blob_roots: tuple[Path, ...] = (), payloads=None,
 ) -> tuple[set[str], bool]:
     index_path = snapshot_dir / "model.safetensors.index.json"
-    if not index_path.is_file():
+    has_index = index_path.name in payloads if payloads is not None else index_path.is_file()
+    if not has_index:
         return set(), False
     try:
-        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        payload = json.loads(payloads[index_path.name] if payloads is not None
+                             else index_path.read_bytes())
     except (OSError, json.JSONDecodeError) as exc:
         fail(f"model.safetensors.index.json is not usable: {exc}")
     weight_map = payload.get("weight_map")
@@ -263,16 +271,19 @@ def require_confined_relative_path(
 
 
 def verify_expected_digests(
-    snapshot_dir: Path, expected_files: list[dict], reads: int = 2,
-    *, blob_roots: tuple[Path, ...] = (),
+    snapshot_dir: Path, expected_files: list[dict], reads: int = 3,
+    *, blob_roots: tuple[Path, ...] = (), receipt_path: Path | None = None,
+    evidence=None,
 ) -> dict:
     """Authenticate every snapshot file before parsing any model-loading input.
 
     A weights-only approved list is insufficient when other snapshot files are
     present. Missing trusted metadata is a refusal, never a locally minted hash.
     """
-    if reads < 1:
-        fail("reads must be positive")
+    if reads not in (2, 3):
+        fail("verified reads require two consecutive matches in at most three reads")
+    result = evidence if evidence is not None else VerifiedSnapshot(receipt_path, expected_files)
+    result.entries = {entry["path"]: entry for entry in expected_files}
     seen_paths: set[str] = set()
     manifest_weight_paths: list[str] = []
     for entry in expected_files:
@@ -282,6 +293,10 @@ def verify_expected_digests(
         require_confined_relative_path(
             rel, snapshot_dir, "digest manifest paths must be confined relative snapshot files",
             blob_roots=blob_roots)
+        if (type(entry.get("size")) is not int or entry["size"] < 0
+                or not isinstance(entry.get("sha256"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"])):
+            fail(f"invalid trusted size or digest for {rel}")
         if rel in seen_paths:
             fail(f"duplicate path in digest manifest: {rel}")
         seen_paths.add(rel)
@@ -298,24 +313,16 @@ def verify_expected_digests(
     total_bytes = 0
     for entry in expected_files:
         rel = entry["path"]
-        expected_sha = entry["sha256"]
         expected_size = entry["size"]
         path = snapshot_dir / rel
-        if not path.is_file():
-            fail(f"missing expected file: {rel}")
-        actual_size = path.stat().st_size
-        if actual_size != expected_size:
-            fail(f"size mismatch for {rel}")
-        for read_index in range(1, reads + 1):
-            actual_sha = _sha256_file(path)
-            if actual_sha != expected_sha:
-                fail(f"digest mismatch for {rel} on read {read_index}")
+        result.payloads[rel] = verified_file_bytes(path, entry, result, reads=reads)
         total_bytes += expected_size
     # The index is executable loading metadata too: do not parse it before its
     # own bytes (and every other cached file) have passed the approved hashes.
+    for name in result.payloads:
+        result.checked_bytes(name)
     index_shards, weight_map_checked = (
-        _index_weight_map_shards(snapshot_dir, blob_roots=blob_roots) if blob_roots
-        else _index_weight_map_shards(snapshot_dir)
+        _index_weight_map_shards(snapshot_dir, blob_roots=blob_roots, payloads=result.payloads)
     )
     manifest_weight_set = set(manifest_weight_paths)
     if weight_map_checked:
@@ -325,15 +332,187 @@ def verify_expected_digests(
             shard_path = snapshot_dir / shard
             if not shard_path.is_file():
                 fail(f"index shard missing from snapshot: {shard}")
-    return {
+    result.update({
         "files": len(expected_files),
-        "reads": reads,
+        "reads": max(item["attempt"] for item in result.receipt["attempts"]),
         "bytes": total_bytes,
         "weight_files": len(manifest_weight_paths),
         "weight_map_checked": weight_map_checked,
         "snapshot_files": len(on_disk_files),
         "snapshot_coverage": "all_regular_files",
-    }
+    })
+    return result
+
+
+class VerifiedSnapshot(dict):
+    """Report fields stay JSON-safe; retained buffers never enter a report."""
+
+    def __init__(self, receipt_path, entries):
+        super().__init__()
+        self.payloads = {}
+        self.trust_payloads = {}
+        self.entries = {entry["path"]: entry for entry in entries}
+        self.receipt_path = receipt_path
+        self.receipt = {"format": "verified-read/v1", "status": "reading", "attempts": []}
+        self.persist()
+
+    def persist(self):
+        if self.receipt_path is not None:
+            # A failed write/fsync/readback is a refusal, including on the failure path.
+            data = (json.dumps(self.receipt, indent=2) + "\n").encode()
+            self.receipt_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.receipt_path.with_name(self.receipt_path.name + ".tmp")
+            with temporary.open("wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            if temporary.read_bytes() != data:
+                fail("verified-read evidence receipt readback differs")
+            os.replace(temporary, self.receipt_path)
+            if os.name == "posix":
+                directory = os.open(self.receipt_path.parent, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+
+    def checked_bytes(self, name):
+        data, entry = self.payloads[name], self.entries[name]
+        if len(data) != entry["size"] or hashlib.sha256(data).hexdigest() != entry["sha256"]:
+            fail(f"retained buffer corruption: {name}")
+        return data
+
+
+@contextmanager
+def _read_deadline(seconds=120):
+    # Linux trainer reads must be interruptible; never return an overdue buffer.
+    if not hasattr(signal, "setitimer"):
+        yield  # Host-only fixture checks also check elapsed time below.
+        return
+    def expired(*_args):
+        raise TimeoutError("verified read exceeded 120 seconds")
+    previous = signal.signal(signal.SIGALRM, expired)
+    timer = signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, *timer)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def _read_file_once(path, expected_size, attempt):
+    """One complete read; O_DIRECT alignment failure may fall back before any bytes."""
+    fd = None
+    unsupported = (errno.EINVAL, errno.EOPNOTSUPP, errno.ENOSYS)
+    try:
+        direct = hasattr(os, "O_DIRECT")
+        try:
+            fd = os.open(path, os.O_RDONLY | (os.O_DIRECT if direct else 0))
+        except OSError as exc:
+            if not direct or exc.errno not in unsupported:
+                raise
+            direct = False
+            fd = os.open(path, os.O_RDONLY)
+        before = os.fstat(fd)
+        attempt["size"] = before.st_size
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError("irregular input")
+        if expected_size is not None and before.st_size != expected_size:
+            raise ValueError(f"size mismatch for {path.name}")
+        read_size = before.st_size if expected_size is None else expected_size
+        chunks = []
+        digest = hashlib.sha256()
+        with mmap.mmap(-1, 1024 * 1024) as aligned:
+            while True:
+                if direct:
+                    attempt["method"] = "O_DIRECT"
+                    try:
+                        count = os.readv(fd, [aligned])
+                        chunk = aligned[:count]
+                    except OSError as exc:
+                        if chunks or exc.errno not in unsupported:
+                            raise
+                        os.close(fd)
+                        fd = os.open(path, os.O_RDONLY)
+                        direct = False
+                        continue
+                else:
+                    if hasattr(os, "posix_fadvise"):
+                        attempt["method"] = "posix_fadvise(DONTNEED)"
+                        if not chunks:
+                            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+                    elif os.name == "nt":
+                        attempt["method"] = "host buffered fixture read"
+                    else:
+                        raise OSError("no supported cache-bypassing read method")
+                    chunk = os.read(fd, 1024 * 1024)
+                attempt["bytes_read"] += len(chunk)
+                digest.update(chunk)
+                attempt["digest"] = digest.hexdigest()
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                if attempt["bytes_read"] > read_size:
+                    raise ValueError("input grew while reading")
+                # An unaligned direct tail is EOF; fstat below detects size changes.
+                if direct and len(chunk) < 1024 * 1024:
+                    break
+        after = os.fstat(fd)
+        signature = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+        if signature(before) != signature(after) or signature(after) != signature(path.stat()):
+            raise ValueError("input changed while reading")
+        attempt["identity"] = list(signature(after))
+        if attempt["bytes_read"] != read_size:
+            raise ValueError("short read")
+        return b"".join(chunks)
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def verified_file_bytes(path, entry, evidence, *, reads=3):
+    if reads not in (2, 3):
+        fail("verified reads require two consecutive matches in at most three reads")
+    consecutive, identity = 0, None
+    previous = None
+    for number in range(1, reads + 1):
+        start = time.monotonic()
+        attempt = {"file": str(path), "attempt": number, "digest": None, "size": None,
+                   "bytes_read": 0, "seconds": None, "error": None, "method": None,
+                   "expected_size": entry.get("size"),
+                   "size_authority": "trusted" if entry.get("size") is not None else "observed only"}
+        try:
+            with _read_deadline():
+                data = _read_file_once(path, entry.get("size"), attempt)
+                attempt["digest"] = hashlib.sha256(data).hexdigest()
+                if len(data) != (entry["size"] if entry.get("size") is not None else attempt["size"]):
+                    raise ValueError(f"size mismatch for {entry['path']}: short read or wrong size")
+                if identity is not None and identity != attempt.get("identity"):
+                    raise ValueError("input changed between reads")
+                identity = attempt.get("identity")
+                if time.monotonic() - start >= 120:
+                    raise TimeoutError("verified read exceeded 120 seconds")
+                good = attempt["digest"] == entry["sha256"]
+                if good and consecutive and previous != data:
+                    raise ValueError("authenticated bytes changed between reads")
+                consecutive = consecutive + 1 if good else 0
+                previous = data if good else None
+                if not good:
+                    attempt["error"] = "digest mismatch"
+        except BaseException as exc:
+            attempt["error"] = f"{type(exc).__name__}: {exc}"
+            evidence.receipt["status"] = "refused"
+            fail(f"verified read refused for {path} on read {number}: {exc}")
+        finally:
+            attempt["seconds"] = time.monotonic() - start
+            evidence.receipt["attempts"].append(attempt)
+            evidence.persist()
+        if consecutive == 2:
+            return data
+    evidence.receipt["status"] = "refused"
+    evidence.persist()
+    detail = entry.get("mismatch", "")
+    fail(f"digest mismatch for {entry['path']}: {detail}; exhausted reads on read {reads}; path {path}")
 
 
 def _expected_digest_files(data: bytes, base: str, revision: str) -> list[dict]:
@@ -353,29 +532,27 @@ def _expected_digest_files(data: bytes, base: str, revision: str) -> list[dict]:
     return files
 
 
-def load_expected_digests(path: Path, base: str, revision: str) -> list[dict]:
-    try:
-        data = path.read_bytes()
-    except OSError as exc:
-        fail(f"expected digests file is not usable: {exc}")
-    return _expected_digest_files(data, base, revision)
+def load_expected_digests(path: Path, base: str, revision: str, *, trusted_root_path=None) -> list[dict]:
+    return load_authenticated_digests(trusted_root_path, path, base, revision)[0]
 
 
 def load_authenticated_digests(
     root_path: Path | None, path: Path, base: str, revision: str,
+    *, evidence=None,
 ) -> tuple[list[dict], dict[str, str]]:
     """Authenticate root -> exact model/revision -> list bytes before parsing the list."""
     if root_path is None:
         fail("--trusted-digest-root is required for pinned M2 models")
-    try:
-        root_bytes = root_path.read_bytes()
-    except OSError as exc:
-        fail(f"trusted digest root is not usable: {exc}")
-    root_sha = hashlib.sha256(root_bytes).hexdigest()
     expected_root_sha = (TRUSTED_DIGEST_ROOT_V4_SHA256 if is_student_4bit_pin(base, revision)
                          else TRUSTED_DIGEST_ROOT_SHA256)
-    if root_sha != expected_root_sha:
-        fail("trusted digest root does not match the approved SHA-256")
+    if evidence is None:
+        evidence = VerifiedSnapshot(None, [])
+    root_bytes = verified_file_bytes(root_path, {
+        "path": root_path.name, "sha256": expected_root_sha,
+        "mismatch": "trusted digest root does not match the approved SHA-256",
+    }, evidence)
+    evidence.trust_payloads["root"] = root_bytes
+    root_sha = expected_root_sha
     try:
         root = json.loads(root_bytes.decode("utf-8"))
     except (UnicodeError, json.JSONDecodeError) as exc:
@@ -391,12 +568,11 @@ def load_authenticated_digests(
     if (not isinstance(upstream_sha, str) or len(upstream_sha) != 64
             or any(char not in "0123456789abcdef" for char in upstream_sha)):
         fail("approved model entry has no valid upstream digest-list SHA-256")
-    try:
-        data = path.read_bytes()
-    except OSError as exc:
-        fail(f"expected digests file is not usable: {exc}")
-    if hashlib.sha256(data).hexdigest() != upstream_sha:
-        fail("upstream digest list does not match the approved root")
+    data = verified_file_bytes(path, {
+        "path": path.name, "sha256": upstream_sha,
+        "mismatch": "upstream digest list does not match the approved root",
+    }, evidence)
+    evidence.trust_payloads["expected_digests"] = data
     return _expected_digest_files(data, base, revision), {
         "trusted_root_sha256": root_sha, "upstream_digest_list_sha256": upstream_sha,
         "base": base, "revision": revision,
@@ -415,10 +591,11 @@ def digest_verification_before_load(
     expected_digests_path: Path | None,
     trusted_digest_root_path: Path | None = None,
     resolved: list[Path] | None = None,
+    receipt_path: Path | None = None,
 ) -> dict | None:
     """Admission first (unchanged order), then the one snapshot resolution, then digest verification of that snapshot.
 
-    The verified snapshot is appended to ``resolved`` so the caller loads exactly those bytes, never a second lookup."""
+    Retain authenticated buffers; a snapshot pathname alone is never load authority."""
     if is_winner_pin(base, revision) and expected_digests_path is None:
         fail("--expected-digests is required for the winner pin")
     if is_fallback_pin(base, revision) and expected_digests_path is None:
@@ -429,17 +606,210 @@ def digest_verification_before_load(
     if expected_digests_path is None:
         return None
     binding = {}
+    evidence = VerifiedSnapshot(receipt_path, [])
     if requires_root or trusted_digest_root_path is not None:
         expected_files, binding = load_authenticated_digests(
             trusted_digest_root_path, expected_digests_path, base, revision,
+            evidence=evidence,
         )
     else:
-        expected_files = load_expected_digests(expected_digests_path, base, revision)
+        fail("--trusted-digest-root is required: expected digests have no authenticated parent")
     snapshot_dir = local_snapshot_dir(base, revision)
     if resolved is not None:
         resolved.append(snapshot_dir)
     blob_roots = authenticated_cache_blob_roots(snapshot_dir, base, revision) if binding else ()
-    return {**verify_expected_digests(snapshot_dir, expected_files, blob_roots=blob_roots), **binding}
+    result = verify_expected_digests(snapshot_dir, expected_files, blob_roots=blob_roots,
+                                     receipt_path=receipt_path, evidence=evidence)
+    result.update(binding)
+    return result
+
+
+@contextmanager
+def sealed_snapshot(verified):
+    """Unsloth's pathname API sees sealed memory, never the original snapshot."""
+    if not hasattr(os, "memfd_create"):
+        fail("verified model loading requires Linux memfd seals")
+    import fcntl
+    descriptors = []
+    with tempfile.TemporaryDirectory(prefix="verified-model-") as directory:
+        try:
+            for name in verified.entries:
+                data = verified.checked_bytes(name)
+                target = Path(directory) / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                fd = os.memfd_create("verified-model", os.MFD_ALLOW_SEALING | os.MFD_CLOEXEC)
+                descriptors.append(fd)
+                view = memoryview(data)
+                while view:
+                    written = os.write(fd, view)
+                    if written <= 0:
+                        fail("short write to retained snapshot")
+                    view = view[written:]
+                seals = fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL
+                fcntl.fcntl(fd, fcntl.F_ADD_SEALS, seals)
+                if fcntl.fcntl(fd, fcntl.F_GET_SEALS) & seals != seals:
+                    fail("retained snapshot could not be sealed")
+                target.symlink_to(f"/proc/self/fd/{fd}")
+                if _sha256_file(target) != verified.entries[name]["sha256"]:
+                    fail(f"sealed snapshot copy differs: {name}")
+            yield Path(directory)
+        finally:
+            for fd in descriptors:
+                os.close(fd)
+
+
+def reference_state_dict(verified):
+    from safetensors.torch import load
+    weight_names = {name for name in verified.entries if _is_weight_manifest_path(name)}
+    if not weight_names or any(not name.endswith(".safetensors") for name in weight_names):
+        fail("verified loading only defines safetensors comparisons")
+    index_name = "model.safetensors.index.json"
+    weight_map = None
+    if index_name in verified.entries:
+        weight_map = json.loads(verified.checked_bytes(index_name))["weight_map"]
+        if set(weight_map.values()) != weight_names:
+            fail("verified index and shard set differ")
+    elif weight_names != {"model.safetensors"}:
+        fail("multiple/nonstandard shards require a verified weight_map")
+    reference = {}
+    for name in sorted(weight_names):
+        shard = load(verified.checked_bytes(name))
+        if set(reference) & set(shard):
+            fail("duplicate tensor name across shards")
+        if weight_map is not None and any(weight_map.get(key) != name for key in shard):
+            fail("tensor differs from verified index weight_map")
+        reference.update(shard)
+    if weight_map is not None and set(reference) != set(weight_map):
+        fail("verified index tensor names differ from shard contents")
+    return reference
+
+
+def compare_tensor(name, actual, expected):
+    if actual.device.type not in ("cpu", "cuda"):
+        fail(f"undefined destination comparison for {name}: {actual.device}")
+    if actual.device.type == "cuda":
+        torch.cuda.synchronize(actual.device)
+    if actual.shape != expected.shape or actual.dtype != expected.dtype:
+        fail(f"loaded tensor shape/dtype differs: {name}")
+    # Byte equality includes NaN encodings and signed zero; no numerical tolerance.
+    actual_bytes = actual.detach().contiguous().reshape(-1).view(torch.uint8).cpu().numpy().tobytes()
+    expected_bytes = expected.detach().contiguous().reshape(-1).view(torch.uint8).cpu().numpy().tobytes()
+    if hashlib.sha256(actual_bytes).digest() != hashlib.sha256(expected_bytes).digest():
+        fail(f"loaded tensor payload differs: {name}")
+
+
+def compare_quant_state(name, actual, expected):
+    if actual is None:
+        fail(f"Linear4bit quant_state is missing: {name}")
+    for field in ("quant_type", "blocksize", "dtype", "shape", "nested"):
+        if getattr(actual, field) != getattr(expected, field):
+            fail(f"loaded quantization metadata differs: {name}.{field}")
+    compare_tensor(name + ".absmax", actual.absmax, expected.absmax)
+    compare_tensor(name + ".quant_map", actual.code, expected.code)
+    if actual.nested:
+        compare_tensor(name + ".offset", actual.offset.reshape(1), expected.offset.reshape(1))
+        compare_quant_state(name + ".nested", actual.state2, expected.state2)
+    elif actual.state2 is not None or actual.offset is not None:
+        fail(f"unexpected nested quantization state: {name}")
+
+
+def verify_loaded_model(model, reference, *, dtype, config):
+    from bitsandbytes.nn import Linear4bit
+    from bitsandbytes.functional import QuantState
+    actual = model.state_dict()
+    expected = dict(reference)
+    quantized = set()
+    for name, module in model.named_modules():
+        if not isinstance(module, Linear4bit):
+            continue
+        key = name + ".weight"
+        if module.weight.quant_state is None or module.quant_state is None:
+            fail(f"Linear4bit quant_state is missing: {name}")
+        siblings = {k[len(key) + 1:]: v for k, v in reference.items() if k.startswith(key + ".")}
+        if not siblings:
+            # shortcut: only prequantized checkpoints have a byte-exact reference; add
+            # an independently validated on-load quantization mapping before enabling others.
+            fail(f"undefined on-load quantization comparison: {key}")
+        state = QuantState.from_dict(dict(siblings), device=torch.device("cpu"))
+        compare_quant_state(key, module.weight.quant_state, state)
+        compare_quant_state(key + ".module", module.quant_state, state)
+        serialized = {k[len(key) + 1:]: v for k, v in actual.items() if k.startswith(key + ".")}
+        compare_quant_state(key + ".serialized", QuantState.from_dict(serialized,
+                            device=torch.device("cpu")), state)
+        quantized.add(key)
+        # Packed JSON may change key ordering; compare the decoded fields above.
+        for sibling in siblings:
+            full = key + "." + sibling
+            if sibling.startswith("quant_state."):
+                expected.pop(full)
+                if full not in actual:
+                    fail(f"missing serialized quantization metadata: {full}")
+                actual.pop(full)
+    if not quantized:
+        fail("no Linear4bit modules in the loaded 4-bit model")
+    if config.get("tie_word_embeddings") is True and "lm_head.weight" not in expected:
+        if model.get_output_embeddings().weight is not model.get_input_embeddings().weight:
+            fail("declared tied embeddings are not tied")
+        expected["lm_head.weight"] = reference["model.embed_tokens.weight"]
+    if set(actual) != set(expected):
+        fail("loaded tensor names differ from the verified checkpoint")
+    casts = []
+    for name, value in expected.items():
+        target = value
+        if name not in quantized and not any(name.startswith(k + ".") for k in quantized):
+            if value.is_floating_point() and value.dtype != dtype:
+                target = value.to(dtype=dtype)
+                casts.append({"name": name, "from": str(value.dtype), "to": str(dtype)})
+        compare_tensor(name, actual[name], target)
+    return {"tensors": len(actual), "linear4bit": len(quantized), "casts": casts,
+            "gpu_destinations": sorted({str(t.device) for t in actual.values() if t.device.type == "cuda"}),
+            "comparison": "exact payload/shape/dtype; decoded quantization state"}
+
+
+def load_verified_model(snapshot, verification, *, max_seq_length):
+    """Verification-bound pathname fallback; no unverified loader branch exists."""
+    if (not isinstance(verification, VerifiedSnapshot) or verification.receipt_path is None
+            or not verification.get("trusted_root_sha256")):
+        fail("verified loading requires retained bytes, an approved root and a durable receipt")
+    try:
+        config = json.loads(verification.checked_bytes("config.json"))
+        if not config.get("quantization_config", {}).get("load_in_4bit"):
+            fail("full-precision winner/fallback loading refused; prequantized checkpoint required; follow-up WO-G32-LDR-FP1")
+        if os.name != "posix" or not hasattr(os, "memfd_create"):
+            fail("verified model loading requires the Linux trainer image")
+        reference = reference_state_dict(verification)
+        del reference
+        # Unsloth's normal automatic dtype choice, made explicit for comparison.
+        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        with sealed_snapshot(verification) as retained_path:
+            model, tokenizer = FastLanguageModel.from_pretrained(
+                str(retained_path), max_seq_length=max_seq_length, load_in_4bit=True,
+                dtype=dtype, use_exact_model_name=True, local_files_only=True,
+                trust_remote_code=False)
+            # Do not accept a loader's tokenizer/config fallback to another cache.
+            from tokenizers import Tokenizer
+            expected_tokenizer = Tokenizer.from_str(verification.checked_bytes("tokenizer.json").decode())
+            if json.loads(tokenizer.backend_tokenizer.to_str()) != json.loads(expected_tokenizer.to_str()):
+                fail("loaded tokenizer differs from verified tokenizer bytes")
+            for field in ("model_type", "vocab_size", "hidden_size", "intermediate_size",
+                          "num_hidden_layers", "num_attention_heads", "num_key_value_heads",
+                          "tie_word_embeddings"):
+                if field in config and getattr(model.config, field, None) != config[field]:
+                    fail(f"loaded model config differs: {field}")
+            # Re-derive after loading to detect reference/buffer mutation as well.
+            reference = reference_state_dict(verification)
+            verification["loaded_verification"] = verify_loaded_model(
+                model, reference, dtype=dtype, config=config)
+        verification.receipt.update(status="verified", loader="sealed-memfd pathname fallback",
+                                    post_load=verification["loaded_verification"])
+        verification.persist()
+        verification["verified_read_receipt"] = str(verification.receipt_path)
+        verification.payloads.clear()
+        return model, tokenizer
+    except BaseException as exc:
+        verification.receipt.update(status="refused", error=f"{type(exc).__name__}: {exc}")
+        verification.persist()
+        raise
 
 
 def resolve_commit(config_commit: str | None, repo: str, revision: str, snapshot: Path | None = None) -> str:
@@ -2039,7 +2409,8 @@ def train(
                 raise ValueError("epoch mode needs more than 8 training rows for an interior first-epoch update")
         snapshot_paths: list[Path] = []
         digest_verification = digest_verification_before_load(
-            base, revision, expected_digests_path, trusted_digest_root_path, resolved=snapshot_paths)
+            base, revision, expected_digests_path, trusted_digest_root_path, resolved=snapshot_paths,
+            receipt_path=report_path.with_suffix(".verified-read.json"))
         # Keep the report's resolved commit separate from snapshot discovery,
         # including when authentication or model loading fails before resolution.
         snapshot = snapshot_paths[0] if snapshot_paths else local_snapshot_dir(base, revision)
@@ -2059,9 +2430,8 @@ def train(
         set_seed(SEED)
         torch.cuda.reset_peak_memory_stats()
         memory_tracking_initialized = True
-        model, tokenizer = FastLanguageModel.from_pretrained(
-            str(snapshot), max_seq_length=epoch_context_limit if epochs is not None else SEQ, load_in_4bit=True,
-            use_exact_model_name=True, local_files_only=True)
+        model, tokenizer = load_verified_model(snapshot, digest_verification,
+            max_seq_length=epoch_context_limit if epochs is not None else SEQ)
         resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision, snapshot)
         if callback is not None and callback.identity["base_revision"] != resolved:
             raise ValueError("loaded model differs from frozen dev identity")
@@ -2220,11 +2590,11 @@ def run_context_probe(inputs_path: Path, base: str, revision: str, report_path: 
         report.update(inputs_sha256=input_sha256, input_count=len(inputs))
         resolved: list[Path] = []
         verification = digest_verification_before_load(base, revision, expected_digests_path, trusted_digest_root_path,
-                                                       resolved=resolved)
+                                                       resolved=resolved,
+                                                       receipt_path=report_path.with_suffix(".verified-read.json"))
         snapshot = resolved[0] if resolved else local_snapshot_dir(base, revision)  # the one resolution, before any model effect
         set_seed(SEED)
-        model, tokenizer = FastLanguageModel.from_pretrained(str(snapshot),
-            max_seq_length=context_limit, load_in_4bit=True, use_exact_model_name=True, local_files_only=True)
+        model, tokenizer = load_verified_model(snapshot, verification, max_seq_length=context_limit)
         loaded = True
         report["resolved_commit"] = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision, snapshot)
         report["digest_verification"] = verification
@@ -2303,16 +2673,11 @@ def run_probe(
     resolved: list[Path] = []
     digest_verification = digest_verification_before_load(
         base, revision, expected_digests_path, trusted_digest_root_path, resolved=resolved,
+        receipt_path=report_path.with_suffix(".verified-read.json"),
     )
     snapshot = resolved[0] if resolved else local_snapshot_dir(base, revision)  # the one resolution, before any model effect
     set_seed(SEED)
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        str(snapshot),
-        max_seq_length=probe_seq_len,
-        load_in_4bit=True,
-        use_exact_model_name=True,
-        local_files_only=True,
-    )
+    model, tokenizer = load_verified_model(snapshot, digest_verification, max_seq_length=probe_seq_len)
     resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision, snapshot)
     model = FastLanguageModel.get_peft_model(
         model,
