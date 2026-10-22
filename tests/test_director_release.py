@@ -52,6 +52,28 @@ _COMPOSE_INVALID_TEMPLATE = re.compile(
     r"invalid template|template syntax error",
     re.IGNORECASE,
 )
+_COMPOSE_ENV_FILE_NOT_FOUND = re.compile(r"env file (.+?) not found", re.IGNORECASE)
+_COMPOSE_OPEN_NO_SUCH_FILE = re.compile(
+    r"open (.+?): no such file or directory",
+    re.IGNORECASE,
+)
+_COMPOSE_WINDOWS_NO_SUCH_FILE = re.compile(
+    r"the system cannot find the file specified",
+    re.IGNORECASE,
+)
+_COMPOSE_CONNECT_ERROR = re.compile(
+    r"error during connect|cannot connect to the docker daemon",
+    re.IGNORECASE,
+)
+_COMPOSE_PERMISSION_DENIED = re.compile(r"permission denied", re.IGNORECASE)
+_COMPOSE_UNKNOWN_FLAG = re.compile(r"unknown (?:shorthand )?flag", re.IGNORECASE)
+_COMPOSE_DOCKER_LOG_PREFIX = re.compile(
+    r'^time="[^"]*"\s+level=\S+\s+msg="(.*)"\s*$',
+)
+_COMPOSE_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+_COMPOSE_PATH_LIKE = re.compile(
+    r"(?:/[A-Za-z0-9_./-]+|\\\\wsl\.localhost\\[^\s:\"]+|\\\\[^\s:\"]+|[A-Za-z]:\\[^\s:\"]+)",
+)
 
 
 def compose_render_diagnostic_path(environ=None):
@@ -83,6 +105,152 @@ def _label_temp_absolute_path(operand, environ):
     return operand
 
 
+def _compose_invocation_resource_paths(argv):
+    env_file = None
+    compose_files = []
+    if not argv:
+        return env_file, compose_files
+    index = 1
+    while index < len(argv):
+        token = argv[index]
+        if token == "--env-file" and index + 1 < len(argv):
+            env_file = argv[index + 1]
+            index += 2
+            continue
+        if token in ("-f", "--file") and index + 1 < len(argv):
+            compose_files.append(argv[index + 1])
+            index += 2
+            continue
+        index += 1
+    return env_file, compose_files
+
+
+def _normalize_path_for_stderr_match(path_text):
+    text = path_text.replace("\\", "/").rstrip("/")
+    if text.startswith("//wsl.localhost/"):
+        return text.lower()
+    if len(text) > 2 and text[1] == ":":
+        return text.lower()
+    return text.lower()
+
+
+def _paths_refer_to_same(path_a, path_b):
+    if not path_a or not path_b:
+        return False
+    norm_a = _normalize_path_for_stderr_match(path_a)
+    norm_b = _normalize_path_for_stderr_match(path_b)
+    if norm_a == norm_b:
+        return True
+    return norm_a.endswith("/" + norm_b.lstrip("/")) or norm_b.endswith("/" + norm_a.lstrip("/"))
+
+
+def _stderr_path_label(path_text, env_file, compose_files, environ):
+    if env_file and _paths_refer_to_same(path_text, env_file):
+        return "<env-file>"
+    for compose_file in compose_files:
+        if _paths_refer_to_same(path_text, compose_file):
+            return "<compose-file>"
+    lowered = path_text.replace("\\", "/").lower()
+    raw_lower = path_text.lower()
+    if "/.docker/" in lowered or "\\.docker\\" in raw_lower or lowered.endswith("/.docker"):
+        return "<docker-config>"
+    try:
+        path = Path(path_text)
+        if path.is_absolute() or path_text.startswith(("\\\\", "/")):
+            resolved = path.resolve()
+            runner = environ.get("RUNNER_TEMP") if environ else None
+            if runner:
+                try:
+                    resolved.relative_to(Path(runner).resolve())
+                    return "<temp-path>"
+                except ValueError:
+                    pass
+            temp_root = Path(tempfile.gettempdir()).resolve()
+            try:
+                resolved.relative_to(temp_root)
+                return "<temp-path>"
+            except ValueError:
+                pass
+            if path_text.startswith(("/tmp/", "/var/folders/")) or "Temp" in path_text:
+                return "<temp-path>"
+            return "<other-path>"
+    except OSError:
+        pass
+    if "tmp" in lowered or "temp" in lowered:
+        return "<temp-path>"
+    return "<other-path>"
+
+
+def _stderr_label_for_paths_in_line(line, env_file, compose_files, environ, explicit_path=None):
+    path_texts = []
+    if explicit_path:
+        path_texts.append(explicit_path)
+    path_texts.extend(match.group(0) for match in _COMPOSE_PATH_LIKE.finditer(line))
+    labels = [
+        _stderr_path_label(path_text, env_file, compose_files, environ) for path_text in path_texts
+    ]
+    for preferred in ("<env-file>", "<compose-file>", "<docker-config>", "<temp-path>", "<other-path>"):
+        if preferred in labels:
+            return preferred
+    if env_file:
+        return "<env-file>"
+    if compose_files:
+        return "<compose-file>"
+    return "<other-path>"
+
+
+def _compose_stderr_unknown_line_literal(line):
+    stripped = line
+    docker_log = _COMPOSE_DOCKER_LOG_PREFIX.match(stripped)
+    if docker_log:
+        stripped = docker_log.group(1).replace('\\"', '"').replace("\\'", "'")
+    lowered = stripped.lstrip().lower()
+    for prefix, literal in (
+        ("error", "error"),
+        ("time=", "time="),
+        ("failed", "failed"),
+        ("cannot", "cannot"),
+        ("invalid", "invalid"),
+    ):
+        if lowered.startswith(prefix):
+            return literal
+    return "unrecognized"
+
+
+def _classify_compose_stderr_line(normalized, env_file, compose_files, environ):
+    unset = _COMPOSE_UNSET_VARIABLE.search(normalized)
+    if unset and _COMPOSE_IDENTIFIER.fullmatch(unset.group(1)):
+        return f"unset variable: {unset.group(1)}"
+    required = _COMPOSE_REQUIRED_VARIABLE.search(normalized)
+    if required and _COMPOSE_IDENTIFIER.fullmatch(required.group(1)):
+        return f"required variable missing: {required.group(1)}"
+    if _COMPOSE_INVALID_TEMPLATE.search(normalized):
+        return _COMPOSE_STDERR_INVALID_TEMPLATE
+    env_missing = _COMPOSE_ENV_FILE_NOT_FOUND.search(normalized)
+    if env_missing:
+        label = _stderr_label_for_paths_in_line(normalized, env_file, compose_files, environ)
+        if env_file:
+            label = "<env-file>"
+        return f"env file not found: {label}"
+    if _COMPOSE_CONNECT_ERROR.search(normalized):
+        return "connect error"
+    if _COMPOSE_UNKNOWN_FLAG.search(normalized):
+        return "unknown flag"
+    open_match = _COMPOSE_OPEN_NO_SUCH_FILE.search(normalized)
+    if open_match:
+        label = _stderr_label_for_paths_in_line(
+            normalized, env_file, compose_files, environ, open_match.group(1).strip(),
+        )
+        return f"open failed: {label}"
+    if _COMPOSE_WINDOWS_NO_SUCH_FILE.search(normalized) and not env_missing:
+        label = _stderr_label_for_paths_in_line(normalized, env_file, compose_files, environ)
+        return f"open failed: {label}"
+    if _COMPOSE_PERMISSION_DENIED.search(normalized):
+        label = _stderr_label_for_paths_in_line(normalized, env_file, compose_files, environ)
+        return f"permission denied: {label}"
+    return _compose_stderr_unknown_line_literal(normalized)
+
+
 def sanitize_compose_render_docker_argv(argv, environ=None):
     environ = os.environ if environ is None else environ
     if not argv:
@@ -95,25 +263,19 @@ def sanitize_compose_render_docker_argv(argv, environ=None):
     return sanitized
 
 
-def filter_compose_render_stderr_tail(stderr_bytes):
+def filter_compose_render_stderr_tail(stderr_bytes, argv=None, environ=None):
+    environ = os.environ if environ is None else environ
+    env_file, compose_files = _compose_invocation_resource_paths(argv or [])
     text = stderr_bytes.decode("utf-8", errors="replace")[-1500:]
     filtered = []
     for line in text.splitlines():
         if not line.strip():
             continue
-        normalized = line.replace('\\"', '"').replace("\\'", "'")
-        unset = _COMPOSE_UNSET_VARIABLE.search(normalized)
-        if unset and _COMPOSE_IDENTIFIER.fullmatch(unset.group(1)):
-            filtered.append(f"unset variable: {unset.group(1)}")
-            continue
-        required = _COMPOSE_REQUIRED_VARIABLE.search(normalized)
-        if required and _COMPOSE_IDENTIFIER.fullmatch(required.group(1)):
-            filtered.append(f"required variable missing: {required.group(1)}")
-            continue
-        if _COMPOSE_INVALID_TEMPLATE.search(normalized):
-            filtered.append(_COMPOSE_STDERR_INVALID_TEMPLATE)
-            continue
-        filtered.append(_COMPOSE_STDERR_LINE_REDACTED)
+        normalized = _COMPOSE_ANSI_ESCAPE.sub("", line)
+        normalized = normalized.replace('\\"', '"').replace("\\'", "'")
+        filtered.append(
+            _classify_compose_stderr_line(normalized, env_file, compose_files, environ)
+        )
     return filtered
 
 
@@ -123,7 +285,7 @@ def format_compose_render_diagnostic_record(result, argv, environ=None):
         "rc": result.returncode,
         "stdout_bytes": len(result.stdout or b""),
         "argv": sanitize_compose_render_docker_argv(argv, environ),
-        "stderr_tail": filter_compose_render_stderr_tail(result.stderr or b""),
+        "stderr_tail": filter_compose_render_stderr_tail(result.stderr or b"", argv, environ),
     }
     return json.dumps(payload, ensure_ascii=False) + "\n"
 
@@ -3568,7 +3730,7 @@ class ComposeRenderDiagnosticTests(unittest.TestCase):
             self.assertEqual(record["stdout_bytes"], len(stdout))
             self.assertEqual(record["stderr_tail"], [
                 "required variable missing: MISSING",
-                _COMPOSE_STDERR_LINE_REDACTED,
+                "unrecognized",
             ])
 
     def test_compose_render_diagnostic_ci_consumer_prints_record(self):
@@ -3594,6 +3756,104 @@ class ComposeRenderDiagnosticTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as runner_temp, patch.dict(os.environ, {"RUNNER_TEMP": runner_temp}), redirect_stdout(io.StringIO()) as output:
             print_compose_render_diagnostic_for_ci()
         self.assertEqual(output.getvalue(), "")
+
+    def _argv(self, shard_temp):
+        env_path = str(Path(shard_temp) / "runtime.env")
+        compose_path = str(Path(shard_temp) / "compose.yml")
+        return [
+            "docker",
+            "compose",
+            "--project-name",
+            "fixture-director",
+            "--env-file",
+            env_path,
+            "-f",
+            compose_path,
+            "config",
+        ]
+
+    def test_filter_compose_render_stderr_classifies_env_file_not_found_wsl(self):
+        with tempfile.TemporaryDirectory() as shard_temp:
+            env_path = str(Path(shard_temp) / "runtime.env")
+            argv = self._argv(shard_temp)
+            line = (
+                f"env file \\\\wsl.localhost\\Ubuntu\\home\\user\\runtime.env not found: "
+                f"GetFileAttributesEx {env_path}: The system cannot find the file specified."
+            )
+            tail = filter_compose_render_stderr_tail(line.encode(), argv, {"RUNNER_TEMP": shard_temp})
+            self.assertEqual(tail, ["env file not found: <env-file>"])
+            self.assertNotIn(self.sentinel, json.dumps(tail))
+
+    def test_filter_compose_render_stderr_classifies_open_failed_and_connect(self):
+        with tempfile.TemporaryDirectory() as shard_temp:
+            argv = self._argv(shard_temp)
+            compose_path = str(Path(shard_temp) / "compose.yml")
+            lines = "\n".join([
+                f"open {compose_path}: no such file or directory",
+                "error during connect: Get http://%2F%2F.%2Fpipe%2Fdocker_engine/v1.24/containers/json: open //./pipe/docker_engine: The system cannot find the file specified.",
+                "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+            ])
+            tail = filter_compose_render_stderr_tail(lines.encode(), argv, {"RUNNER_TEMP": shard_temp})
+            self.assertEqual(tail[0], "open failed: <compose-file>")
+            self.assertEqual(tail[1], "connect error")
+            self.assertEqual(tail[2], "connect error")
+
+    def test_filter_compose_render_stderr_classifies_permission_and_unknown_flag(self):
+        with tempfile.TemporaryDirectory() as shard_temp:
+            argv = self._argv(shard_temp)
+            docker_config = str(Path(shard_temp) / ".docker" / "config.json")
+            lines = "\n".join([
+                f"permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock: {docker_config}",
+                "unknown flag: --imaginary",
+                "unknown shorthand flag: 'x' in -x",
+            ])
+            tail = filter_compose_render_stderr_tail(lines.encode(), argv, {"RUNNER_TEMP": shard_temp})
+            self.assertEqual(tail[0], "permission denied: <docker-config>")
+            self.assertEqual(tail[1], "unknown flag")
+            self.assertEqual(tail[2], "unknown flag")
+
+    def test_filter_compose_render_stderr_unknown_line_allowlist_and_docker_log_prefix(self):
+        with tempfile.TemporaryDirectory() as shard_temp:
+            argv = self._argv(shard_temp)
+            lines = "\n".join([
+                'time="2026-10-22T11:13:01Z" level=warning msg="The \\"SAFE\\" variable is not set. Defaulting to a blank string."',
+                "error loading compose file",
+                "failed to read /tmp/secret-token-abc",
+                "cannot stat file",
+                "invalid project name",
+                f"arbitrary noise with {self.sentinel}",
+                "\x1b[31merror\x1b[0m from ansi",
+            ])
+            tail = filter_compose_render_stderr_tail(lines.encode(), argv, {"RUNNER_TEMP": shard_temp})
+            self.assertEqual(tail[0], "unset variable: SAFE")
+            self.assertEqual(tail[1:], ["error", "failed", "cannot", "invalid", "unrecognized", "error"])
+            self.assertNotIn(self.sentinel, json.dumps(tail))
+
+    def test_filter_compose_render_stderr_temp_and_other_path_labels(self):
+        with tempfile.TemporaryDirectory() as shard_temp:
+            argv = self._argv(shard_temp)
+            other = "C:\\Program Files\\Docker\\docker.exe"
+            tmp_path = str(Path(shard_temp) / "nested" / "missing.yml")
+            lines = f"open {tmp_path}: no such file or directory\nopen {other}: no such file or directory\n"
+            tail = filter_compose_render_stderr_tail(lines.encode(), argv, {"RUNNER_TEMP": shard_temp})
+            self.assertEqual(tail[0], "open failed: <temp-path>")
+            self.assertEqual(tail[1], "open failed: <other-path>")
+
+    def test_filter_compose_render_stderr_multiline_and_bounds_propagate(self):
+        with tempfile.TemporaryDirectory() as shard_temp:
+            argv = self._argv(shard_temp)
+            stderr = ("cannot proceed\n" * 200).encode()
+            tail = filter_compose_render_stderr_tail(stderr, argv, {"RUNNER_TEMP": shard_temp})
+            self.assertTrue(all(entry == "cannot" for entry in tail))
+            payload = format_compose_render_diagnostic_record(
+                self._failed_result(stderr=stderr),
+                argv,
+                {"RUNNER_TEMP": shard_temp},
+            )
+            record = json.loads(payload)
+            self.assertEqual(set(record), {"rc", "stdout_bytes", "argv", "stderr_tail"})
+            self.assertEqual(record["rc"], 1)
+            self.assertLessEqual(len(json.dumps(record["stderr_tail"])), 1500)
 
 
 if __name__ == "__main__":
