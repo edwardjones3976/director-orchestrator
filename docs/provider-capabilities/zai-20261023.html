@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Z.ai route capability note — Director-Orchestrator ISSUE-299 / WO-FRM-20261023-CAP01</title>
+<meta name="description" content="Standalone offline-readable note on the Z.ai scoped coding route in Director-Orchestrator: dispatch, draft-only publication, hooks, stop-and-reconcile behavior, and independent gates.">
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; margin: 0 auto; max-width: 46rem; padding: 1rem 1.25rem; line-height: 1.55; color: #1a1a1a; background: #ffffff; }
+  header { border-bottom: 2px solid #444444; margin-bottom: 1rem; }
+  h1 { font-size: 1.35rem; }
+  h2 { font-size: 1.1rem; margin-top: 1.5rem; }
+  code { background: #f2f2f2; padding: 0 0.25em; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #999999; padding: 0.35rem 0.5rem; text-align: left; vertical-align: top; }
+  footer { margin-top: 2rem; border-top: 1px solid #999999; font-size: 0.9rem; }
+  .note { font-style: italic; }
+</style>
+</head>
+<body>
+<header>
+<h1>Z.ai route capability note</h1>
+<p>Director-Orchestrator · <strong>ISSUE-299</strong> · work order <strong>WO-FRM-20261023-CAP01</strong> (CAPABILITY_VERIFICATION) · <time datetime="2026-10-23">2026-10-23</time></p>
+</header>
+<main>
+<!-- [[Assistant | Z.ai GLM (glm-5.3-flash) | 2026-10-23 | 15:08 UTC | BEGIN]] -->
+<section id="purpose">
+<h2>1. Purpose and scope</h2>
+<p>This note records what one bounded qualification actually exercised on the <code>zai</code> route: a scoped JSON work order, delivered natively, driving only the <code>director_git</code> MCP toolset. It describes observed mechanics and stated policy. It is not a review, an approval, or a claim about any completion stage beyond evidence actually returned by a tool call.</p>
+</section>
+<section id="route">
+<h2>2. The actual route</h2>
+<p>The Director hands the route a single scoped JSON task. The task names the work order, an allowed-paths list, a start timestamp, and an ordered list of bounded steps. Everything else is out of scope by construction.</p>
+<ul>
+<li><strong>Scoped JSON task:</strong> one <code>{"task": …, "allowed_paths": […]}</code> object; every file write must fall inside the allowed paths (here, exactly <code>docs/provider-capabilities/zai-20261023.html</code>).</li>
+<li><strong>Tool surface:</strong> six <code>director_git</code> tools — status, read_file, write_file (with an expected-hash precondition), commit, publish_draft, comment. No native shell, no other provider call, no browser, no permission-file edit, no fallback route.</li>
+<li><strong>Draft-only publication:</strong> <code>worker_git_publish_draft</code> opens a <em>draft</em> pull request against <code>main</code>. A draft cannot merge; converting or merging it is not a capability this route holds.</li>
+</ul>
+</section>
+<section id="hooks">
+<h2>3. Normal hooks</h2>
+<p><code>worker_git_commit</code> runs the repository's normal hooks. The route holds no bypass flag and may not add one. A hook failure surfaces as a returned error, which is treated as a stop-and-report condition, not something to evade.</p>
+</section>
+<section id="unknown">
+<h2>4. Error and UNKNOWN behavior: stop and reconcile</h2>
+<ul>
+<li><strong>Refusal is final.</strong> If a tool or gate refuses an action, the refusal is reported; no workaround, renamed retry, or side channel is attempted.</li>
+<li><strong>Unknown is written as UNKNOWN.</strong> Anything not exposed natively — for example a session identifier — is recorded as UNKNOWN rather than inferred from a launcher executable or harness label.</li>
+<li><strong>Ambiguous effect stops the run.</strong> If a call's effect cannot be read from its returned payload, the step is not repeated and the discrepancy is reconciled before any further effectful call.</li>
+<li><strong>No claim ahead of evidence.</strong> No completion stage is asserted before its returned receipt exists: the file write cites the read-back state, the commit cites the returned commit SHA, the publication cites the returned PR URL.</li>
+</ul>
+</section>
+<section id="gates">
+<h2>5. Independent gates this route does not hold</h2>
+<ol>
+<li><strong>Independent review</strong> — a non-author provider reviews the draft; the author cannot review or approve its own contribution.</li>
+<li><strong>CI</strong> — checks must come from a real executed run at the PR head; a green badge or a stub run is not accepted in place of that.</li>
+<li><strong>Merge</strong> — held by the reviewer/Foreman protocol, never by the author, and never defaulted to the owner as a request.</li>
+</ol>
+</section>
+<section id="identity">
+<h2>6. Identity and channels</h2>
+<table>
+<tbody>
+<tr><th scope="row">Provider author</th><td>Z.ai (<code>zai</code> route), GLM family — model id <code>glm-5.3-flash</code> is harness-reported, <span class="note">not confirmed by a native client receipt; session id: UNKNOWN</span></td></tr>
+<tr><th scope="row">GitHub sender</th><td>All commits and comments are pushed through the shared account <code>edwardjones3976</code>. The account is the sender; the Z.ai route is the author of this file's content.</td></tr>
+<tr><th scope="row">Verified channel</th><td>GitHub — every statement is backed by a returned tool receipt (commit SHA, PR URL, comment URL).</td></tr>
+<tr><th scope="row">Unverified channel</th><td>Slack — this route has made no native Slack post; any Slack message attributed to this assignment is unverified.</td></tr>
+</tbody>
+</table>
+</section>
+<section id="evidence">
+<h2>7. Evidence placement</h2>
+<p>A file cannot contain its own final commit SHA or its PR URL, so this document stops at content. The commit hash, tree, draft-PR URL, and ACK comment URL are posted in the PR comment thread bound to this work order. Do not treat this file as proof that any later step succeeded — check the PR comment thread and the PR itself.</p>
+</section>
+<!-- [[Assistant | Z.ai GLM (glm-5.3-flash) | 2026-10-23 | 15:08 UTC | END]] -->
+</main>
+<footer>
+<p>Written <time datetime="2026-10-23">2026-10-23</time> under WO-FRM-20261023-CAP01 by the Z.ai route. Tag times are anchored to the work-order start stamp (15:08 UTC); the route exposes no independent clock tool. Status of later steps (commit, draft PR, ACK): see the PR comment thread.</p>
+</footer>
+</body>
+</html>
