@@ -128,6 +128,9 @@ from time import monotonic
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from .langgraph_primary import (
+    AcceptanceJournal,
+    AcceptanceSQL,
+    acceptance_journal_ddl,
     ClaimOutcome,
     ClaimRequest,
     EffectDisposition,
@@ -791,7 +794,7 @@ def _guard_triggers(schema: str) -> tuple[str, ...]:
 
 def _control_plane_ddl(schema: str) -> tuple[str, ...]:
     from .antigravity_team import team_ddl
-    return _base_control_plane_ddl(schema) + team_ddl(schema)
+    return _base_control_plane_ddl(schema) + team_ddl(schema) + acceptance_journal_ddl(schema + ".")
 
 
 def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
@@ -2267,7 +2270,7 @@ def _reservation_from_row(row: Mapping[str, Any]) -> EffectReservation:
 
 
 @dataclass(frozen=True, slots=True)
-class PostgresConditionalClaimStore:
+class PostgresConditionalClaimStore(AcceptanceJournal):
     """Cross-process ``ConditionalClaimStore`` plus its control-plane records.
 
     :meth:`claim` satisfies the protocol in :mod:`.langgraph_primary`: for one
@@ -2307,6 +2310,14 @@ class PostgresConditionalClaimStore:
         """
 
         return self._store_provenance is _FACTORY_PROVENANCE
+
+    @contextmanager
+    def acceptance_transaction(self):
+        if not self.is_factory_bound_control_plane():
+            raise PostgresControlPlaneError("acceptance store lacks durable provenance")
+        with self._pool.connection() as connection:
+            with connection.transaction():
+                yield AcceptanceSQL(connection, self._schema + ".", postgres=True)
 
     def _require_completion_authority_verifier(self) -> "CompletionAuthorityVerifier":
         verifier = self._completion_authority_verifier

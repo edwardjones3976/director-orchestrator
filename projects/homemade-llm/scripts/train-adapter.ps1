@@ -45,6 +45,7 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'invoke-bounded.ps1')
 . (Join-Path $PSScriptRoot 'train-adapter-stage.ps1')
+Assert-ApprovedEpochImage -Image $Image
 
 $WinnerBase = 'Qwen/Qwen3-14B'
 $WinnerRevision = '40c069824f4251a91eefaf281ebe4c544efd3e18'
@@ -65,7 +66,6 @@ if ($Student4Bit) {
 if ($Winner -and -not $Probe) { Write-Error '-Winner is only valid together with -Probe' }
 if ($Fallback -and -not $Probe) { Write-Error '-Fallback is only valid together with -Probe' }
 if ($PSBoundParameters.ContainsKey('Epochs')) {
-    Assert-ApprovedEpochImage -Image $Image
     if ($Epochs -lt 1 -or $Epochs -gt 6) { Write-Error '-Epochs must be between 1 and 6' }
     if ($PSBoundParameters.ContainsKey('Steps')) { Write-Error '-Epochs and -Steps are mutually exclusive; pass exactly one' }
     if ($Probe) { Write-Error '-Epochs is a training mode and cannot be combined with -Probe' }

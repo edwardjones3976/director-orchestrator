@@ -490,6 +490,460 @@ class VerifiedReadTests(unittest.TestCase):
         self.assertIn("unverified smoke loading is disabled", result.stdout)
 
 
+class VerifiedReadDeadlineTests(unittest.TestCase):
+    def setUp(self):
+        self.data = b"verified tiny fixture"
+        self.path = Path("synthetic.safetensors")
+        self.spec = entry(self.path.name, self.data)
+        self.evidence = trainer.VerifiedSnapshot(None, [self.spec])
+
+    def read(self, path, size, attempt):
+        self.assertEqual((path, size), (self.path, len(self.data)))
+        attempt.update(size=size, bytes_read=size, identity=[1, 2, size, 3, 4], method="fixture")
+        return self.data
+
+    def test_two_124_second_matching_reads_use_shared_budget(self):
+        fake_signal = types.SimpleNamespace(SIGALRM=14, ITIMER_REAL=0,
+            signal=mock.Mock(return_value="previous"), setitimer=mock.Mock(return_value=(7, 2)))
+        with mock.patch.object(trainer, "signal", fake_signal), \
+             mock.patch.object(trainer.time, "monotonic", side_effect=[0, 123.922, 123.922, 200, 323.922, 323.922]), \
+             mock.patch.object(trainer, "_read_file_once", side_effect=self.read) as read:
+            result = trainer.verified_file_bytes(self.path, self.spec, self.evidence)
+        self.assertEqual(result, self.data)
+        self.assertEqual(read.call_count, 2)
+        attempts = self.evidence.receipt["attempts"]
+        self.assertEqual([attempt["attempt"] for attempt in attempts], [1, 2])
+        for attempt in attempts:
+            self.assertEqual(attempt["timeout_seconds"], 180)
+            self.assertAlmostEqual(attempt["seconds"], 123.922)
+            self.assertEqual(attempt["digest"], self.spec["sha256"])
+            self.assertIsNone(attempt["error"])
+        self.assertEqual(fake_signal.setitimer.call_args_list,
+                         [mock.call(0, 180), mock.call(0, 7, 2)] * 2)
+        self.assertEqual(fake_signal.signal.call_args_list[1], mock.call(14, "previous"))
+        self.assertEqual(fake_signal.signal.call_args_list[3], mock.call(14, "previous"))
+
+    def test_monotonic_fallback_refuses_boundary_without_next_read(self):
+        for elapsed in (180, 180.001):
+            with self.subTest(elapsed=elapsed), tempfile.TemporaryDirectory() as tmp:
+                evidence = trainer.VerifiedSnapshot(Path(tmp, "receipt.json"), [self.spec])
+                with mock.patch.object(trainer, "signal", types.SimpleNamespace()), \
+                     mock.patch.object(trainer.time, "monotonic", side_effect=[0, elapsed, elapsed]), \
+                     mock.patch.object(trainer, "_read_file_once", side_effect=self.read) as read:
+                    with self.assertRaisesRegex(SystemExit, "verified read exceeded 180 seconds"):
+                        trainer.verified_file_bytes(self.path, self.spec, evidence)
+                read.assert_called_once()
+                receipt = json.loads(evidence.receipt_path.read_bytes())
+                self.assertEqual(receipt["status"], "refused")
+                self.assertEqual(len(receipt["attempts"]), 1)
+                attempt = receipt["attempts"][0]
+                self.assertEqual(attempt["timeout_seconds"], 180)
+                self.assertEqual(attempt["seconds"], elapsed)
+                self.assertEqual(attempt["digest"], self.spec["sha256"])
+                self.assertIn("TimeoutError", attempt["error"])
+
+    def test_signal_expiry_retains_attempt_and_restores_timer_and_handler(self):
+        fake_signal = types.SimpleNamespace(SIGALRM=14, ITIMER_REAL=0,
+            signal=mock.Mock(return_value="previous"), setitimer=mock.Mock(return_value=(7, 2)))
+        def expire(*args):
+            self.read(*args)
+            handler = fake_signal.signal.call_args_list[0].args[1]
+            handler(14, None)
+        with mock.patch.object(trainer, "signal", fake_signal), \
+             mock.patch.object(trainer.time, "monotonic", side_effect=[0, 180]), \
+             mock.patch.object(trainer, "_read_file_once", side_effect=expire) as read:
+            with self.assertRaisesRegex(SystemExit, "verified read exceeded 180 seconds"):
+                trainer.verified_file_bytes(self.path, self.spec, self.evidence)
+        read.assert_called_once()
+        self.assertEqual(self.evidence.receipt["status"], "refused")
+        self.assertEqual(len(self.evidence.receipt["attempts"]), 1)
+        attempt = self.evidence.receipt["attempts"][0]
+        self.assertEqual((attempt["timeout_seconds"], attempt["seconds"]), (180, 180))
+        self.assertEqual(attempt["error"], "TimeoutError: verified read exceeded 180 seconds")
+        self.assertEqual(fake_signal.setitimer.call_args_list, [mock.call(0, 180), mock.call(0, 7, 2)])
+        self.assertEqual(fake_signal.signal.call_args_list[-1], mock.call(14, "previous"))
+
+    def test_explicit_helper_duration_controls_message_and_restoration(self):
+        fake_signal = types.SimpleNamespace(SIGALRM=14, ITIMER_REAL=0,
+            signal=mock.Mock(return_value="previous"), setitimer=mock.Mock(return_value=(7, 2)))
+        with mock.patch.object(trainer, "signal", fake_signal):
+            with self.assertRaisesRegex(TimeoutError, "verified read exceeded 0.5 seconds"):
+                with trainer._read_deadline(0.5):
+                    fake_signal.signal.call_args_list[0].args[1](14, None)
+        self.assertEqual(fake_signal.setitimer.call_args_list, [mock.call(0, 0.5), mock.call(0, 7, 2)])
+        self.assertEqual(fake_signal.signal.call_args_list[-1], mock.call(14, "previous"))
+
+
+class PaddingAllowanceTests(unittest.TestCase):
+    class Tensor:
+        """Small bf16 byte fixture exercising the production byte comparator."""
+        def __init__(self, rows, *, storage=None, offset=0):
+            self.rows = copy.deepcopy(rows)
+            self.shape = (len(rows), len(rows[0]))
+            self.dtype = "bfloat16"
+            self.device = types.SimpleNamespace(type="cpu")
+            self.storage = storage if storage is not None else object()
+            self.offset = offset
+
+        def data_ptr(self):
+            return id(self.storage) + self.offset
+
+        def untyped_storage(self):
+            return types.SimpleNamespace(data_ptr=lambda: id(self.storage))
+
+        def is_floating_point(self):
+            return True
+
+        def to(self, *, dtype):
+            result = self.clone()
+            result.dtype = dtype
+            return result
+
+        def clone(self):
+            result = PaddingAllowanceTests.Tensor(self.rows)
+            result.dtype = self.dtype
+            return result
+
+        def __getitem__(self, index):
+            return types.SimpleNamespace(zero_=lambda: self.rows[index].__setitem__(slice(None), [0] * self.shape[1]))
+
+        def detach(self):
+            return self
+
+        contiguous = detach
+        cpu = detach
+        numpy = detach
+
+        def reshape(self, *_):
+            return self
+
+        def view(self, *_):
+            return self
+
+        def tobytes(self):
+            return b"".join(value.to_bytes(2, "little") for row in self.rows for value in row)
+
+    def setUp(self):
+        self.key = "backbone.input.weight"  # No hard-coded model.embed_tokens name.
+        self.config = {"tie_word_embeddings": False, "pad_token_id": 1, "eos_token_id": 2, "vocab_size": 3}
+        self.docs = {
+            "config.json": self.config,
+            "tokenizer_config.json": {"pad_token": "<pad>", "eos_token": "<eos>"},
+            "generation_config.json": {"pad_token_id": 1, "eos_token_id": 2},
+            "tokenizer.json": {"added_tokens": [{"id": 1, "content": "<pad>"}, {"id": 2, "content": "<eos>"}]},
+        }
+        self.reference = {self.key: self.Tensor([[1, 2], [3, 4], [5, 6]]),
+                          "lm_head.weight": self.Tensor([[7, 8], [9, 10], [11, 12]]),
+                          "linear.weight": self.Tensor([[13, 14]]),
+                          "linear.weight.quant_state.bitsandbytes__nf4": self.Tensor([[15]])}
+        self.actual = {key: value.clone() for key, value in self.reference.items()}
+        class Embedding:
+            pass
+        embedding = Embedding()
+        embedding.weight = self.actual[self.key]
+        embedding.padding_idx = 1
+        self.embedding = embedding
+        class Linear4bit:
+            pass
+        linear = Linear4bit()
+        linear.weight = self.actual["linear.weight"]
+        linear.weight.quant_state = linear.quant_state = object()
+        self.model = types.SimpleNamespace(
+            get_input_embeddings=lambda: embedding,
+            lm_head=types.SimpleNamespace(weight=self.actual["lm_head.weight"]),
+            named_modules=lambda: [("backbone.input", embedding), ("linear", linear)],
+            state_dict=lambda: dict(self.actual))
+        patches = [
+            mock.patch.object(trainer, "torch", types.SimpleNamespace(
+                nn=types.SimpleNamespace(Embedding=Embedding), uint8="uint8", device=lambda value: value)),
+            mock.patch.dict(sys.modules, {
+                "bitsandbytes.nn": types.SimpleNamespace(Linear4bit=Linear4bit),
+                "unsloth.models.llama": types.SimpleNamespace(__file__="fixture/unsloth/models/llama.py"),
+                "bitsandbytes.functional": types.SimpleNamespace(
+                    QuantState=types.SimpleNamespace(from_dict=lambda *args, **kwargs: object()))}),
+            mock.patch.object(trainer, "compare_quant_state"),
+        ]
+        self.source_hash = mock.Mock(return_value="e09924b71078efabcd5173002620baa72cf9a09f1d974af4bad5516f5508e225")
+        patches.append(mock.patch.object(trainer, "_sha256_file", self.source_hash))
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def evidence(self, receipt_path=None):
+        payloads = {name: json.dumps(doc).encode() for name, doc in self.docs.items()}
+        evidence = trainer.VerifiedSnapshot(receipt_path, [entry(name, data) for name, data in payloads.items()])
+        evidence.payloads = payloads
+        return evidence
+
+    def check(self, *, verified=True):
+        self.last_evidence = self.evidence()
+        return trainer.verify_loaded_model(self.model, self.reference, dtype="bfloat16",
+                                          config=self.config, verified=self.last_evidence if verified else None)
+
+    def zero_pad(self):
+        self.actual[self.key].rows[1] = [0, 0]
+
+    def test_exact_identity_nonzero_padding_and_no_metadata(self):
+        for verified in (True, False):
+            result = self.check(verified=verified)
+            self.assertNotIn("input_embedding_pad_row_allowance", result)
+            self.assertNotIn("allowance", result["comparison"])
+            self.assertNotIn("input_embedding_pad_row_candidate", self.last_evidence.receipt)
+        self.source_hash.assert_not_called()
+
+    def test_zero_pad_receipt_and_no_mutation(self):
+        self.zero_pad()
+        before = {key: value.tobytes() for key, value in self.actual.items()}
+        originals = {key: value.tobytes() for key, value in self.reference.items()}
+        result = self.check()
+        allowance = result["input_embedding_pad_row_allowance"]
+        self.assertEqual((allowance["tensor"], allowance["token_id"], allowance["token"]),
+                         (self.key, 1, "<pad>"))
+        self.assertEqual(allowance["configuration_sha256"],
+                         {name: hashlib.sha256(json.dumps(doc).encode()).hexdigest() for name, doc in self.docs.items()})
+        self.assertEqual(allowance["source"]["sha256"], "e09924b71078efabcd5173002620baa72cf9a09f1d974af4bad5516f5508e225")
+        self.assertEqual(allowance["source"]["lines"], "3004-3025")
+        self.assertNotIn("pinned_image", allowance)
+        self.assertIn("1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739", allowance["source_reference_image"])
+        self.assertEqual(allowance["source"]["verification"], "loaded module source file SHA-256")
+        self.source_hash.assert_called_once_with(Path("fixture/unsloth/models/llama.py"))
+        self.assertIn("input-embedding pad row zeroed by loader (allowance)", result["comparison"])
+        self.assertEqual(before, {key: value.tobytes() for key, value in self.actual.items()})
+        self.assertEqual(originals, {key: value.tobytes() for key, value in self.reference.items()})
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = trainer.VerifiedSnapshot(Path(tmp, "receipt.json"), [])
+            evidence.receipt.update(status="verified", post_load=result)
+            evidence.persist()
+            self.assertEqual(json.loads(evidence.receipt_path.read_bytes())["post_load"], result)
+
+    def test_corrupt_rows_and_negative_zero_refuse(self):
+        for rows in ([[0, 0], [3, 4], [5, 6]], [[1, 2], [0, 1], [5, 6]],
+                     [[1, 2], [0, 0x8000], [5, 6]], [[0, 0], [0, 0], [5, 6]]):
+            with self.subTest(rows=rows):
+                self.actual[self.key].rows = rows
+                with self.assertRaisesRegex(SystemExit, "payload differs"):
+                    self.check()
+
+    def test_other_tensor_and_shape_dtype_checks_remain_exact(self):
+        self.zero_pad()
+        head = self.actual["lm_head.weight"]
+        head.rows[1] = [0, 0]
+        with self.assertRaisesRegex(SystemExit, "payload differs: lm_head.weight"):
+            self.check()
+        head.rows[1] = [9, 10]
+        tensor = self.actual[self.key]
+        for field, value in (("shape", (3, 1)), ("dtype", "float16")):
+            with self.subTest(field=field), mock.patch.object(tensor, field, value):
+                with self.assertRaisesRegex(SystemExit, "shape/dtype differs"):
+                    self.check()
+
+    def test_allowance_preserves_existing_dtype_conversion(self):
+        self.zero_pad()
+        self.reference[self.key].dtype = "float32"
+        result = self.check()
+        self.assertEqual(result["casts"], [{"name": self.key, "from": "float32", "to": "bfloat16"}])
+        self.assertIn("input_embedding_pad_row_allowance", result)
+        self.assertEqual(self.reference[self.key].dtype, "float32")
+
+    def test_each_eligibility_condition_refuses_and_exact_still_passes(self):
+        cases = ("padding_none", "padding_wrong", "padding_bool", "same_eos", "declared_tie",
+                 "shared_storage", "shared_offset", "not_embedding", "wrong_name", "wrong_tensor", "no_metadata")
+        for case in cases:
+            with self.subTest(case=case):
+                self.doCleanups()
+                self.setUp()
+                if case.startswith("padding_"):
+                    self.embedding.padding_idx = {"padding_none": None, "padding_wrong": 0, "padding_bool": True}[case]
+                elif case == "same_eos":
+                    self.config["eos_token_id"] = 1
+                    self.docs["generation_config.json"]["eos_token_id"] = 1
+                    self.docs["tokenizer_config.json"]["eos_token"] = "<pad>"
+                elif case == "declared_tie":
+                    self.config["tie_word_embeddings"] = True
+                elif case.startswith("shared_"):
+                    self.model.lm_head.weight.storage = self.embedding.weight.storage
+                    self.model.lm_head.weight.offset = 2 if case == "shared_offset" else 0
+                elif case == "not_embedding":
+                    self.model.get_input_embeddings = lambda: types.SimpleNamespace(weight=self.actual[self.key], padding_idx=1)
+                elif case == "wrong_name":
+                    self.key = "other.weight"
+                    self.actual[self.key] = self.actual.pop("backbone.input.weight")
+                    self.reference[self.key] = self.reference.pop("backbone.input.weight")
+                elif case == "wrong_tensor":
+                    self.embedding.weight = self.embedding.weight.clone()
+                self.assertNotIn("input_embedding_pad_row_allowance", self.check(verified=case != "no_metadata"))
+                self.zero_pad()
+                with self.assertRaisesRegex(SystemExit, "payload differs"):
+                    self.check(verified=case != "no_metadata")
+
+    def test_invalid_metadata_refuses(self):
+        baseline = copy.deepcopy(self.docs)
+        mutations = [(file, None, None) for file in baseline]
+        mutations += [("generation_config.json", key, value)
+                      for key in ("pad_token_id", "eos_token_id") for value in (None, True, 1.0, "1", -1, 3)]
+        mutations.append(("generation_config.json", "pad_token_id", [1]))
+        mutations += [("tokenizer_config.json", key, value)
+                      for key in ("pad_token", "eos_token") for value in (None, "wrong", {"content": "<pad>"})]
+        mutations += [("tokenizer.json", "added_tokens", value) for value in (
+            [], None, [{"id": 1, "content": "wrong"}],
+            [{"id": True, "content": "<pad>"}, {"id": 2, "content": "<eos>"}],
+            baseline["tokenizer.json"]["added_tokens"] + [{"id": 1, "content": "duplicate"}])]
+        for file, key, value in mutations:
+            with self.subTest(file=file, key=key, value=value):
+                self.docs = copy.deepcopy(baseline)
+                if key is None:
+                    del self.docs[file]
+                else:
+                    self.docs[file][key] = value
+                self.zero_pad()
+                with self.assertRaisesRegex(SystemExit, "payload differs"):
+                    self.check()
+
+    def test_tie_metadata_requires_literal_false(self):
+        for value in ("missing", None, 0, 1, "false", "true", "", [], {}):
+            with self.subTest(value=value):
+                self.config.pop("tie_word_embeddings", None)
+                if value != "missing":
+                    self.config["tie_word_embeddings"] = value
+                self.actual[self.key].rows = [[1, 2], [3, 4], [5, 6]]
+                self.assertNotIn("input_embedding_pad_row_allowance", self.check())
+                self.zero_pad()
+                with self.assertRaisesRegex(SystemExit, "payload differs"):
+                    self.check()
+        self.source_hash.assert_not_called()
+
+    def test_scalar_singleton_and_multiple_generation_eos(self):
+        self.docs["tokenizer.json"]["added_tokens"].append({"id": 0, "content": "<end>"})
+        for eos in (2, [2], [2, 0], [0, 2]):
+            with self.subTest(eos=eos):
+                self.docs["generation_config.json"]["eos_token_id"] = eos
+                self.actual[self.key].rows = [[1, 2], [3, 4], [5, 6]]
+                self.assertNotIn("input_embedding_pad_row_allowance", self.check())
+                self.zero_pad()
+                result = self.check()
+                allowance = result["input_embedding_pad_row_allowance"]
+                self.assertEqual(allowance["primary_eos_token_id"], 2)
+                self.assertEqual(allowance["generation_eos_token_ids"], [eos] if type(eos) is int else eos)
+                candidate = self.last_evidence.receipt["input_embedding_pad_row_candidate"]
+                self.assertEqual(candidate, dict(allowance, status="eligible_proposed"))
+
+    def test_captured_8b_metadata_is_eligible_without_large_tensor(self):
+        self.config.update(pad_token_id=151654, eos_token_id=151645, vocab_size=151936)
+        self.docs["tokenizer_config.json"].update(pad_token="<|vision_pad|>", eos_token="<|im_end|>")
+        self.docs["generation_config.json"].update(pad_token_id=151654, eos_token_id=[151645, 151643])
+        self.docs["tokenizer.json"]["added_tokens"] = [
+            {"id": 151654, "content": "<|vision_pad|>"}, {"id": 151645, "content": "<|im_end|>"},
+            {"id": 151643, "content": "<|endoftext|>"}]
+        self.embedding.padding_idx = 151654
+        # Eligibility only: shape metadata carries the vocabulary; payload stays tiny.
+        self.actual[self.key].shape = self.reference[self.key].shape = (151936, 2)
+        candidate = trainer.input_padding_allowance(self.model, self.key, self.actual[self.key],
+                                                   self.reference[self.key], self.config, self.evidence())
+        self.assertEqual(candidate["token_id"], 151654)
+        self.assertEqual(candidate["primary_eos_token_id"], 151645)
+        self.assertEqual(candidate["generation_eos_token_ids"], [151645, 151643])
+
+    def test_invalid_generation_eos_and_model_binding_refuse(self):
+        self.docs["tokenizer.json"]["added_tokens"].append({"id": 0, "content": "<end>"})
+        self.zero_pad()
+        for eos in ([], [2, 2], [0], [2, 1], [True], [2, False], [2.0], ["2"], [[2]],
+                    [2, -1], [2, 3], [2, None], {"id": 2}):
+            with self.subTest(eos=eos):
+                self.docs["generation_config.json"]["eos_token_id"] = eos
+                with self.assertRaisesRegex(SystemExit, "payload differs"):
+                    self.check()
+                self.assertNotIn("input_embedding_pad_row_candidate", self.last_evidence.receipt)
+        self.docs["generation_config.json"]["eos_token_id"] = [2, 0]
+        baseline = dict(self.config)
+        for key in ("pad_token_id", "eos_token_id", "vocab_size"):
+            for value in (None, True, 1.0, "2", [2], -1, 0, 4):
+                with self.subTest(key=key, value=value):
+                    self.config.update(baseline)
+                    if value is None:
+                        del self.config[key]
+                    else:
+                        self.config[key] = value
+                    with self.assertRaisesRegex(SystemExit, "payload differs"):
+                        self.check()
+        self.config.update(baseline)
+        for pad in (0, 2):
+            with self.subTest(generation_pad=pad):
+                self.docs["generation_config.json"]["pad_token_id"] = pad
+                with self.assertRaisesRegex(SystemExit, "payload differs"):
+                    self.check()
+        self.source_hash.assert_not_called()
+
+    def test_additional_eos_requires_unique_nonempty_added_token(self):
+        self.docs["generation_config.json"]["eos_token_id"] = [2, 0]
+        baseline = copy.deepcopy(self.docs["tokenizer.json"]["added_tokens"])
+        for extra in ([], [{"id": 0, "content": ""}], [{"id": 0, "content": None}],
+                      [{"id": 0, "content": "<eos>"}], [{"id": False, "content": "<end>"}],
+                      [{"id": 0.0, "content": "<end>"}], [{"id": 0, "content": "<end>"}] * 2,
+                      [{"id": 0, "content": "<end>"}, {"id": 0, "content": "<other>"}]):
+            with self.subTest(extra=extra):
+                self.docs["tokenizer.json"]["added_tokens"] = baseline + extra
+                self.zero_pad()
+                with self.assertRaisesRegex(SystemExit, "payload differs"):
+                    self.check()
+                self.assertNotIn("input_embedding_pad_row_candidate", self.last_evidence.receipt)
+
+    def test_failed_transform_retains_candidate_without_successful_postload(self):
+        self.config["quantization_config"] = {"load_in_4bit": True}
+        self.model.config = types.SimpleNamespace(**self.config)
+        self.docs["generation_config.json"]["eos_token_id"] = [2]
+        self.zero_pad()
+        self.actual[self.key].rows[0] = [0, 0]
+        tokenizer = mock.Mock()
+        tokenizer.backend_tokenizer.to_str.return_value = json.dumps(self.docs["tokenizer.json"])
+        tokenizers = types.SimpleNamespace(Tokenizer=mock.Mock())
+        tokenizers.Tokenizer.from_str.return_value = tokenizer.backend_tokenizer
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = self.evidence(Path(tmp, "receipt.json"))
+            evidence["trusted_root_sha256"] = "a" * 64
+            saved = []
+            with mock.patch.dict(sys.modules, {"tokenizers": tokenizers}), \
+                 mock.patch.object(trainer, "os", types.SimpleNamespace(name="posix", memfd_create=None)), \
+                 mock.patch.object(trainer.torch, "cuda", types.SimpleNamespace(is_bf16_supported=lambda: True), create=True), \
+                 mock.patch.object(trainer.torch, "bfloat16", "bfloat16", create=True), \
+                 mock.patch.object(trainer, "reference_state_dict", return_value=self.reference), \
+                 mock.patch.object(trainer, "sealed_snapshot") as sealed, \
+                 mock.patch.object(trainer, "FastLanguageModel") as loader, \
+                 mock.patch.object(trainer, "verify_tokenizer_behavior"), \
+                 mock.patch.object(evidence, "persist", side_effect=lambda: saved.append(copy.deepcopy(evidence.receipt))):
+                sealed.return_value.__enter__.return_value = Path(tmp)
+                loader.from_pretrained.return_value = (self.model, tokenizer)
+                with self.assertRaisesRegex(SystemExit, "payload differs"):
+                    trainer.load_verified_model(Path(tmp), evidence, max_seq_length=1536)
+            self.assertEqual(saved[0]["input_embedding_pad_row_candidate"]["status"], "eligible_proposed")
+            self.assertEqual(saved[-1]["status"], "refused")
+            evidence.persist()
+            receipt = json.loads(evidence.receipt_path.read_bytes())
+            self.assertEqual(receipt["status"], "refused")
+            self.assertIn("payload differs", receipt["error"])
+            self.assertEqual(receipt["input_embedding_pad_row_candidate"]["generation_eos_token_ids"], [2])
+            self.assertNotIn("post_load", receipt)
+            self.assertNotIn("loaded_verification", evidence)
+            self.assertNotIn("input_embedding_pad_row_allowance", json.dumps(receipt))
+
+    def test_missing_or_mismatched_runtime_source_refuses(self):
+        for module in (None, types.SimpleNamespace(), types.SimpleNamespace(__file__=None)):
+            with self.subTest(module=module), mock.patch.dict(sys.modules, {"unsloth.models.llama": module}):
+                self.actual[self.key].rows = [[1, 2], [3, 4], [5, 6]]
+                self.assertNotIn("input_embedding_pad_row_allowance", self.check())
+                self.zero_pad()
+                with self.assertRaisesRegex(SystemExit, "payload differs"):
+                    self.check()
+        self.source_hash.assert_not_called()
+        for bad_hash in (None, "0" * 64):
+            with self.subTest(hash=bad_hash):
+                self.source_hash.return_value = bad_hash
+                with self.assertRaisesRegex(SystemExit, "payload differs"):
+                    self.check()
+        self.source_hash.side_effect = OSError("source unreadable")
+        with self.assertRaisesRegex(SystemExit, "payload differs"):
+            self.check()
+
+
 # Import real torch/bnb before the offline fixture module in a clean process.
 # CPU mocks cannot qualify the GPU destination path.
 TENSOR_CHECK = r'''
