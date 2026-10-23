@@ -1,5 +1,7 @@
 """WO-G34 deterministic read/consumer tests; real tensor checks run in a clean process."""
 import hashlib
+import copy
+import itertools
 import json
 import os
 from pathlib import Path
@@ -7,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -17,6 +20,199 @@ trainer = fixtures.train_adapter
 
 def entry(name, data):
     return {"path": name, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+
+
+def tokenizer_fixture():
+    # Captured tokenizer.json components, with a small offline BPE vocabulary.
+    bytelevel = {"type": "ByteLevel", "add_prefix_space": False, "trim_offsets": False, "use_regex": False}
+    return {"version": "1.0", "truncation": None, "padding": None, "normalizer": {"type": "NFC"},
+            "added_tokens": [{"id": 5, "content": "<|endoftext|>", "single_word": False,
+                              "lstrip": False, "rstrip": False, "normalized": False, "special": True}],
+            "decoder": dict(bytelevel), "post_processor": dict(bytelevel),
+            "pre_tokenizer": {"type": "Sequence", "pretokenizers": [
+                {"type": "Split", "pattern": {"Regex": r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"},
+                 "behavior": "Isolated", "invert": False}, dict(bytelevel)]},
+            "model": {"type": "BPE", "dropout": None, "unk_token": None,
+                      "continuing_subword_prefix": "", "end_of_word_suffix": "", "fuse_unk": False,
+                      "byte_fallback": False, "ignore_merges": False,
+                      "vocab": {"H": 0, "e": 1, "l": 2, "o": 3, "!": 4, "<|endoftext|>": 5}, "merges": []}}
+
+
+def transformed_tokenizer(expected, changes=("decoder", "pre_tokenizer", "post_processor")):
+    loaded = copy.deepcopy(expected)
+    if "decoder" in changes:
+        loaded["decoder"].update(add_prefix_space=True, trim_offsets=True, use_regex=True)
+    if "pre_tokenizer" in changes:
+        loaded["pre_tokenizer"]["pretokenizers"][1]["trim_offsets"] = True
+    if "post_processor" in changes:
+        loaded["post_processor"] = {
+            "type": "TemplateProcessing", "single": [{"Sequence": {"id": "A", "type_id": 0}}],
+            "pair": [{"Sequence": {"id": "A", "type_id": 0}}, {"Sequence": {"id": "B", "type_id": 1}}],
+            "special_tokens": {}}
+    return loaded
+
+
+class TokenizerCompatibilityTests(unittest.TestCase):
+    def test_identity_and_each_captured_transformation(self):
+        expected = tokenizer_fixture()
+        before = copy.deepcopy(expected)
+        fields = ("decoder", "pre_tokenizer", "post_processor")
+        for count in range(4):
+            for changes in itertools.combinations(fields, count):
+                with self.subTest(changes=changes):
+                    loaded = transformed_tokenizer(expected, changes)
+                    untouched = copy.deepcopy(loaded)
+                    self.assertTrue(trainer.tokenizer_json_matches(loaded, expected))
+                    self.assertEqual(loaded, untouched)
+        self.assertEqual(expected, before)
+        self.assertTrue(trainer.tokenizer_json_matches(dict(reversed(list(expected.items()))), expected))
+        self.assertFalse(trainer.tokenizer_json_matches(expected, transformed_tokenizer(expected)))
+
+    def test_protected_fields_types_and_template_tampering_refuse(self):
+        changes = [
+            (("model", "vocab", "H"), 99), (("model", "vocab", "H"), False),
+            (("model", "vocab", "H"), 0.0), (("added_tokens",), []), (("normalizer",), None),
+            (("model", "merges"), [["H", "e"]]), (("padding",), {}), (("truncation",), {}),
+            (("pre_tokenizer", "pretokenizers", 0, "pattern", "Regex"), "changed"),
+            (("pre_tokenizer", "pretokenizers", 0, "invert"), True),
+            (("pre_tokenizer", "pretokenizers", 0, "behavior"), "Removed"),
+            (("pre_tokenizer", "pretokenizers", 1, "add_prefix_space"), True),
+            (("pre_tokenizer", "pretokenizers", 1, "use_regex"), True),
+            (("post_processor", "type"), "Other"),
+            (("post_processor", "single", 0, "Sequence", "type_id"), False),
+            (("post_processor", "pair", 1, "Sequence", "type_id"), 0),
+            (("post_processor", "pair", 1, "Sequence", "type_id"), 1.0),
+            (("post_processor", "single", 0), {"SpecialToken": {"id": "A", "type_id": 0}}),
+            (("post_processor", "special_tokens"), []),
+            (("post_processor", "special_tokens"), {"extra": {}}),
+        ]
+        expected = tokenizer_fixture()
+        for path, value in changes:
+            with self.subTest(path=path, value=value):
+                loaded = transformed_tokenizer(expected)
+                target = loaded
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = value
+                self.assertFalse(trainer.tokenizer_json_matches(loaded, expected))
+        for path in (("pre_tokenizer", "pretokenizers"), ("post_processor", "pair")):
+            loaded = transformed_tokenizer(expected)
+            loaded[path[0]][path[1]].reverse()
+            self.assertFalse(trainer.tokenizer_json_matches(loaded, expected))
+            loaded[path[0]][path[1]].pop()
+            self.assertFalse(trainer.tokenizer_json_matches(loaded, expected))
+
+    def test_missing_extra_keys_and_other_decoder_flags_refuse(self):
+        expected = tokenizer_fixture()
+        for path in ((), ("decoder",), ("pre_tokenizer",),
+                     ("pre_tokenizer", "pretokenizers", 1), ("post_processor",), ("model",)):
+            for extra in (False, True):
+                with self.subTest(path=path, extra=extra):
+                    loaded = transformed_tokenizer(expected)
+                    target = loaded
+                    for key in path:
+                        target = target[key]
+                    if extra:
+                        target["unexpected"] = None
+                    else:
+                        target.pop(next(iter(target)))
+                    self.assertFalse(trainer.tokenizer_json_matches(loaded, expected))
+        for flags in itertools.product((False, True), repeat=3):
+            loaded = copy.deepcopy(expected)
+            loaded["decoder"].update(zip(("add_prefix_space", "trim_offsets", "use_regex"), flags))
+            self.assertEqual(trainer.tokenizer_json_matches(loaded, expected), len(set(flags)) == 1)
+        loaded["decoder"]["trim_offsets"] = 1
+        self.assertFalse(trainer.tokenizer_json_matches(loaded, expected))
+
+    def test_real_tokenizer_behavior_and_vocab_mismatch(self):
+        try:
+            from tokenizers import Tokenizer
+        except ImportError:
+            self.skipTest("real tokenizers dependency unavailable")
+        from tokenizers.pre_tokenizers import ByteLevel
+        expected = tokenizer_fixture()
+        expected["model"]["vocab"] = {token: index for index, token in enumerate(sorted(ByteLevel.alphabet()))}
+        expected["model"]["vocab"]["<|endoftext|>"] = 256
+        expected["added_tokens"][0]["id"] = 256
+        reference = Tokenizer.from_str(json.dumps(expected))
+        for changes in ((), ("decoder",), ("pre_tokenizer",), ("post_processor",),
+                        ("decoder", "pre_tokenizer", "post_processor")):
+            with self.subTest(changes=changes):
+                loaded = Tokenizer.from_str(json.dumps(transformed_tokenizer(expected, changes)))
+                trainer.verify_tokenizer_behavior(loaded, reference)
+        vocab = expected["model"]["vocab"]
+        vocab["H"], vocab["e"] = vocab["e"], vocab["H"]
+        changed_reference = Tokenizer.from_str(json.dumps(expected))
+        with self.assertRaisesRegex(SystemExit, "loaded tokenizer behavior differs from verified tokenizer bytes"):
+            trainer.verify_tokenizer_behavior(loaded, changed_reference)
+
+    def test_behavior_checks_every_field_pair_decode_and_exceptions(self):
+        encoding = types.SimpleNamespace(ids=[0], tokens=["H"], offsets=[(0, 1)], type_ids=[0], attention_mask=[1])
+        expected = mock.Mock()
+        expected.encode.return_value = encoding
+        expected.decode.return_value = "H"
+        actual = mock.Mock()
+        actual.encode.return_value = encoding
+        actual.decode.return_value = "H"
+        trainer.verify_tokenizer_behavior(actual, expected)
+        self.assertEqual(actual.encode.call_count, 34)
+        self.assertEqual(actual.decode.call_count, 68)
+        pairs = [call for call in actual.encode.call_args_list if len(call.args) == 2]
+        self.assertEqual(len(pairs), 4)
+        for field in vars(encoding):
+            with self.subTest(field=field):
+                changed = copy.copy(encoding)
+                setattr(changed, field, [])
+                actual.encode.return_value = changed
+                with self.assertRaisesRegex(SystemExit, "loaded tokenizer behavior differs"):
+                    trainer.verify_tokenizer_behavior(actual, expected)
+        actual.encode.return_value = encoding
+        for skip in (False, True):
+            is_pair = False
+            def encode(*args, **kwargs):
+                nonlocal is_pair
+                is_pair = len(args) == 2
+                return encoding
+            actual.encode.side_effect = encode
+            actual.decode.side_effect = lambda ids, skip_special_tokens: "bad" if is_pair and skip_special_tokens == skip else "H"
+            with self.subTest(skip=skip), self.assertRaisesRegex(SystemExit, "loaded tokenizer behavior differs"):
+                trainer.verify_tokenizer_behavior(actual, expected)
+        actual.encode.side_effect = RuntimeError("private exception detail")
+        with self.assertRaisesRegex(SystemExit, "^loaded tokenizer behavior differs from verified tokenizer bytes$"):
+            trainer.verify_tokenizer_behavior(actual, expected)
+
+    @unittest.skipUnless(hasattr(os, "memfd_create"), "verified loader requires Linux memfd")
+    def test_loader_structural_refusal_persists_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            config = b'{"quantization_config":{"load_in_4bit":true}}'
+            expected = tokenizer_fixture()
+            data = json.dumps(expected).encode()
+            evidence = trainer.VerifiedSnapshot(path / "receipt.json", [entry("config.json", config), entry("tokenizer.json", data)])
+            evidence.update(trusted_root_sha256="a" * 64)
+            evidence.payloads.update({"config.json": config, "tokenizer.json": data})
+            loaded = transformed_tokenizer(expected)
+            loaded["model"]["vocab"]["H"] = 99
+            tokenizer = mock.Mock()
+            tokenizer.backend_tokenizer.to_str.return_value = json.dumps(loaded)
+            tokenizers = types.ModuleType("tokenizers")
+            tokenizers.Tokenizer = mock.Mock()
+            tokenizers.Tokenizer.from_str.return_value.to_str.return_value = json.dumps(expected)
+            with mock.patch.dict(sys.modules, {"tokenizers": tokenizers}), \
+                 mock.patch.object(trainer, "torch", mock.Mock()), \
+                 mock.patch.object(trainer, "reference_state_dict", return_value={}), \
+                 mock.patch.object(trainer, "sealed_snapshot") as sealed, \
+                 mock.patch.object(trainer, "FastLanguageModel") as model, \
+                 mock.patch.object(trainer, "verify_tokenizer_behavior") as behavior, \
+                 mock.patch.object(trainer, "verify_loaded_model") as weights:
+                sealed.return_value.__enter__.return_value = path
+                model.from_pretrained.return_value = (mock.Mock(), tokenizer)
+                with self.assertRaisesRegex(SystemExit, "loaded tokenizer differs from verified tokenizer bytes"):
+                    trainer.load_verified_model(path, evidence, max_seq_length=1536)
+                behavior.assert_not_called()
+                weights.assert_not_called()
+            self.assertEqual(json.loads(evidence.receipt_path.read_bytes())["status"], "refused")
+            self.assertEqual(evidence.payloads["tokenizer.json"], data)
 
 
 class VerifiedReadTests(unittest.TestCase):

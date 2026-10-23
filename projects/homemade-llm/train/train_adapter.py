@@ -766,6 +766,66 @@ def verify_loaded_model(model, reference, *, dtype, config):
             "comparison": "exact payload/shape/dtype; decoded quantization state"}
 
 
+def tokenizer_json_matches(actual, expected):
+    """WO-G78: exact JSON except the three captured Qwen2 constructor rewrites."""
+    def canonical(value):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
+
+    if canonical(actual) == canonical(expected):
+        return True
+    if not isinstance(actual, dict) or not isinstance(expected, dict) or actual.keys() != expected.keys():
+        return False
+    bytelevel = {"type": "ByteLevel", "add_prefix_space": False, "trim_offsets": False, "use_regex": False}
+    template = {"type": "TemplateProcessing", "single": [{"Sequence": {"id": "A", "type_id": 0}}],
+                "pair": [{"Sequence": {"id": "A", "type_id": 0}}, {"Sequence": {"id": "B", "type_id": 1}}],
+                "special_tokens": {}}
+    for key, original in expected.items():
+        loaded = actual[key]
+        if canonical(loaded) == canonical(original):
+            continue
+        if key == "decoder" and canonical(original) == canonical(bytelevel):
+            allowed = {"type": "ByteLevel", "add_prefix_space": True, "trim_offsets": True, "use_regex": True}
+        elif key == "post_processor" and canonical(original) == canonical(bytelevel):
+            allowed = template
+        elif (key == "pre_tokenizer" and isinstance(original, dict)
+              and original.keys() == {"type", "pretokenizers"} and original["type"] == "Sequence"
+              and isinstance(original["pretokenizers"], list)):
+            allowed = {"type": "Sequence", "pretokenizers": [
+                dict(part, trim_offsets=True) if canonical(part) == canonical(bytelevel) else part
+                for part in original["pretokenizers"]]}
+        else:
+            return False
+        if canonical(loaded) != canonical(allowed):
+            return False
+    return True
+
+
+def verify_tokenizer_behavior(actual, expected):
+    """Fixed WO-G78 corpus; compare backend encodings and real single/pair decoding."""
+    texts = (
+        "Hello world", " leading space", "  two spaces\nnewline\r\nCRLF",
+        "naïve café 東京 😀 — “quotes”",
+        "<|im_start|>system\nYou are DIRECTOR.<|im_end|>\n<|im_start|>user\nWhat's 2+2?<|im_end|>",
+        "def f(x):\n    return x**2  # comment\n", "</think>\n\nanswer", "", " ", "\t\ttabs",
+        "won't can't I'd", "1234567890 3.14159 -0.5e-3", "https://example.com/a?b=c&d=e",
+        "trailing space ", "<|endoftext|>",
+    )
+    pairs = (("Question?", "Answer."), ("<|im_start|>user\nhi<|im_end|>", " reply"))
+    try:
+        for special in (False, True):
+            for inputs in tuple((text,) for text in texts) + pairs:
+                loaded = actual.encode(*inputs, add_special_tokens=special)
+                reference = expected.encode(*inputs, add_special_tokens=special)
+                for field in ("ids", "tokens", "offsets", "type_ids", "attention_mask"):
+                    if getattr(loaded, field) != getattr(reference, field):
+                        raise ValueError
+                for skip in (False, True):
+                    if actual.decode(loaded.ids, skip_special_tokens=skip) != expected.decode(reference.ids, skip_special_tokens=skip):
+                        raise ValueError
+    except Exception:
+        fail("loaded tokenizer behavior differs from verified tokenizer bytes")
+
+
 def load_verified_model(snapshot, verification, *, max_seq_length):
     """Verification-bound pathname fallback; no unverified loader branch exists."""
     if (not isinstance(verification, VerifiedSnapshot) or verification.receipt_path is None
@@ -789,8 +849,10 @@ def load_verified_model(snapshot, verification, *, max_seq_length):
             # Do not accept a loader's tokenizer/config fallback to another cache.
             from tokenizers import Tokenizer
             expected_tokenizer = Tokenizer.from_str(verification.checked_bytes("tokenizer.json").decode())
-            if json.loads(tokenizer.backend_tokenizer.to_str()) != json.loads(expected_tokenizer.to_str()):
+            if not tokenizer_json_matches(json.loads(tokenizer.backend_tokenizer.to_str()),
+                                          json.loads(expected_tokenizer.to_str())):
                 fail("loaded tokenizer differs from verified tokenizer bytes")
+            verify_tokenizer_behavior(tokenizer.backend_tokenizer, expected_tokenizer)
             for field in ("model_type", "vocab_size", "hidden_size", "intermediate_size",
                           "num_hidden_layers", "num_attention_heads", "num_key_value_heads",
                           "tie_word_embeddings"):
