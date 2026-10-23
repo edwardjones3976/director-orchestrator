@@ -17,6 +17,35 @@ def valid_key(raw: bytes) -> bool:
     return 16 <= len(raw) <= 512 and all(33 <= byte <= 126 for byte in raw)
 
 
+def _dpapi(protect: bool, data: bytes) -> bytes:
+    """Call crypt32 directly so DPAPI needs no third-party package."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Blob(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
+    function = crypt32.CryptProtectData if protect else crypt32.CryptUnprotectData
+    function.argtypes = [ctypes.POINTER(Blob), ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+                         ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(Blob)]
+    function.restype = wintypes.BOOL
+    buffer = ctypes.create_string_buffer(data, len(data))
+    source = Blob(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_char)))
+    output = Blob()
+    description = ctypes.c_wchar_p("Z.ai MCP credential") if protect else None
+    # CRYPTPROTECT_UI_FORBIDDEN: fail instead of prompting.
+    if not function(ctypes.byref(source), description, None, None, None, 0x1, ctypes.byref(output)):
+        raise OSError(ctypes.get_last_error(), "DPAPI call failed")
+    try:
+        return ctypes.string_at(output.pbData, output.cbData)
+    finally:
+        kernel32.LocalFree(ctypes.cast(output.pbData, ctypes.c_void_p))
+
+
 def import_key(raw: bytes) -> None:
     if os.name != "nt":
         raise ValueError("Windows DPAPI is required")
@@ -26,9 +55,7 @@ def import_key(raw: bytes) -> None:
     path = store_path()
     if path.exists():
         raise ValueError("A Z.ai credential is already stored; explicit rotation is required")
-    import win32crypt  # type: ignore[import-not-found]
-
-    ciphertext = win32crypt.CryptProtectData(key, "Z.ai MCP credential", None, None, None, 0)
+    ciphertext = _dpapi(True, key)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("xb") as output:
         output.write(ciphertext)
@@ -45,11 +72,9 @@ def load_key() -> str:
         raise ValueError("Z.ai credential is not configured")
     if os.name != "nt":
         raise ValueError("Windows DPAPI is required")
-    import win32crypt  # type: ignore[import-not-found]
-
     try:
-        _, raw = win32crypt.CryptUnprotectData(path.read_bytes(), None, None, None, 0)
-    except Exception:
+        raw = _dpapi(False, path.read_bytes())
+    except OSError:
         raise ValueError("Stored Z.ai credential could not be decrypted by this Windows user") from None
     if not valid_key(raw):
         raise ValueError("Stored Z.ai credential has an invalid format")
