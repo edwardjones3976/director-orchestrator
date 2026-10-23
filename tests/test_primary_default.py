@@ -6414,6 +6414,38 @@ class TrustedPaidAcceptanceTests(unittest.TestCase):
                 configuration_digest=lambda: digest("fixture-transport-config")),
             plan_resolver=lambda _: self.plan, authority_recheck=lambda _: None)
 
+    def test_admission_request_digest_matches_actual_sent_body(self):
+        import httpx
+        from director_orchestrator.primary_transports import OpenAIAcceptanceTransport
+        from director_orchestrator.langgraph_primary import _canonical_digest
+        binding, _ = self.handler.prepare_acceptance(self.context)
+        def respond(request):
+            body = json.loads(request.content)
+            if request.url.path.endswith("input_tokens"):
+                return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10},
+                    headers={"x-request-id": "fixture"})
+            self.assertEqual(_canonical_digest(body), binding["request_digest"])
+            subject = json.loads(body["instructions"].split("\n", 1)[0].removeprefix("TRUSTED SUBJECT: "))
+            return httpx.Response(200, json={"id": "resp-fixture", "model": body["model"],
+                "status": "completed", "usage": {"input_tokens": 10, "output_tokens": 16},
+                "output": [{"type": "message", "content": [{"type": "output_text",
+                    "text": json.dumps({**subject, "decision": "accept"})}]}]},
+                headers={"x-request-id": "fixture"})
+        self.handler.transport = OpenAIAcceptanceTransport("fake-key", client_factory=lambda: httpx.Client(
+            transport=httpx.MockTransport(respond), trust_env=False))
+        binding, _ = self.handler.prepare_acceptance(self.context)
+        self.assertEqual(self.handler(self.context).decision.value, "accept")
+
+    def test_invalid_output_plan_has_no_claim_reservation_or_http(self):
+        for value in (1, 15):
+            self.plan = replace(self.plan, max_output=value)
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.handler(self.context)
+        self.assertEqual(self.calls, [])
+        with self.journal.acceptance_transaction() as sql:
+            for table in ("acceptance_operation", "acceptance_budget", "acceptance_http"):
+                self.assertEqual(sql.execute("SELECT COUNT(*) FROM " + table).fetchone()[0], 0)
+
     def test_valid_handler_commits_then_replays_without_transport(self):
         first = self.handler(self.context)
         self.assertEqual(self.handler(self.context), first)

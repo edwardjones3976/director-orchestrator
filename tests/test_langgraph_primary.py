@@ -1337,6 +1337,41 @@ class PrimaryWorkflowTests(unittest.TestCase):
         self.assertEqual(counters.get("ci_security_completion", 0), 0)
         self.assertEqual(counters.get("effect_execution_readback", 0), 0)
 
+    def test_acceptance_create_disconnect_requires_reconciliation_without_second_create(self):
+        import httpx
+        import time
+        from director_orchestrator.primary_transports import (
+            OpenAIAcceptanceTransport, AcceptanceRequestPlan, ACCEPTANCE_RESPONSE_SCHEMA)
+        from director_orchestrator.langgraph_primary import _canonical_digest
+        calls = []
+        def respond(request):
+            calls.append(request)
+            if request.url.path.endswith("input_tokens"):
+                return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10},
+                    headers={"x-request-id": "fixture"})
+            raise httpx.ReadTimeout("fixture create outcome unknown")
+        transport = OpenAIAcceptanceTransport("fake-key", client_factory=lambda: httpx.Client(
+            transport=httpx.MockTransport(respond), trust_env=False))
+        plan = AcceptanceRequestPlan(model="fixture-model", authority_digest=_digest("authority"),
+            tariff_digest=_digest("tariff"), schema_digest=_canonical_digest(ACCEPTANCE_RESPONSE_SCHEMA),
+            valid_until=int(time.time()) + 300, max_input=100, max_output=16, max_cache_write=100,
+            input_rate="1", output_rate="1", cache_write_rate="1", fee_bound="0", scope="graph-fixture")
+        with tempfile.TemporaryDirectory() as directory:
+            journal = SqliteAcceptanceJournal(os.path.join(directory, "acceptance.sqlite3"))
+            class Handler:
+                def prepare_acceptance(self, context):
+                    return {"fixture": "transport"}, plan.reservation()
+                def execute_acceptance(self, context, store, key, owner):
+                    return transport.execute(plan=plan, evidence={"fixture": "evidence"}, context=context,
+                        journal=store, key=key, owner=owner, recheck=lambda: None)
+            runtime = _runtime(_handlers(openai_acceptance_revision=Handler()), acceptance_store=journal)
+            request = _request("DIR-ACCEPTANCE-HTTP-UNRESOLVED")
+            outcome = runtime.start(request)
+            self.assertEqual(outcome.terminal_classification, TerminalClassification.RECONCILIATION_REQUIRED)
+            self.assertEqual(outcome.reason_code, "acceptance_unresolved")
+            self.assertEqual(sum(r.url.path == "/v1/responses" for r in calls), 1)
+            self.assertEqual(len(calls), 2)
+
     def test_revision_and_visit_loops_are_bounded(self):
         counters: dict[str, int] = {}
 

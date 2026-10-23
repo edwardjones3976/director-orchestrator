@@ -1894,7 +1894,7 @@ class TrustedPaidAcceptanceHandler:
         if plan.schema_digest != _canonical_digest(ACCEPTANCE_RESPONSE_SCHEMA):
             raise ValueError("paid acceptance schema drift")
         return {"evidence": evidence, "plan": plan.binding(),
-                "request_digest": _canonical_digest(acceptance_request_body(plan, evidence)),
+                "request_digest": _canonical_digest(acceptance_request_body(plan, evidence, context)),
                 "configuration_digest": self.transport.configuration_digest()}, plan.reservation()
 
     def execute_acceptance(self, context, journal, key, owner):
