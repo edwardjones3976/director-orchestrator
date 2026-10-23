@@ -308,6 +308,54 @@ def print_compose_render_diagnostic_for_ci():
         print(path.read_text(encoding="utf-8"), end="")
 
 
+# Closed entry tokens and bounds of the WINDIAG tmp_cleanup grammar in
+# scripts/run-tests-parallel.py.
+_TMP_CLEANUP_ENTRIES = ("git.exe", "candidate-executed")
+_WINDIAG_CODE_MAX = 0xFFFFFFFF
+_WINDIAG_ERRNO_MAX = 0xFFFF
+
+
+def _tmp_cleanup_note(root, error):
+    """One fixed scalar line; the failing filename or path is never published."""
+    is_root, entry = 0, "other"
+    try:
+        filename = os.fspath(error.filename) if isinstance(error.filename, (str, os.PathLike)) else None
+        if isinstance(filename, str):
+            path = os.path.normcase(os.path.abspath(filename))
+            base = os.path.normcase(os.path.abspath(root))
+            is_root = int(path == base)
+            name = os.path.basename(path)
+            if os.path.dirname(path) == base and name in _TMP_CLEANUP_ENTRIES:
+                entry = name
+    except (TypeError, ValueError, OSError):
+        is_root, entry = 0, "other"
+
+    def bounded(value, maximum):
+        return value if type(value) is int and 0 <= value <= maximum else -1
+
+    return (f"WINDIAG tmp_cleanup root={is_root} entry={entry} "
+            f"winerror={bounded(getattr(error, 'winerror', None), _WINDIAG_CODE_MAX)} "
+            f"errno={bounded(error.errno, _WINDIAG_ERRNO_MAX)}")
+
+
+@contextmanager
+def _noted_temporary_directory():
+    """TemporaryDirectory with its default strict cleanup: no retry or ignore.
+
+    A cleanup OSError is re-raised unchanged, with its context, after one
+    fixed scalar note is attached for the sanitized CI tail.
+    """
+    temporary = tempfile.TemporaryDirectory()
+    try:
+        yield temporary.name
+    finally:
+        try:
+            temporary.cleanup()
+        except OSError as error:
+            error.add_note(_tmp_cleanup_note(temporary.name, error))
+            raise
+
+
 class ReleasePreparationTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -1782,11 +1830,14 @@ class ReleasePreparationTests(unittest.TestCase):
         for value in (self.compose, self.sibling_compose):
             path = self.root / (value["name"] + ".json")
             path.write_bytes(release.encoded(value))
+            pins = [{"path": str(path), "sha256": release.sha(path.read_bytes())}]
+            models = release.compose_input_check(pins, self.spec["runtime_env"])
             result = subprocess.run(["docker", "compose", "--project-name", value["name"], "--env-file",
                 self.spec["runtime_env"]["path"], "-f", str(path), "config", "--format", "json"],
                 cwd=self.root, env=release.child_environment(), capture_output=True, timeout=180)
             self.assertEqual(result.returncode, 0, "configuration-only Compose producer failed")
-            graphs.append(json.loads(result.stdout))
+            release.compose_input_check(pins, self.spec["runtime_env"])
+            graphs.append(release.preserve_explicit_bind_false(json.loads(result.stdout), models))
             self.assertRegex(resolved_deployment_digest(graphs[-1], self.image), r"^[0-9a-f]{64}$")
         release.isolated_sibling(*graphs, 18080)
         graphs[1]["services"]["orchestrator"]["ports"][0]["published"] = "8080"
@@ -2803,7 +2854,7 @@ assert fixture_cache.SAFE and callable(jsonschema.validate)
 
     @unittest.skipUnless(os.name == "nt", "Windows executable search regression")
     def test_trusted_native_path_prevents_candidate_executable_lookup(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with _noted_temporary_directory() as directory:
             root = Path(directory)
             marker = root / "candidate-executed"
             # A harmless OS command processor stands in for candidate git.exe.
@@ -3168,6 +3219,81 @@ except m['ReleaseError']: pass
             with self.subTest(entry=entry), self.assertRaisesRegex(release.ReleaseError, "compose_env_file_unbound"):
                 release.Release(self.descriptor)
             self.assertEqual(self.calls, [])
+
+    def test_bind_false_omission_is_restored_from_same_pinned_input(self):
+        sibling = self.sibling()
+        original = copy.deepcopy(self.sibling_compose)
+        sibling["compose_files"] = [self.pin("compose.yml", release.encoded(original))]
+        self.spec["rehearsal"]["descriptor"] = self.pin("sibling.json", release.encoded(sibling))
+        self.save()
+        tool = release.Release(self.root / "sibling.json")
+        for empty_bind in (False, True):
+            with self.subTest(empty_bind=empty_bind):
+                self.sibling_compose = copy.deepcopy(original)
+                mount = self.sibling_compose["services"]["orchestrator"]["volumes"][0]
+                mount.pop("bind")
+                if empty_bind:
+                    mount["bind"] = {}
+                graph = tool.compose_document(tool.runtime)
+                self.assertEqual(graph, original)
+                release.stock_mounts(graph)
+                # The artifact consumed by later checks retains runtime false.
+                self.assertIs(json.loads(release.encoded(graph))["services"]["orchestrator"]["volumes"][0]
+                              ["bind"]["create_host_path"], False)
+
+    def test_bind_false_omission_without_authoritative_proof_is_refused(self):
+        self.sibling()
+        original = copy.deepcopy(self.sibling_compose)
+        for value in (None, True, 0, "false"):
+            with self.subTest(value=value):
+                model = copy.deepcopy(original)
+                mount = model["services"]["orchestrator"]["volumes"][0]
+                mount["bind"] = {} if value is None else {"create_host_path": value}
+                graph = copy.deepcopy(original)
+                graph["services"]["orchestrator"]["volumes"][0].pop("bind")
+                release.preserve_explicit_bind_false(graph, [model])
+                with self.assertRaisesRegex(release.ReleaseError, "sibling_mount_unsupported"):
+                    release.stock_mounts(graph)
+
+    def test_bind_false_explicit_invalid_and_extra_keys_are_refused(self):
+        self.sibling()
+        original = copy.deepcopy(self.sibling_compose)
+        release.stock_mounts(original)  # Keep explicit-false acceptance.
+        for bind in ({"create_host_path": True}, {"create_host_path": 0},
+                     {"create_host_path": "false"}, {"create_host_path": None},
+                     {"create_host_path": False, "propagation": "rprivate"},
+                     {"propagation": "rprivate"}, None, False, []):
+            with self.subTest(bind=bind):
+                graph = copy.deepcopy(original)
+                graph["services"]["orchestrator"]["volumes"][0]["bind"] = bind
+                release.preserve_explicit_bind_false(graph, [original])
+                with self.assertRaisesRegex(release.ReleaseError, "sibling_mount_unsupported"):
+                    release.stock_mounts(graph)
+
+    def test_bind_false_ambiguous_input_cannot_prove_omission(self):
+        self.sibling()
+        original = copy.deepcopy(self.sibling_compose)
+        models = []
+        models.append([original, {"services": {}}])
+        for defect in ("interpolated", "short", "duplicate", "extra"):
+            model = copy.deepcopy(original)
+            mounts = model["services"]["orchestrator"]["volumes"]
+            if defect == "interpolated":
+                mounts[0]["target"] = "${TARGET}"
+            elif defect == "short":
+                mounts.append("${SOURCE}:${TARGET}")
+            elif defect == "duplicate":
+                mounts.append(copy.deepcopy(mounts[0]))
+            else:
+                mounts[0]["bind"]["propagation"] = "rprivate"
+            models.append([model])
+        for inputs in models:
+            with self.subTest(inputs=inputs):
+                graph = copy.deepcopy(original)
+                graph["services"]["orchestrator"]["volumes"][0].pop("bind")
+                release.preserve_explicit_bind_false(graph, inputs)
+                with self.assertRaisesRegex(release.ReleaseError, "sibling_mount_unsupported"):
+                    release.stock_mounts(graph)
 
     def test_stock_compose_source_renders_bound_runtime_and_future_modes_without_daemon(self):
         docker = shutil.which("docker")
@@ -3950,6 +4076,62 @@ class ComposeRenderDiagnosticTests(unittest.TestCase):
             self.assertEqual(set(record), {"rc", "stdout_bytes", "argv", "stderr_tail"})
             self.assertEqual(record["rc"], 1)
             self.assertLessEqual(len(json.dumps(record["stderr_tail"])), 1500)
+
+
+class NotedTemporaryDirectoryTests(unittest.TestCase):
+    """The trusted-native-path fixture's cleanup stays strict; failures gain one note."""
+
+    def failing_cleanup(self, make_error):
+        # Remove the real directory first so the injected failure leaks nothing.
+        real_cleanup = tempfile.TemporaryDirectory.cleanup
+        def cleanup(temporary):
+            real_cleanup(temporary)
+            raise make_error(temporary.name)
+        return patch.object(tempfile.TemporaryDirectory, "cleanup", cleanup)
+
+    def test_strict_cleanup_removes_the_directory(self):
+        with _noted_temporary_directory() as directory:
+            (Path(directory) / "git.exe").write_bytes(b"fixture")
+        self.assertFalse(Path(directory).exists())
+
+    def test_cleanup_error_is_reraised_unchanged_with_one_private_free_note(self):
+        winerror = 5 if os.name == "nt" else -1
+        cases = (
+            (lambda root: root, f"root=1 entry=other winerror={winerror} errno=13"),
+            (lambda root: os.path.join(root, "git.exe"), f"root=0 entry=git.exe winerror={winerror} errno=13"),
+            (lambda root: os.path.join(root, "candidate-executed"),
+             f"root=0 entry=candidate-executed winerror={winerror} errno=13"),
+            (lambda root: os.path.join(root, "sk-private-entry.txt"), f"root=0 entry=other winerror={winerror} errno=13"),
+            (lambda root: os.path.join(root, "nested", "git.exe"), f"root=0 entry=other winerror={winerror} errno=13"),
+        )
+        for target, fields in cases:
+            injected = {}
+            def make_error(root, target=target):
+                injected["error"] = PermissionError(13, "private message", target(root), 5)
+                injected["root"] = root
+                return injected["error"]
+            with self.subTest(fields=fields), self.failing_cleanup(make_error), \
+                    self.assertRaises(PermissionError) as caught:
+                with _noted_temporary_directory():
+                    pass
+            error = caught.exception
+            self.assertIs(error, injected["error"])
+            self.assertEqual((error.errno, error.strerror), (13, "private message"))
+            self.assertEqual(error.__notes__, ["WINDIAG tmp_cleanup " + fields])
+            for private in ("private", "sk-", injected["root"], os.path.basename(injected["root"])):
+                self.assertNotIn(private, error.__notes__[0])
+            self.assertFalse(Path(injected["root"]).exists())
+
+    def test_cleanup_error_keeps_the_original_body_failure_as_context(self):
+        body = AssertionError("bare executable lookup ran candidate git.exe")
+        with self.failing_cleanup(lambda root: OSError(70000, "private", None)), \
+                self.assertRaises(OSError) as caught:
+            with _noted_temporary_directory():
+                raise body
+        self.assertIs(caught.exception.__context__, body)
+        # No filename and an out-of-range errno fall back to the closed defaults.
+        self.assertEqual(caught.exception.__notes__,
+                         ["WINDIAG tmp_cleanup root=0 entry=other winerror=-1 errno=-1"])
 
 
 if __name__ == "__main__":

@@ -1673,7 +1673,7 @@ Write-Output 'PASS'
             self.assertGreater(index, 0, f"{call} not found")
             self.assertLess(index, mutex_index, f"{call} must run before the GPU mutex is created")
 
-    def test_epoch_image_guards_refuse_aliases_before_setup(self):
+    def test_all_mode_image_guards_refuse_aliases_before_setup(self):
         pwsh = shutil.which('pwsh')
         if pwsh is None:
             self.skipTest('PowerShell is required for actual wrapper argument guards')
@@ -1705,9 +1705,20 @@ foreach ($bad in 'unsloth/unsloth:latest', ('unsloth/unsloth@sha256:' + ('0' * 6
     catch {{ $denied = $_.Exception.Message.Contains('exact approved training image') }}
     if (-not $denied) {{ throw "wrapper admitted alias: $bad" }}
 }}
-# Non-epoch and probe image selection keeps its previous behavior.
-foreach ($probe in $false, $true) {{
-    if ((& '{prefix_file.as_posix()}' -Rows 'absent/accepted.jsonl' -Image 'custom/image:tag' -Probe:$probe) -ne 'GUARDS-PASSED') {{ throw 'legacy image changed' }}
+# Smoke, probe, student probe and context probe use the same image guard.
+$context = '{Path(tmp).as_posix()}/context.jsonl'
+[IO.File]::WriteAllText($context, '{{}}')
+foreach ($mode in @{{}}, @{{ Probe = $true }}, @{{ Probe = $true; Student4Bit = $true }},
+        @{{ Probe = $true; ProbeContextInputs = $context; ProbeContextLimit = 4096 }}) {{
+    if ((& '{prefix_file.as_posix()}' -Rows 'absent/accepted.jsonl' @mode) -ne 'GUARDS-PASSED') {{ throw 'mode default refused' }}
+    if ((& '{prefix_file.as_posix()}' -Rows 'absent/accepted.jsonl' @mode -Image $approved) -ne 'GUARDS-PASSED') {{ throw 'mode exact digest refused' }}
+    foreach ($bad in '', 'custom/image:tag', 'unsloth/unsloth:latest', ('unsloth/unsloth@sha256:' + ('0' * 64)),
+            (' ' + $approved), ($approved + ' '), $approved.ToUpperInvariant()) {{
+        $denied = $false
+        try {{ & '{prefix_file.as_posix()}' -Rows 'absent/accepted.jsonl' @mode -Image $bad | Out-Null }}
+        catch {{ $denied = $_.Exception.Message.Contains('exact approved training image') }}
+        if (-not $denied) {{ throw "mode admitted alias: $bad" }}
+    }}
 }}
 . '{script.with_name('train-adapter-stage.ps1').as_posix()}'
 foreach ($bad in 'unsloth/unsloth:latest', ('unsloth/unsloth@sha256:' + ('0' * 64)),
@@ -1720,7 +1731,7 @@ foreach ($bad in 'unsloth/unsloth:latest', ('unsloth/unsloth@sha256:' + ('0' * 6
     catch {{ $denied = $_.Exception.Message.Contains('exact approved training image') }}
     if (-not $denied) {{ throw "direct helper reached authority or mounts with alias: $bad" }}
 }}
-'PASS default + exact + five wrapper aliases + five direct helper aliases + legacy/probe'
+'PASS default + exact + epoch + smoke/probe/student/context aliases + direct helper aliases'
 """
             result = subprocess.run([pwsh, '-NoProfile', '-NonInteractive', '-Command', command],
                                     capture_output=True, text=True, timeout=30)

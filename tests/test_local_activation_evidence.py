@@ -171,7 +171,7 @@ class LocalActivationEvidenceTests(unittest.TestCase):
             read_only=True,
         )
         replay.require_accepted(ident)
-        self.assertEqual(replay.path, Path(self.temporary.name) / "selected.evidence.json")
+        self.assertEqual(replay.path, (Path(self.temporary.name) / "selected.evidence.json").resolve())
         (Path(self.temporary.name) / "security.txt").write_bytes(b"changed after store construction")
         with self.assertRaises(ActivationEvidenceError):
             replay.require_accepted(ident)
