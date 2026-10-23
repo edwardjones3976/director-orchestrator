@@ -122,7 +122,7 @@ try {
     $shimPath = Join-Path $root 'docker-shim.ps1'
     $shimLogPath = Join-Path $root 'shim.log'
 
-    $rev = '0123456789abcdef0123456789abcdef01234567'
+    $rev = '40c069824f4251a91eefaf281ebe4c544efd3e18'
     $templateSha = 'cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe'
     $cFreeOk = [long](200GB)
     $eFreeOk = [long](150GB)
@@ -161,7 +161,7 @@ try {
     # New two-file trust chain: a root manifest (pinned by SHA-256 inside
     # export-adapter.ps1) names, per base repo@revision, the SHA-256 of the list
     # manifest that is actually authenticated and parsed for per-file hashes/sizes.
-    $rootPath = Join-Path $cRoot 'reports\m2-trusted-digest-manifest-v2.json'
+    $rootPath = Join-Path $cRoot 'reports\m2-trusted-digest-manifest-v3.json'
     $expectedPath = Join-Path $cRoot 'reports\m2-expected-qwen3-14b-v2.json'
 
     function Write-FixtureIndex {
@@ -269,8 +269,8 @@ try {
         [IO.File]::WriteAllText((Join-Path $Dir 'adapter-hashes.json'), ($doc | ConvertTo-Json -Compress))
     }
 
-    New-AdapterDir $adapter1 '{"name":"a1"}' 'ADAPTER-MODEL-ONE'
-    New-AdapterDir $adapter2 '{"name":"a2"}' 'ADAPTER-MODEL-TWO'
+    New-AdapterDir $adapter1 ('{"name":"a1","base_model_name_or_path":"Qwen/Qwen3-14B","revision":"' + $rev + '"}') 'ADAPTER-MODEL-ONE'
+    New-AdapterDir $adapter2 ('{"name":"a2","base_model_name_or_path":"Qwen/Qwen3-14B","revision":"' + $rev + '"}') 'ADAPTER-MODEL-TWO'
 
     $guardPaths = @(
         $sentinelPath,
@@ -684,6 +684,50 @@ try {
         $text = Out-Text $r.Lines
         Assert ($r.Code -ne 0 -and $text -match 'parameter BaseRepo' -and (Get-ShimLogLines).Count -eq 0) "param: unsupported or differently cased repository $unsupported refused before cache access"
     }
+
+    # Adapter identity is checked for every leaf before planning or any export effects.
+    $rev8 = 'b968826d9c46dd6066d109eabc6255188de91218'
+    $config14 = [ordered]@{ base_model_name_or_path = 'Qwen/Qwen3-14B'; revision = $rev }
+    $identityCases = @(
+        @{ Name = '8B-leaf-14B-defaults'; Config = @{ base_model_name_or_path = 'Qwen/Qwen3-8B'; revision = $rev8 } }
+        @{ Name = '14B-leaf-8B-arguments'; Config = $config14; Repo = 'Qwen/Qwen3-8B'; Revision = $rev8 }
+        @{ Name = 'missing-file'; Config = $config14 }
+        @{ Name = 'malformed-json'; Text = '{not json}' }
+        @{ Name = 'missing-repo'; Config = @{ revision = $rev } }
+        @{ Name = 'missing-revision'; Config = @{ base_model_name_or_path = 'Qwen/Qwen3-14B' } }
+        @{ Name = 'non-string-repo'; Config = @{ base_model_name_or_path = @('Qwen/Qwen3-14B'); revision = $rev } }
+        @{ Name = 'non-string-revision'; Config = @{ base_model_name_or_path = 'Qwen/Qwen3-14B'; revision = 123 } }
+        @{ Name = 'null-revision'; Config = @{ base_model_name_or_path = 'Qwen/Qwen3-14B'; revision = $null } }
+        @{ Name = 'short-revision'; Config = @{ base_model_name_or_path = 'Qwen/Qwen3-14B'; revision = '40c0698' } }
+        @{ Name = 'uppercase-revision'; Config = @{ base_model_name_or_path = 'Qwen/Qwen3-14B'; revision = $rev.ToUpperInvariant() } }
+        @{ Name = 'repository-case-mismatch'; Config = @{ base_model_name_or_path = 'qwen/Qwen3-14B'; revision = $rev } }
+        @{ Name = 'revision-mismatch'; Config = @{ base_model_name_or_path = 'Qwen/Qwen3-14B'; revision = ('a' * 40) } }
+        @{ Name = 'non-object-json'; Text = '[]' }
+        @{ Name = 'second-checkpoint-mismatch'; Config = @{ base_model_name_or_path = 'Qwen/Qwen3-8B'; revision = $rev8 } }
+    )
+    foreach ($case in $identityCases) {
+        Clear-Artifacts
+        $identityDir = Join-Path $root ('identity-' + $case.Name)
+        $configText = if ($case.ContainsKey('Text')) { $case.Text } else { $case.Config | ConvertTo-Json -Compress }
+        New-AdapterDir $identityDir $configText 'IDENTITY-FIXTURE'
+        if ($case.Name -eq 'missing-file') { Remove-Item -LiteralPath (Join-Path $identityDir 'adapter_config.json') }
+        $selectedRepo = if ($case.Repo) { $case.Repo } else { 'Qwen/Qwen3-14B' }
+        $selectedRevision = if ($case.Revision) { $case.Revision } else { $rev }
+        $checkpoints = if ($case.Name -eq 'second-checkpoint-mismatch') { @($adapter1, $identityDir) } else { @($identityDir) }
+        $r = Invoke-Export (New-ExportArgs -Checkpoint $checkpoints -Execute -BaseRepoArg $selectedRepo -BaseRevisionArg $selectedRevision)
+        $text = Out-Text $r.Lines
+        $noEffects = (Get-ShimLogLines).Count -eq 0 -and (Get-ExportReports).Count -eq 0 -and
+            @(Get-ChildItem -LiteralPath $eRoot -Force).Count -eq 0 -and -not (Test-Path -LiteralPath $outCkpt1)
+        Assert ($r.Code -ne 0 -and $text.Contains('adapter base identity gate:') -and
+            $text.Contains($identityDir) -and $text.Contains('recorded') -and
+            $text.Contains("$selectedRepo@$selectedRevision") -and -not $text.Contains('PLAN ') -and $noEffects) "identity: $($case.Name) refused before planning or effects"
+    }
+    Clear-Artifacts
+    $matching8 = Join-Path $root 'identity-matching-8B'
+    New-AdapterDir $matching8 (@{ base_model_name_or_path = 'Qwen/Qwen3-8B'; revision = $rev8 } | ConvertTo-Json -Compress) 'IDENTITY-FIXTURE'
+    $r = Invoke-Export (New-ExportArgs -Checkpoint @($matching8) -BaseRepoArg 'Qwen/Qwen3-8B' -BaseRevisionArg $rev8)
+    Assert ($r.Code -eq 0 -and (Out-Text $r.Lines).Contains('PLAN mode=dry-run') -and
+        (Get-ShimLogLines).Count -eq 0) 'identity: matching 8B leaf proceeds to dry-run'
 
     # --- 3. Happy path, one checkpoint ---
     Clear-Artifacts
@@ -1196,7 +1240,7 @@ function Copy-BaseSnapshotFile([string]$Source, [string]$Destination) {
     Clear-Artifacts
     $r = Invoke-Export (New-ExportArgs -Checkpoint @($adapter1) -Execute -BaseRevisionArg $rev.ToUpperInvariant())
     $text = Out-Text $r.Lines
-    Assert ($r.Code -ne 0 -and $text -match 'expected exactly one model entry' -and (Get-ShimLogLines).Count -eq 0) 'trust: caller revision case change refused against exact root entry'
+    Assert ($r.Code -ne 0 -and $text -match 'parameter BaseRepo/BaseRevision: only the pinned 14B or 8B student export is supported' -and (Get-ShimLogLines).Count -eq 0) 'parameter: caller revision case change refused by exact student pin before trust or model effects'
     Clear-Artifacts
     $scenarioScript = Set-TrustFixtureList {
         $caseList = [ordered]@{}
@@ -2231,8 +2275,8 @@ else:
     $pinErrors = $null
     $realAst = [Management.Automation.Language.Parser]::ParseInput($st, [ref]$pinTokens, [ref]$pinErrors)
     $pinAssignments = @($realAst.FindAll({ param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq '$script:PinnedTrustedDigestManifestSha256' }, $true))
-    Assert ($pinAssignments.Count -eq 1 -and $pinAssignments[0].Right.Extent.Text -ceq "'d1a4a2d921c3f5197c2867dcdb50dbfb46d2189bbb88141ed56d3f3eb19d36af'") 'static: committed approved v2 root SHA-256 pin equals literal authority'
-    Assert ($st.Contains("'reports\m2-trusted-digest-manifest-v2.json'") -and $st.Contains("'reports\m2-expected-qwen3-14b-v2.json'")) 'static: committed default root and list paths remain approved v2'
+    Assert ($pinAssignments.Count -eq 1 -and $pinAssignments[0].Right.Extent.Text -ceq "'37ff31d7e9c11502d6795c93028ba8a617c6d427f2d6b830381f50d9157348af'") 'static: committed approved v3 root SHA-256 pin equals literal authority'
+    Assert ($st.Contains("'reports\m2-trusted-digest-manifest-v3.json'") -and $st.Contains("'reports\m2-expected-qwen3-14b-v2.json'")) 'static: committed default v3 root and retained approved 14B v2 list paths'
     Assert ($st.Contains('snap = "/base-snapshot"') -and $st -notmatch ':/hf:ro') 'static: model loader consumes exact frozen snapshot mount and never mounts mutable HF cache'
     Assert ($st -match 'verify_base_snapshot\(\)\r?\nbase = AutoModel' -and $st -match 'verify_base_snapshot\(\)\r?\nAutoTokenizer') 'static: full two-read gate immediately precedes both model and tokenizer loads'
     Assert ($st -notmatch '--gpus') 'static: no --gpus'

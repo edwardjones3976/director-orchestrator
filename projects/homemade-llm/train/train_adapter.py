@@ -18,12 +18,19 @@ Runs inside the pinned Unsloth image (see ``scripts/train-adapter.ps1``).
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import math
+import mmap
 import os
 import re
+import signal
+import stat
+import sys
+import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -51,8 +58,13 @@ WINNER_BASE = "Qwen/Qwen3-14B"
 WINNER_REVISION = "40c069824f4251a91eefaf281ebe4c544efd3e18"
 FALLBACK_BASE = "Qwen/Qwen3-8B"
 FALLBACK_REVISION = "b968826d9c46dd6066d109eabc6255188de91218"
+STUDENT_BASE = "unsloth/Qwen3-8B-unsloth-bnb-4bit"
+STUDENT_REVISION = "62efd7f9d748e394734a7adae2adf96e13a2abc8"
 # Approved root bytes, not a caller-supplied digest or a weight-list self-check.
-TRUSTED_DIGEST_ROOT_SHA256 = "d1a4a2d921c3f5197c2867dcdb50dbfb46d2189bbb88141ed56d3f3eb19d36af"
+TRUSTED_DIGEST_ROOT_SHA256 = "37ff31d7e9c11502d6795c93028ba8a617c6d427f2d6b830381f50d9157348af"
+# Draft bytes; the wrapper requires the final v4 filename after owner approval.
+TRUSTED_DIGEST_ROOT_V4_SHA256 = "6795b16f0ccfb2ae48b358784b979f92a4f19fb1ef09262fbbd31339dbd79e87"
+VERIFIED_READ_TIMEOUT_SECONDS = 180
 PROBE_STEPS = 20
 WINNER_VRAM_GIB = 11.0
 CARD_VRAM_GIB = 12.0
@@ -92,10 +104,21 @@ def is_fallback_pin(base: str, revision: str) -> bool:
     return base == FALLBACK_BASE and revision == FALLBACK_REVISION
 
 
+def is_student_4bit_pin(base: str, revision: str) -> bool:
+    return base == STUDENT_BASE and revision == STUDENT_REVISION
+
+
+def is_allowed_epoch_pin(base: str, revision: str) -> bool:
+    """Exact supported students; manifest authentication still precedes loading."""
+    return (is_winner_pin(base, revision) or is_fallback_pin(base, revision)
+            or is_student_4bit_pin(base, revision))
+
+
 def is_allowed_probe_pin(base: str, revision: str) -> bool:
     return (
         is_winner_pin(base, revision)
         or is_fallback_pin(base, revision)
+        or is_student_4bit_pin(base, revision)
         or is_smoke_pin(base, revision)
     )
 
@@ -105,6 +128,8 @@ def probe_pin_name(base: str, revision: str) -> str:
         return "winner"
     if is_fallback_pin(base, revision):
         return "fallback"
+    if is_student_4bit_pin(base, revision):
+        return "student_4bit"
     if is_smoke_pin(base, revision):
         return "smoke"
     fail(f"probe pin is not recognized for {base}@{revision}")
@@ -122,7 +147,7 @@ def probe_is_authoritative(
     projection_row_count: int,
 ) -> bool:
     return (
-        (is_winner_pin(base, revision) or is_fallback_pin(base, revision))
+        is_allowed_epoch_pin(base, revision)
         and probe_seq_len == SEQ
         and projection_row_count == loaded_row_count
     )
@@ -161,13 +186,15 @@ def _sha256_file(path: Path) -> str:
 
 
 def _index_weight_map_shards(
-    snapshot_dir: Path, *, blob_roots: tuple[Path, ...] = (),
+    snapshot_dir: Path, *, blob_roots: tuple[Path, ...] = (), payloads=None,
 ) -> tuple[set[str], bool]:
     index_path = snapshot_dir / "model.safetensors.index.json"
-    if not index_path.is_file():
+    has_index = index_path.name in payloads if payloads is not None else index_path.is_file()
+    if not has_index:
         return set(), False
     try:
-        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        payload = json.loads(payloads[index_path.name] if payloads is not None
+                             else index_path.read_bytes())
     except (OSError, json.JSONDecodeError) as exc:
         fail(f"model.safetensors.index.json is not usable: {exc}")
     weight_map = payload.get("weight_map")
@@ -246,16 +273,19 @@ def require_confined_relative_path(
 
 
 def verify_expected_digests(
-    snapshot_dir: Path, expected_files: list[dict], reads: int = 2,
-    *, blob_roots: tuple[Path, ...] = (),
+    snapshot_dir: Path, expected_files: list[dict], reads: int = 3,
+    *, blob_roots: tuple[Path, ...] = (), receipt_path: Path | None = None,
+    evidence=None,
 ) -> dict:
     """Authenticate every snapshot file before parsing any model-loading input.
 
     A weights-only approved list is insufficient when other snapshot files are
     present. Missing trusted metadata is a refusal, never a locally minted hash.
     """
-    if reads < 1:
-        fail("reads must be positive")
+    if reads not in (2, 3):
+        fail("verified reads require two consecutive matches in at most three reads")
+    result = evidence if evidence is not None else VerifiedSnapshot(receipt_path, expected_files)
+    result.entries = {entry["path"]: entry for entry in expected_files}
     seen_paths: set[str] = set()
     manifest_weight_paths: list[str] = []
     for entry in expected_files:
@@ -265,6 +295,10 @@ def verify_expected_digests(
         require_confined_relative_path(
             rel, snapshot_dir, "digest manifest paths must be confined relative snapshot files",
             blob_roots=blob_roots)
+        if (type(entry.get("size")) is not int or entry["size"] < 0
+                or not isinstance(entry.get("sha256"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"])):
+            fail(f"invalid trusted size or digest for {rel}")
         if rel in seen_paths:
             fail(f"duplicate path in digest manifest: {rel}")
         seen_paths.add(rel)
@@ -281,24 +315,16 @@ def verify_expected_digests(
     total_bytes = 0
     for entry in expected_files:
         rel = entry["path"]
-        expected_sha = entry["sha256"]
         expected_size = entry["size"]
         path = snapshot_dir / rel
-        if not path.is_file():
-            fail(f"missing expected file: {rel}")
-        actual_size = path.stat().st_size
-        if actual_size != expected_size:
-            fail(f"size mismatch for {rel}")
-        for read_index in range(1, reads + 1):
-            actual_sha = _sha256_file(path)
-            if actual_sha != expected_sha:
-                fail(f"digest mismatch for {rel} on read {read_index}")
+        result.payloads[rel] = verified_file_bytes(path, entry, result, reads=reads)
         total_bytes += expected_size
     # The index is executable loading metadata too: do not parse it before its
     # own bytes (and every other cached file) have passed the approved hashes.
+    for name in result.payloads:
+        result.checked_bytes(name)
     index_shards, weight_map_checked = (
-        _index_weight_map_shards(snapshot_dir, blob_roots=blob_roots) if blob_roots
-        else _index_weight_map_shards(snapshot_dir)
+        _index_weight_map_shards(snapshot_dir, blob_roots=blob_roots, payloads=result.payloads)
     )
     manifest_weight_set = set(manifest_weight_paths)
     if weight_map_checked:
@@ -308,15 +334,188 @@ def verify_expected_digests(
             shard_path = snapshot_dir / shard
             if not shard_path.is_file():
                 fail(f"index shard missing from snapshot: {shard}")
-    return {
+    result.update({
         "files": len(expected_files),
-        "reads": reads,
+        "reads": max(item["attempt"] for item in result.receipt["attempts"]),
         "bytes": total_bytes,
         "weight_files": len(manifest_weight_paths),
         "weight_map_checked": weight_map_checked,
         "snapshot_files": len(on_disk_files),
         "snapshot_coverage": "all_regular_files",
-    }
+    })
+    return result
+
+
+class VerifiedSnapshot(dict):
+    """Report fields stay JSON-safe; retained buffers never enter a report."""
+
+    def __init__(self, receipt_path, entries):
+        super().__init__()
+        self.payloads = {}
+        self.trust_payloads = {}
+        self.entries = {entry["path"]: entry for entry in entries}
+        self.receipt_path = receipt_path
+        self.receipt = {"format": "verified-read/v1", "status": "reading", "attempts": []}
+        self.persist()
+
+    def persist(self):
+        if self.receipt_path is not None:
+            # A failed write/fsync/readback is a refusal, including on the failure path.
+            data = (json.dumps(self.receipt, indent=2) + "\n").encode()
+            self.receipt_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.receipt_path.with_name(self.receipt_path.name + ".tmp")
+            with temporary.open("wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            if temporary.read_bytes() != data:
+                fail("verified-read evidence receipt readback differs")
+            os.replace(temporary, self.receipt_path)
+            if os.name == "posix":
+                directory = os.open(self.receipt_path.parent, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+
+    def checked_bytes(self, name):
+        data, entry = self.payloads[name], self.entries[name]
+        if len(data) != entry["size"] or hashlib.sha256(data).hexdigest() != entry["sha256"]:
+            fail(f"retained buffer corruption: {name}")
+        return data
+
+
+@contextmanager
+def _read_deadline(seconds=VERIFIED_READ_TIMEOUT_SECONDS):
+    # Linux trainer reads must be interruptible; never return an overdue buffer.
+    if not hasattr(signal, "setitimer"):
+        yield  # Host-only fixture checks also check elapsed time below.
+        return
+    def expired(*_args):
+        raise TimeoutError(f"verified read exceeded {seconds} seconds")
+    previous = signal.signal(signal.SIGALRM, expired)
+    timer = signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, *timer)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def _read_file_once(path, expected_size, attempt):
+    """One complete read; O_DIRECT alignment failure may fall back before any bytes."""
+    fd = None
+    unsupported = (errno.EINVAL, errno.EOPNOTSUPP, errno.ENOSYS)
+    try:
+        direct = hasattr(os, "O_DIRECT")
+        try:
+            fd = os.open(path, os.O_RDONLY | (os.O_DIRECT if direct else 0))
+        except OSError as exc:
+            if not direct or exc.errno not in unsupported:
+                raise
+            direct = False
+            fd = os.open(path, os.O_RDONLY)
+        before = os.fstat(fd)
+        attempt["size"] = before.st_size
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError("irregular input")
+        if expected_size is not None and before.st_size != expected_size:
+            raise ValueError(f"size mismatch for {path.name}")
+        read_size = before.st_size if expected_size is None else expected_size
+        chunks = []
+        digest = hashlib.sha256()
+        with mmap.mmap(-1, 1024 * 1024) as aligned:
+            while True:
+                if direct:
+                    attempt["method"] = "O_DIRECT"
+                    try:
+                        count = os.readv(fd, [aligned])
+                        chunk = aligned[:count]
+                    except OSError as exc:
+                        if chunks or exc.errno not in unsupported:
+                            raise
+                        os.close(fd)
+                        fd = os.open(path, os.O_RDONLY)
+                        direct = False
+                        continue
+                else:
+                    if hasattr(os, "posix_fadvise"):
+                        attempt["method"] = "posix_fadvise(DONTNEED)"
+                        if not chunks:
+                            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+                    elif os.name == "nt":
+                        attempt["method"] = "host buffered fixture read"
+                    else:
+                        raise OSError("no supported cache-bypassing read method")
+                    chunk = os.read(fd, 1024 * 1024)
+                attempt["bytes_read"] += len(chunk)
+                digest.update(chunk)
+                attempt["digest"] = digest.hexdigest()
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                if attempt["bytes_read"] > read_size:
+                    raise ValueError("input grew while reading")
+                # An unaligned direct tail is EOF; fstat below detects size changes.
+                if direct and len(chunk) < 1024 * 1024:
+                    break
+        after = os.fstat(fd)
+        signature = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+        if signature(before) != signature(after) or signature(after) != signature(path.stat()):
+            raise ValueError("input changed while reading")
+        attempt["identity"] = list(signature(after))
+        if attempt["bytes_read"] != read_size:
+            raise ValueError("short read")
+        return b"".join(chunks)
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def verified_file_bytes(path, entry, evidence, *, reads=3):
+    if reads not in (2, 3):
+        fail("verified reads require two consecutive matches in at most three reads")
+    consecutive, identity = 0, None
+    previous = None
+    for number in range(1, reads + 1):
+        start = time.monotonic()
+        attempt = {"file": str(path), "attempt": number, "digest": None, "size": None,
+                   "bytes_read": 0, "seconds": None, "error": None, "method": None,
+                   "timeout_seconds": VERIFIED_READ_TIMEOUT_SECONDS,
+                   "expected_size": entry.get("size"),
+                   "size_authority": "trusted" if entry.get("size") is not None else "observed only"}
+        try:
+            with _read_deadline(VERIFIED_READ_TIMEOUT_SECONDS):
+                data = _read_file_once(path, entry.get("size"), attempt)
+                attempt["digest"] = hashlib.sha256(data).hexdigest()
+                if len(data) != (entry["size"] if entry.get("size") is not None else attempt["size"]):
+                    raise ValueError(f"size mismatch for {entry['path']}: short read or wrong size")
+                if identity is not None and identity != attempt.get("identity"):
+                    raise ValueError("input changed between reads")
+                identity = attempt.get("identity")
+                if time.monotonic() - start >= VERIFIED_READ_TIMEOUT_SECONDS:
+                    raise TimeoutError(f"verified read exceeded {VERIFIED_READ_TIMEOUT_SECONDS} seconds")
+                good = attempt["digest"] == entry["sha256"]
+                if good and consecutive and previous != data:
+                    raise ValueError("authenticated bytes changed between reads")
+                consecutive = consecutive + 1 if good else 0
+                previous = data if good else None
+                if not good:
+                    attempt["error"] = "digest mismatch"
+        except BaseException as exc:
+            attempt["error"] = f"{type(exc).__name__}: {exc}"
+            evidence.receipt["status"] = "refused"
+            fail(f"verified read refused for {path} on read {number}: {exc}")
+        finally:
+            attempt["seconds"] = time.monotonic() - start
+            evidence.receipt["attempts"].append(attempt)
+            evidence.persist()
+        if consecutive == 2:
+            return data
+    evidence.receipt["status"] = "refused"
+    evidence.persist()
+    detail = entry.get("mismatch", "")
+    fail(f"digest mismatch for {entry['path']}: {detail}; exhausted reads on read {reads}; path {path}")
 
 
 def _expected_digest_files(data: bytes, base: str, revision: str) -> list[dict]:
@@ -336,27 +535,27 @@ def _expected_digest_files(data: bytes, base: str, revision: str) -> list[dict]:
     return files
 
 
-def load_expected_digests(path: Path, base: str, revision: str) -> list[dict]:
-    try:
-        data = path.read_bytes()
-    except OSError as exc:
-        fail(f"expected digests file is not usable: {exc}")
-    return _expected_digest_files(data, base, revision)
+def load_expected_digests(path: Path, base: str, revision: str, *, trusted_root_path=None) -> list[dict]:
+    return load_authenticated_digests(trusted_root_path, path, base, revision)[0]
 
 
 def load_authenticated_digests(
     root_path: Path | None, path: Path, base: str, revision: str,
+    *, evidence=None,
 ) -> tuple[list[dict], dict[str, str]]:
     """Authenticate root -> exact model/revision -> list bytes before parsing the list."""
     if root_path is None:
         fail("--trusted-digest-root is required for pinned M2 models")
-    try:
-        root_bytes = root_path.read_bytes()
-    except OSError as exc:
-        fail(f"trusted digest root is not usable: {exc}")
-    root_sha = hashlib.sha256(root_bytes).hexdigest()
-    if root_sha != TRUSTED_DIGEST_ROOT_SHA256:
-        fail("trusted digest root does not match the approved SHA-256")
+    expected_root_sha = (TRUSTED_DIGEST_ROOT_V4_SHA256 if is_student_4bit_pin(base, revision)
+                         else TRUSTED_DIGEST_ROOT_SHA256)
+    if evidence is None:
+        evidence = VerifiedSnapshot(None, [])
+    root_bytes = verified_file_bytes(root_path, {
+        "path": root_path.name, "sha256": expected_root_sha,
+        "mismatch": "trusted digest root does not match the approved SHA-256",
+    }, evidence)
+    evidence.trust_payloads["root"] = root_bytes
+    root_sha = expected_root_sha
     try:
         root = json.loads(root_bytes.decode("utf-8"))
     except (UnicodeError, json.JSONDecodeError) as exc:
@@ -372,12 +571,11 @@ def load_authenticated_digests(
     if (not isinstance(upstream_sha, str) or len(upstream_sha) != 64
             or any(char not in "0123456789abcdef" for char in upstream_sha)):
         fail("approved model entry has no valid upstream digest-list SHA-256")
-    try:
-        data = path.read_bytes()
-    except OSError as exc:
-        fail(f"expected digests file is not usable: {exc}")
-    if hashlib.sha256(data).hexdigest() != upstream_sha:
-        fail("upstream digest list does not match the approved root")
+    data = verified_file_bytes(path, {
+        "path": path.name, "sha256": upstream_sha,
+        "mismatch": "upstream digest list does not match the approved root",
+    }, evidence)
+    evidence.trust_payloads["expected_digests"] = data
     return _expected_digest_files(data, base, revision), {
         "trusted_root_sha256": root_sha, "upstream_digest_list_sha256": upstream_sha,
         "base": base, "revision": revision,
@@ -396,31 +594,374 @@ def digest_verification_before_load(
     expected_digests_path: Path | None,
     trusted_digest_root_path: Path | None = None,
     resolved: list[Path] | None = None,
+    receipt_path: Path | None = None,
 ) -> dict | None:
     """Admission first (unchanged order), then the one snapshot resolution, then digest verification of that snapshot.
 
-    The verified snapshot is appended to ``resolved`` so the caller loads exactly those bytes, never a second lookup."""
+    Retain authenticated buffers; a snapshot pathname alone is never load authority."""
     if is_winner_pin(base, revision) and expected_digests_path is None:
         fail("--expected-digests is required for the winner pin")
     if is_fallback_pin(base, revision) and expected_digests_path is None:
         fail("--expected-digests is required for the fallback pin")
-    requires_root = base in (WINNER_BASE, FALLBACK_BASE)
+    requires_root = base in (WINNER_BASE, FALLBACK_BASE, STUDENT_BASE)
     if requires_root and expected_digests_path is None:
         fail("--expected-digests is required for pinned M2 models")
     if expected_digests_path is None:
         return None
     binding = {}
+    evidence = VerifiedSnapshot(receipt_path, [])
     if requires_root or trusted_digest_root_path is not None:
         expected_files, binding = load_authenticated_digests(
             trusted_digest_root_path, expected_digests_path, base, revision,
+            evidence=evidence,
         )
     else:
-        expected_files = load_expected_digests(expected_digests_path, base, revision)
+        fail("--trusted-digest-root is required: expected digests have no authenticated parent")
     snapshot_dir = local_snapshot_dir(base, revision)
     if resolved is not None:
         resolved.append(snapshot_dir)
     blob_roots = authenticated_cache_blob_roots(snapshot_dir, base, revision) if binding else ()
-    return {**verify_expected_digests(snapshot_dir, expected_files, blob_roots=blob_roots), **binding}
+    result = verify_expected_digests(snapshot_dir, expected_files, blob_roots=blob_roots,
+                                     receipt_path=receipt_path, evidence=evidence)
+    result.update(binding)
+    return result
+
+
+@contextmanager
+def sealed_snapshot(verified):
+    """Unsloth's pathname API sees sealed memory, never the original snapshot."""
+    if not hasattr(os, "memfd_create"):
+        fail("verified model loading requires Linux memfd seals")
+    import fcntl
+    descriptors = []
+    with tempfile.TemporaryDirectory(prefix="verified-model-") as directory:
+        try:
+            for name in verified.entries:
+                data = verified.checked_bytes(name)
+                target = Path(directory) / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                fd = os.memfd_create("verified-model", os.MFD_ALLOW_SEALING | os.MFD_CLOEXEC)
+                descriptors.append(fd)
+                view = memoryview(data)
+                while view:
+                    written = os.write(fd, view)
+                    if written <= 0:
+                        fail("short write to retained snapshot")
+                    view = view[written:]
+                seals = fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL
+                fcntl.fcntl(fd, fcntl.F_ADD_SEALS, seals)
+                if fcntl.fcntl(fd, fcntl.F_GET_SEALS) & seals != seals:
+                    fail("retained snapshot could not be sealed")
+                target.symlink_to(f"/proc/self/fd/{fd}")
+                if _sha256_file(target) != verified.entries[name]["sha256"]:
+                    fail(f"sealed snapshot copy differs: {name}")
+            yield Path(directory)
+        finally:
+            for fd in descriptors:
+                os.close(fd)
+
+
+def reference_state_dict(verified):
+    from safetensors.torch import load
+    weight_names = {name for name in verified.entries if _is_weight_manifest_path(name)}
+    if not weight_names or any(not name.endswith(".safetensors") for name in weight_names):
+        fail("verified loading only defines safetensors comparisons")
+    index_name = "model.safetensors.index.json"
+    weight_map = None
+    if index_name in verified.entries:
+        weight_map = json.loads(verified.checked_bytes(index_name))["weight_map"]
+        if set(weight_map.values()) != weight_names:
+            fail("verified index and shard set differ")
+    elif weight_names != {"model.safetensors"}:
+        fail("multiple/nonstandard shards require a verified weight_map")
+    reference = {}
+    for name in sorted(weight_names):
+        shard = load(verified.checked_bytes(name))
+        if set(reference) & set(shard):
+            fail("duplicate tensor name across shards")
+        if weight_map is not None and any(weight_map.get(key) != name for key in shard):
+            fail("tensor differs from verified index weight_map")
+        reference.update(shard)
+    if weight_map is not None and set(reference) != set(weight_map):
+        fail("verified index tensor names differ from shard contents")
+    return reference
+
+
+def compare_tensor(name, actual, expected):
+    if actual.device.type not in ("cpu", "cuda"):
+        fail(f"undefined destination comparison for {name}: {actual.device}")
+    if actual.device.type == "cuda":
+        torch.cuda.synchronize(actual.device)
+    if actual.shape != expected.shape or actual.dtype != expected.dtype:
+        fail(f"loaded tensor shape/dtype differs: {name}")
+    # Byte equality includes NaN encodings and signed zero; no numerical tolerance.
+    actual_bytes = actual.detach().contiguous().reshape(-1).view(torch.uint8).cpu().numpy().tobytes()
+    expected_bytes = expected.detach().contiguous().reshape(-1).view(torch.uint8).cpu().numpy().tobytes()
+    if hashlib.sha256(actual_bytes).digest() != hashlib.sha256(expected_bytes).digest():
+        fail(f"loaded tensor payload differs: {name}")
+
+
+def compare_quant_state(name, actual, expected):
+    if actual is None:
+        fail(f"Linear4bit quant_state is missing: {name}")
+    for field in ("quant_type", "blocksize", "dtype", "shape", "nested"):
+        if getattr(actual, field) != getattr(expected, field):
+            fail(f"loaded quantization metadata differs: {name}.{field}")
+    compare_tensor(name + ".absmax", actual.absmax, expected.absmax)
+    compare_tensor(name + ".quant_map", actual.code, expected.code)
+    if actual.nested:
+        compare_tensor(name + ".offset", actual.offset.reshape(1), expected.offset.reshape(1))
+        compare_quant_state(name + ".nested", actual.state2, expected.state2)
+    elif actual.state2 is not None or actual.offset is not None:
+        fail(f"unexpected nested quantization state: {name}")
+
+
+def input_padding_allowance(model, name, actual, target, config, verified):
+    """WO-G86: recognize only the verified, untied input embedding's padding row."""
+    if verified is None or config.get("tie_word_embeddings") is not False:
+        return None
+    try:
+        embedding = model.get_input_embeddings()
+        if not isinstance(embedding, torch.nn.Embedding):
+            return None
+        names = {key + ".weight" for key, module in model.named_modules() if module is embedding}
+        if name not in names or actual.data_ptr() != embedding.weight.data_ptr():
+            return None
+        head = model.lm_head.weight
+        if (embedding.weight.data_ptr() == head.data_ptr()
+                or embedding.weight.untyped_storage().data_ptr() == head.untyped_storage().data_ptr()):
+            return None
+        files = ("config.json", "tokenizer_config.json", "generation_config.json", "tokenizer.json")
+        payloads = {path: verified.checked_bytes(path) for path in files}
+        configs = {path: json.loads(data) for path, data in payloads.items()}
+        model_config = configs["config.json"]
+        if model_config != config or model_config.get("tie_word_embeddings") is not False:
+            return None
+        tokens = configs["tokenizer_config.json"]
+        ids = configs["generation_config.json"]
+        added = configs["tokenizer.json"]["added_tokens"]
+        vocab_size = model_config["vocab_size"]
+        if (not isinstance(added, list) or len(target.shape) != 2
+                or type(vocab_size) is not int or vocab_size != target.shape[0]):
+            return None
+        by_id, by_content = {}, {}
+        for item in added:
+            token_id, token = item["id"], item["content"]
+            if (not isinstance(token, str) or not token or type(token_id) is not int
+                    or not 0 <= token_id < vocab_size or token_id in by_id or token in by_content):
+                return None
+            by_id[token_id], by_content[token] = token, token_id
+        for kind in ("pad", "eos"):
+            token, token_id = tokens[kind + "_token"], model_config[kind + "_token_id"]
+            if (type(token_id) is not int or not isinstance(token, str)
+                    or token_id not in by_id or by_id[token_id] != token):
+                return None
+        pad_id, primary_eos = model_config["pad_token_id"], model_config["eos_token_id"]
+        generation_eos = ids["eos_token_id"]
+        if type(generation_eos) is int:
+            generation_eos = [generation_eos]
+        if (type(ids["pad_token_id"]) is not int or ids["pad_token_id"] != pad_id
+                or not isinstance(generation_eos, list) or not generation_eos
+                or any(type(token_id) is not int or token_id not in by_id for token_id in generation_eos)
+                or len(set(generation_eos)) != len(generation_eos)
+                or primary_eos not in generation_eos or pad_id in generation_eos):
+            return None
+        if (type(embedding.padding_idx) is not int or embedding.padding_idx != pad_id
+                or pad_id == primary_eos):
+            return None
+        # Direct Python callers must also prove the loaded module's source identity.
+        source_path = Path(sys.modules["unsloth.models.llama"].__file__)
+        source_sha256 = _sha256_file(source_path)
+        if source_sha256 != "e09924b71078efabcd5173002620baa72cf9a09f1d974af4bad5516f5508e225":
+            return None
+    except (AttributeError, KeyError, TypeError, ValueError, OSError):
+        return None
+    return {"tensor": name, "token_id": pad_id, "token": tokens["pad_token"],
+            "primary_eos_token_id": primary_eos, "generation_eos_token_ids": generation_eos,
+            "configuration_sha256": {path: hashlib.sha256(data).hexdigest() for path, data in payloads.items()},
+            "source_reference_image": "unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739",
+            "source": {"file": "unsloth/models/llama.py", "lines": "3004-3025",
+                       "sha256": source_sha256, "verification": "loaded module source file SHA-256"}}
+
+
+def verify_loaded_model(model, reference, *, dtype, config, verified=None):
+    from bitsandbytes.nn import Linear4bit
+    from bitsandbytes.functional import QuantState
+    actual = model.state_dict()
+    expected = dict(reference)
+    quantized = set()
+    for name, module in model.named_modules():
+        if not isinstance(module, Linear4bit):
+            continue
+        key = name + ".weight"
+        if module.weight.quant_state is None or module.quant_state is None:
+            fail(f"Linear4bit quant_state is missing: {name}")
+        siblings = {k[len(key) + 1:]: v for k, v in reference.items() if k.startswith(key + ".")}
+        if not siblings:
+            # shortcut: only prequantized checkpoints have a byte-exact reference; add
+            # an independently validated on-load quantization mapping before enabling others.
+            fail(f"undefined on-load quantization comparison: {key}")
+        state = QuantState.from_dict(dict(siblings), device=torch.device("cpu"))
+        compare_quant_state(key, module.weight.quant_state, state)
+        compare_quant_state(key + ".module", module.quant_state, state)
+        serialized = {k[len(key) + 1:]: v for k, v in actual.items() if k.startswith(key + ".")}
+        compare_quant_state(key + ".serialized", QuantState.from_dict(serialized,
+                            device=torch.device("cpu")), state)
+        quantized.add(key)
+        # Packed JSON may change key ordering; compare the decoded fields above.
+        for sibling in siblings:
+            full = key + "." + sibling
+            if sibling.startswith("quant_state."):
+                expected.pop(full)
+                if full not in actual:
+                    fail(f"missing serialized quantization metadata: {full}")
+                actual.pop(full)
+    if not quantized:
+        fail("no Linear4bit modules in the loaded 4-bit model")
+    if config.get("tie_word_embeddings") is True and "lm_head.weight" not in expected:
+        if model.get_output_embeddings().weight is not model.get_input_embeddings().weight:
+            fail("declared tied embeddings are not tied")
+        expected["lm_head.weight"] = reference["model.embed_tokens.weight"]
+    if set(actual) != set(expected):
+        fail("loaded tensor names differ from the verified checkpoint")
+    casts = []
+    allowance = None
+    for name, value in expected.items():
+        target = value
+        if name not in quantized and not any(name.startswith(k + ".") for k in quantized):
+            if value.is_floating_point() and value.dtype != dtype:
+                target = value.to(dtype=dtype)
+                casts.append({"name": name, "from": str(value.dtype), "to": str(dtype)})
+        try:
+            compare_tensor(name, actual[name], target)
+        except SystemExit as exc:
+            if str(exc) != f"loaded tensor payload differs: {name}":
+                raise
+            candidate = input_padding_allowance(model, name, actual[name], target, config, verified)
+            if candidate is None:
+                raise
+            verified.receipt["input_embedding_pad_row_candidate"] = dict(candidate, status="eligible_proposed")
+            verified.persist()
+            # Clone after the existing dtype conversion; never change either source weight.
+            padded = target.clone()
+            padded[candidate["token_id"]].zero_()
+            compare_tensor(name, actual[name], padded)
+            allowance = candidate
+    result = {"tensors": len(actual), "linear4bit": len(quantized), "casts": casts,
+            "gpu_destinations": sorted({str(t.device) for t in actual.values() if t.device.type == "cuda"}),
+            "comparison": "exact payload/shape/dtype; decoded quantization state"}
+    if allowance is not None:
+        result["input_embedding_pad_row_allowance"] = allowance
+        result["comparison"] += "; input-embedding pad row zeroed by loader (allowance)"
+    return result
+
+
+def tokenizer_json_matches(actual, expected):
+    """WO-G78: exact JSON except the three captured Qwen2 constructor rewrites."""
+    def canonical(value):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
+
+    if canonical(actual) == canonical(expected):
+        return True
+    if not isinstance(actual, dict) or not isinstance(expected, dict) or actual.keys() != expected.keys():
+        return False
+    bytelevel = {"type": "ByteLevel", "add_prefix_space": False, "trim_offsets": False, "use_regex": False}
+    template = {"type": "TemplateProcessing", "single": [{"Sequence": {"id": "A", "type_id": 0}}],
+                "pair": [{"Sequence": {"id": "A", "type_id": 0}}, {"Sequence": {"id": "B", "type_id": 1}}],
+                "special_tokens": {}}
+    for key, original in expected.items():
+        loaded = actual[key]
+        if canonical(loaded) == canonical(original):
+            continue
+        if key == "decoder" and canonical(original) == canonical(bytelevel):
+            allowed = {"type": "ByteLevel", "add_prefix_space": True, "trim_offsets": True, "use_regex": True}
+        elif key == "post_processor" and canonical(original) == canonical(bytelevel):
+            allowed = template
+        elif (key == "pre_tokenizer" and isinstance(original, dict)
+              and original.keys() == {"type", "pretokenizers"} and original["type"] == "Sequence"
+              and isinstance(original["pretokenizers"], list)):
+            allowed = {"type": "Sequence", "pretokenizers": [
+                dict(part, trim_offsets=True) if canonical(part) == canonical(bytelevel) else part
+                for part in original["pretokenizers"]]}
+        else:
+            return False
+        if canonical(loaded) != canonical(allowed):
+            return False
+    return True
+
+
+def verify_tokenizer_behavior(actual, expected):
+    """Fixed WO-G78 corpus; compare backend encodings and real single/pair decoding."""
+    texts = (
+        "Hello world", " leading space", "  two spaces\nnewline\r\nCRLF",
+        "naïve café 東京 😀 — “quotes”",
+        "<|im_start|>system\nYou are DIRECTOR.<|im_end|>\n<|im_start|>user\nWhat's 2+2?<|im_end|>",
+        "def f(x):\n    return x**2  # comment\n", "</think>\n\nanswer", "", " ", "\t\ttabs",
+        "won't can't I'd", "1234567890 3.14159 -0.5e-3", "https://example.com/a?b=c&d=e",
+        "trailing space ", "<|endoftext|>",
+    )
+    pairs = (("Question?", "Answer."), ("<|im_start|>user\nhi<|im_end|>", " reply"))
+    try:
+        for special in (False, True):
+            for inputs in tuple((text,) for text in texts) + pairs:
+                loaded = actual.encode(*inputs, add_special_tokens=special)
+                reference = expected.encode(*inputs, add_special_tokens=special)
+                for field in ("ids", "tokens", "offsets", "type_ids", "attention_mask"):
+                    if getattr(loaded, field) != getattr(reference, field):
+                        raise ValueError
+                for skip in (False, True):
+                    if actual.decode(loaded.ids, skip_special_tokens=skip) != expected.decode(reference.ids, skip_special_tokens=skip):
+                        raise ValueError
+    except Exception:
+        fail("loaded tokenizer behavior differs from verified tokenizer bytes")
+
+
+def load_verified_model(snapshot, verification, *, max_seq_length):
+    """Verification-bound pathname fallback; no unverified loader branch exists."""
+    if (not isinstance(verification, VerifiedSnapshot) or verification.receipt_path is None
+            or not verification.get("trusted_root_sha256")):
+        fail("verified loading requires retained bytes, an approved root and a durable receipt")
+    try:
+        config = json.loads(verification.checked_bytes("config.json"))
+        if not config.get("quantization_config", {}).get("load_in_4bit"):
+            fail("full-precision winner/fallback loading refused; prequantized checkpoint required; follow-up WO-G32-LDR-FP1")
+        if os.name != "posix" or not hasattr(os, "memfd_create"):
+            fail("verified model loading requires the Linux trainer image")
+        reference = reference_state_dict(verification)
+        del reference
+        # Unsloth's normal automatic dtype choice, made explicit for comparison.
+        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        with sealed_snapshot(verification) as retained_path:
+            model, tokenizer = FastLanguageModel.from_pretrained(
+                str(retained_path), max_seq_length=max_seq_length, load_in_4bit=True,
+                dtype=dtype, use_exact_model_name=True, local_files_only=True,
+                trust_remote_code=False)
+            # Do not accept a loader's tokenizer/config fallback to another cache.
+            from tokenizers import Tokenizer
+            expected_tokenizer = Tokenizer.from_str(verification.checked_bytes("tokenizer.json").decode())
+            if not tokenizer_json_matches(json.loads(tokenizer.backend_tokenizer.to_str()),
+                                          json.loads(expected_tokenizer.to_str())):
+                fail("loaded tokenizer differs from verified tokenizer bytes")
+            verify_tokenizer_behavior(tokenizer.backend_tokenizer, expected_tokenizer)
+            for field in ("model_type", "vocab_size", "hidden_size", "intermediate_size",
+                          "num_hidden_layers", "num_attention_heads", "num_key_value_heads",
+                          "tie_word_embeddings"):
+                if field in config and getattr(model.config, field, None) != config[field]:
+                    fail(f"loaded model config differs: {field}")
+            # Re-derive after loading to detect reference/buffer mutation as well.
+            reference = reference_state_dict(verification)
+            verification["loaded_verification"] = verify_loaded_model(
+                model, reference, dtype=dtype, config=config, verified=verification)
+        verification.receipt.update(status="verified", loader="sealed-memfd pathname fallback",
+                                    post_load=verification["loaded_verification"])
+        verification.persist()
+        verification["verified_read_receipt"] = str(verification.receipt_path)
+        verification.payloads.clear()
+        return model, tokenizer
+    except BaseException as exc:
+        verification.receipt.update(status="refused", error=f"{type(exc).__name__}: {exc}")
+        verification.persist()
+        raise
 
 
 def resolve_commit(config_commit: str | None, repo: str, revision: str, snapshot: Path | None = None) -> str:
@@ -596,7 +1137,7 @@ def create_run_directory(report_path: Path) -> Path:
     return run_dir
 
 
-def write_adapter_leaf(model: Any, leaf_dir: Path) -> Path:
+def write_adapter_leaf(model: Any, leaf_dir: Path, *, base_repo: str, base_revision: str) -> Path:
     """Explicit adapter-only save into a clean ``epoch-NN`` leaf directory.
 
     Assumption to confirm on the real host: the pinned ``peft`` writes exactly
@@ -605,8 +1146,23 @@ def write_adapter_leaf(model: Any, leaf_dir: Path) -> Path:
     (optimizer/RNG/trainer state) is never copied into the leaf, so leaves are
     export inputs, not resume checkpoints.
     """
+    if not is_allowed_epoch_pin(base_repo, base_revision):
+        fail("adapter leaf requires a verified student pin")
     leaf_dir.mkdir(parents=True, exist_ok=False)
     model.save_pretrained(str(leaf_dir))
+    config_path = leaf_dir / "adapter_config.json"
+    if config_path.is_symlink() or _is_directory_link(config_path) or not config_path.is_file():
+        fail("adapter leaf config must be a regular file")
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    if not isinstance(config, dict):
+        fail("adapter leaf config must be a JSON object")
+    config["base_model_name_or_path"] = base_repo
+    config["revision"] = base_revision
+    if is_student_4bit_pin(base_repo, base_revision):
+        # GGUF export merges into the paired bf16 source, not quantized weights.
+        config["merge_source"] = FALLBACK_BASE
+        config["merge_revision"] = FALLBACK_REVISION
+    config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     return leaf_dir
 
 
@@ -1140,8 +1696,9 @@ class DevEvaluationCallback(TrainerCallback):
                  frozen_dev_context: dict[str, Any], max_epochs: int,
                  predict_fn: Any = None, score_fn: Any = None,
                  requested_epochs: int | None = None, *,
-                 use_gradient_checkpointing: str | bool) -> None:
+                 use_gradient_checkpointing: str | bool, base_repo: str) -> None:
         self.model, self.run_dir, self.checkpoints = model, run_dir, checkpoints
+        self.base_repo = base_repo
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self.best_primary = None
         self.best_per_field = {}
@@ -1309,7 +1866,8 @@ class DevEvaluationCallback(TrainerCallback):
             if progress is None:
                 raise ValueError("missing epoch progress")
             if 0.5 <= progress < 1 and 1 not in self.midpoints_done:
-                leaf_dir = write_adapter_leaf(self.model, self.run_dir / "midpoint-epoch-01")
+                leaf_dir = write_adapter_leaf(self.model, self.run_dir / "midpoint-epoch-01",
+                    base_repo=self.base_repo, base_revision=self.identity["base_revision"])
                 _, digest = write_leaf_manifest(leaf_dir)
                 self._evaluate(1, "midpoint", digest, control, kwargs.get("processing_class") or kwargs.get("tokenizer"))
                 self.midpoints_done.add(1)
@@ -1334,7 +1892,8 @@ class DevEvaluationCallback(TrainerCallback):
             step = getattr(state, "global_step", None)
             if type(step) is not int or step < 0:
                 raise ValueError("invalid global step")
-            leaf_dir = write_adapter_leaf(self.model, self.run_dir / epoch_leaf_name(epoch))
+            leaf_dir = write_adapter_leaf(self.model, self.run_dir / epoch_leaf_name(epoch),
+                base_repo=self.base_repo, base_revision=self.identity["base_revision"])
             entry = leaf_report_entry(leaf_dir, epoch=epoch, global_step=step)
             _require_hex(entry.get("manifest_sha256"), 64, "leaf manifest digest")
             self.checkpoints.append(entry)
@@ -1985,8 +2544,8 @@ def train(
                 raise ValueError("epoch caller rows differ from the admitted publication")
             if type(epochs) is not int or not 1 <= epochs <= EPOCH_MODE_MAX:
                 raise ValueError("invalid requested epochs")
-            if not is_winner_pin(base, revision):
-                raise ValueError("epoch mode requires the explicit winner pin")
+            if not is_allowed_epoch_pin(base, revision):
+                raise ValueError("epoch mode requires an explicit supported student pin")
             if type(epoch_context_limit) is not int or epoch_context_limit <= SEQ:
                 raise ValueError("epoch mode requires an explicit context limit greater than max_new_tokens")
             # Validate the cohort before any model or GPU operation. The approved
@@ -2000,11 +2559,13 @@ def train(
             # update is already epoch end, so no interior midpoint can exist.
             if len(rows) <= TRAIN_GRAD_ACCUM:
                 raise ValueError("epoch mode needs more than 8 training rows for an interior first-epoch update")
-        resolved: list[Path] = []
+        snapshot_paths: list[Path] = []
         digest_verification = digest_verification_before_load(
-            base, revision, expected_digests_path, trusted_digest_root_path, resolved=resolved)
-        # The one resolution (the verified snapshot when digests were checked), before any CUDA or model effect.
-        snapshot = resolved[0] if resolved else local_snapshot_dir(base, revision)
+            base, revision, expected_digests_path, trusted_digest_root_path, resolved=snapshot_paths,
+            receipt_path=report_path.with_suffix(".verified-read.json"))
+        # Keep the report's resolved commit separate from snapshot discovery,
+        # including when authentication or model loading fails before resolution.
+        snapshot = snapshot_paths[0] if snapshot_paths else local_snapshot_dir(base, revision)
         callbacks = []
         if epochs is not None:
             if not isinstance(digest_verification, dict):
@@ -2016,14 +2577,13 @@ def train(
             })
             callback = DevEvaluationCallback(None, run_dir, checkpoints, context,
                 max_epochs=EPOCH_MODE_MAX, requested_epochs=epochs,
-                use_gradient_checkpointing=use_gradient_checkpointing)
+                use_gradient_checkpointing=use_gradient_checkpointing, base_repo=base)
             callbacks.append(callback)
         set_seed(SEED)
         torch.cuda.reset_peak_memory_stats()
         memory_tracking_initialized = True
-        model, tokenizer = FastLanguageModel.from_pretrained(
-            str(snapshot), max_seq_length=epoch_context_limit if epochs is not None else SEQ, load_in_4bit=True,
-            use_exact_model_name=True, local_files_only=True)
+        model, tokenizer = load_verified_model(snapshot, digest_verification,
+            max_seq_length=epoch_context_limit if epochs is not None else SEQ)
         resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision, snapshot)
         if callback is not None and callback.identity["base_revision"] != resolved:
             raise ValueError("loaded model differs from frozen dev identity")
@@ -2058,6 +2618,8 @@ def train(
         peak = torch.cuda.max_memory_reserved() / 2**30
         if epochs is not None:
             require_vram(peak, winner=winner)
+            if not math.isfinite(peak) or peak < 0 or not probe_memory_pass(peak):
+                fail(f"epoch peak reserved VRAM must be finite, non-negative and strictly below {WINNER_VRAM_GIB:.1f} GiB")
             # Refuse absent callback termination; do not synthesize completion
             # from a Trainer result or from files alone.
             selected = callback.completed_selection()
@@ -2180,11 +2742,11 @@ def run_context_probe(inputs_path: Path, base: str, revision: str, report_path: 
         report.update(inputs_sha256=input_sha256, input_count=len(inputs))
         resolved: list[Path] = []
         verification = digest_verification_before_load(base, revision, expected_digests_path, trusted_digest_root_path,
-                                                       resolved=resolved)
+                                                       resolved=resolved,
+                                                       receipt_path=report_path.with_suffix(".verified-read.json"))
         snapshot = resolved[0] if resolved else local_snapshot_dir(base, revision)  # the one resolution, before any model effect
         set_seed(SEED)
-        model, tokenizer = FastLanguageModel.from_pretrained(str(snapshot),
-            max_seq_length=context_limit, load_in_4bit=True, use_exact_model_name=True, local_files_only=True)
+        model, tokenizer = load_verified_model(snapshot, verification, max_seq_length=context_limit)
         loaded = True
         report["resolved_commit"] = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision, snapshot)
         report["digest_verification"] = verification
@@ -2263,16 +2825,11 @@ def run_probe(
     resolved: list[Path] = []
     digest_verification = digest_verification_before_load(
         base, revision, expected_digests_path, trusted_digest_root_path, resolved=resolved,
+        receipt_path=report_path.with_suffix(".verified-read.json"),
     )
     snapshot = resolved[0] if resolved else local_snapshot_dir(base, revision)  # the one resolution, before any model effect
     set_seed(SEED)
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        str(snapshot),
-        max_seq_length=probe_seq_len,
-        load_in_4bit=True,
-        use_exact_model_name=True,
-        local_files_only=True,
-    )
+    model, tokenizer = load_verified_model(snapshot, digest_verification, max_seq_length=probe_seq_len)
     resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision, snapshot)
     model = FastLanguageModel.get_peft_model(
         model,
@@ -2444,8 +3001,9 @@ def main(argv: list[str] | None = None) -> None:
             fail(f"--epochs must be {EPOCH_MODE_MIN} to {EPOCH_MODE_MAX}")
         if args.probe:
             fail("--epochs cannot be combined with --probe")
-        if not explicit_pin or not is_winner_pin(args.base, args.revision):
-            fail(f"epoch mode requires explicit --base {WINNER_BASE} --revision {WINNER_REVISION}")
+        if not explicit_pin or not is_allowed_epoch_pin(args.base, args.revision):
+            fail(f"epoch mode requires explicit --base and --revision for {WINNER_BASE}@{WINNER_REVISION} "
+                 f"or {FALLBACK_BASE}@{FALLBACK_REVISION} or {STUDENT_BASE}@{STUDENT_REVISION}")
         if args.publication_binding is None:
             fail("--publication-binding is required in epoch mode")
         if args.epoch_context_limit is None or args.epoch_context_limit <= SEQ:
@@ -2468,7 +3026,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.probe and not is_allowed_probe_pin(args.base, args.revision):
         fail(
             f"D-M1-F probe is pinned to {WINNER_BASE}@{WINNER_REVISION}, "
-            f"{FALLBACK_BASE}@{FALLBACK_REVISION}, or {SMOKE_BASE}@{SMOKE_REVISION}"
+            f"{FALLBACK_BASE}@{FALLBACK_REVISION}, {STUDENT_BASE}@{STUDENT_REVISION}, or {SMOKE_BASE}@{SMOKE_REVISION}"
         )
     if args.winner and (args.base != WINNER_BASE or args.revision != WINNER_REVISION):
         fail(f"winner probe is pinned to {WINNER_BASE}@{WINNER_REVISION}")
