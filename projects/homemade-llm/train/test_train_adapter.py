@@ -255,6 +255,15 @@ class VerifiedSourceLoaderTests(unittest.TestCase):
 
 class AuthorityFixtureCase(unittest.TestCase):
     def setUp(self):
+        # These orchestration fixtures have no tensors. The real admission and
+        # loader refusal/CPU/CUDA contracts live in test_verified_read.py.
+        loader = mock.patch.object(train_adapter, "load_verified_model", side_effect=
+            lambda snapshot, verification, *, max_seq_length:
+                train_adapter.FastLanguageModel.from_pretrained(str(snapshot),
+                    max_seq_length=max_seq_length, load_in_4bit=True,
+                    use_exact_model_name=True, local_files_only=True))
+        self.loader_stub = loader.start()
+        self.addCleanup(loader.stop)
         import epoch_authority
         self._authority_patch = mock.patch.object(train_adapter, '_epoch_authority', return_value=epoch_authority)
         self._authority_patch.start()
@@ -1056,14 +1065,15 @@ Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
         snapshot = Path("hub", "models--org--m", "snapshots", "a" * 40)
         resolved = []
         with mock.patch.object(train_adapter, "local_snapshot_dir", return_value=snapshot) as resolver, \
-                mock.patch.object(train_adapter, "load_expected_digests", return_value=[]), \
+                mock.patch.object(train_adapter, "load_authenticated_digests", return_value=([], {})), \
                 mock.patch.object(train_adapter, "verify_expected_digests", return_value={"files": 0}) as verify:
-            train_adapter.digest_verification_before_load("org/m", "a" * 40, Path("digests.json"), resolved=resolved)
+            train_adapter.digest_verification_before_load("org/m", "a" * 40, Path("digests.json"),
+                Path("root.json"), resolved=resolved)
         resolver.assert_called_once_with("org/m", "a" * 40)
         self.assertIs(verify.call_args.args[0], snapshot)
         self.assertEqual(resolved, [snapshot])
 
-    def test_every_mode_loads_the_verified_snapshot_by_path_without_revision(self):
+    def test_every_mode_hands_the_snapshot_to_the_shared_loader(self):
         snapshot = Path("hub", "models--org--m", "snapshots", train_adapter.SMOKE_REVISION)
 
         def verified(*_a, resolved=None, **_k):  # admission and verification pass, handing back the verified snapshot
@@ -1102,7 +1112,7 @@ Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
                 self.assertTrue(kwargs["local_files_only"])
                 self.assertTrue(kwargs["use_exact_model_name"])
 
-    def test_unverified_mode_resolves_once_and_loads_that_path(self):
+    def test_smoke_orchestration_resolves_once_before_the_stubbed_loader(self):
         snapshot = Path("hub", "models--org--m", "snapshots", train_adapter.SMOKE_REVISION)
         flm = mock.MagicMock()
         flm.from_pretrained = mock.MagicMock(side_effect=SystemExit("stop after load"))
@@ -1198,6 +1208,9 @@ Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
             ["--revision", train_adapter.WINNER_REVISION],
             ["--base", train_adapter.SMOKE_BASE, "--revision", train_adapter.SMOKE_REVISION],
             ["--base", train_adapter.WINNER_BASE, "--revision", "a" * 40],
+            ["--base", train_adapter.FALLBACK_BASE, "--revision", train_adapter.WINNER_REVISION],
+            ["--base", train_adapter.WINNER_BASE, "--revision", train_adapter.FALLBACK_REVISION],
+            ["--base", "Other/Approved-Model", "--revision", train_adapter.FALLBACK_REVISION],
         )
         for pin in cases:
             with self.subTest(pin=pin), \
@@ -1214,11 +1227,13 @@ Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
              mock.patch.object(train_adapter, "train", return_value={}) as training, \
              contextlib.redirect_stdout(io.StringIO()):
             fx = _build_publication_fixture(Path(tmp), rows=slice3_train_rows() + slice3_dev_rows())
-            train_adapter.main(["--rows", str(fx["rows_dir"] / "accepted.jsonl"), "--report", str(Path(tmp) / "out.json"),
-                                "--epochs", "1", "--base", train_adapter.WINNER_BASE,
-                                "--revision", train_adapter.WINNER_REVISION,
-                                "--epoch-context-limit", "4096", "--publication-binding", str(fx["binding_path"])])
-            self.assertEqual(training.call_args.args[2:4], (train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION))
+            for base, revision in ((train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION),
+                                   (train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION),
+                                   (train_adapter.STUDENT_BASE, train_adapter.STUDENT_REVISION)):
+                train_adapter.main(["--rows", str(fx["rows_dir"] / "accepted.jsonl"), "--report", str(Path(tmp) / "out.json"),
+                                    "--epochs", "1", "--base", base, "--revision", revision,
+                                    "--epoch-context-limit", "4096", "--publication-binding", str(fx["binding_path"])])
+                self.assertEqual(training.call_args.args[2:4], (base, revision))
             self.assertEqual(training.call_args.kwargs["epochs"], 1)
             self.assertEqual(training.call_args.kwargs["publication_binding_path"], fx["binding_path"])
             self.assertEqual(training.call_args.kwargs["publication_rows_dir"], fx["rows_dir"])
@@ -1658,7 +1673,7 @@ Write-Output 'PASS'
             self.assertGreater(index, 0, f"{call} not found")
             self.assertLess(index, mutex_index, f"{call} must run before the GPU mutex is created")
 
-    def test_epoch_image_guards_refuse_aliases_before_setup(self):
+    def test_all_mode_image_guards_refuse_aliases_before_setup(self):
         pwsh = shutil.which('pwsh')
         if pwsh is None:
             self.skipTest('PowerShell is required for actual wrapper argument guards')
@@ -1690,9 +1705,20 @@ foreach ($bad in 'unsloth/unsloth:latest', ('unsloth/unsloth@sha256:' + ('0' * 6
     catch {{ $denied = $_.Exception.Message.Contains('exact approved training image') }}
     if (-not $denied) {{ throw "wrapper admitted alias: $bad" }}
 }}
-# Non-epoch and probe image selection keeps its previous behavior.
-foreach ($probe in $false, $true) {{
-    if ((& '{prefix_file.as_posix()}' -Rows 'absent/accepted.jsonl' -Image 'custom/image:tag' -Probe:$probe) -ne 'GUARDS-PASSED') {{ throw 'legacy image changed' }}
+# Smoke, probe, student probe and context probe use the same image guard.
+$context = '{Path(tmp).as_posix()}/context.jsonl'
+[IO.File]::WriteAllText($context, '{{}}')
+foreach ($mode in @{{}}, @{{ Probe = $true }}, @{{ Probe = $true; Student4Bit = $true }},
+        @{{ Probe = $true; ProbeContextInputs = $context; ProbeContextLimit = 4096 }}) {{
+    if ((& '{prefix_file.as_posix()}' -Rows 'absent/accepted.jsonl' @mode) -ne 'GUARDS-PASSED') {{ throw 'mode default refused' }}
+    if ((& '{prefix_file.as_posix()}' -Rows 'absent/accepted.jsonl' @mode -Image $approved) -ne 'GUARDS-PASSED') {{ throw 'mode exact digest refused' }}
+    foreach ($bad in '', 'custom/image:tag', 'unsloth/unsloth:latest', ('unsloth/unsloth@sha256:' + ('0' * 64)),
+            (' ' + $approved), ($approved + ' '), $approved.ToUpperInvariant()) {{
+        $denied = $false
+        try {{ & '{prefix_file.as_posix()}' -Rows 'absent/accepted.jsonl' @mode -Image $bad | Out-Null }}
+        catch {{ $denied = $_.Exception.Message.Contains('exact approved training image') }}
+        if (-not $denied) {{ throw "mode admitted alias: $bad" }}
+    }}
 }}
 . '{script.with_name('train-adapter-stage.ps1').as_posix()}'
 foreach ($bad in 'unsloth/unsloth:latest', ('unsloth/unsloth@sha256:' + ('0' * 64)),
@@ -1705,7 +1731,7 @@ foreach ($bad in 'unsloth/unsloth:latest', ('unsloth/unsloth@sha256:' + ('0' * 6
     catch {{ $denied = $_.Exception.Message.Contains('exact approved training image') }}
     if (-not $denied) {{ throw "direct helper reached authority or mounts with alias: $bad" }}
 }}
-'PASS default + exact + five wrapper aliases + five direct helper aliases + legacy/probe'
+'PASS default + exact + epoch + smoke/probe/student/context aliases + direct helper aliases'
 """
             result = subprocess.run([pwsh, '-NoProfile', '-NonInteractive', '-Command', command],
                                     capture_output=True, text=True, timeout=30)
@@ -1795,6 +1821,19 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
             ({"Epochs": "4"}, "requires explicit positive -TimeoutMinutes"),
             ({"Epochs": "4", "TimeoutMinutes": "1"}, "requires explicit -Base"),
             ({**epoch_pin, "Batch": "'batch-0001'"}, None),
+            ({**epoch_pin, "Batch": "'batch-0001'", "Base": "$FallbackBase", "Revision": "$FallbackRevision"}, None),
+            ({**epoch_pin, "Batch": "'batch-0001'", "Base": "$StudentBase", "Revision": "$StudentRevision"}, None),
+            ({**{k: v for k, v in epoch_pin.items() if k not in ("Base", "Revision")},
+              "Batch": "'batch-0001'", "Student4Bit": "$true"}, None),
+            ({"Student4Bit": "$true", "Probe": "$true"}, None),
+            ({"Student4Bit": "$true"}, "-Student4Bit requires -Probe or -Epochs"),
+            ({"Student4Bit": "$true", "Probe": "$true", "Winner": "$true"}, "mutually exclusive"),
+            ({"Student4Bit": "$true", "Probe": "$true", "Fallback": "$true"}, "mutually exclusive"),
+            ({"Student4Bit": "$true", "Probe": "$true", "Base": "$StudentBase"}, "do not pass -Base"),
+            ({**epoch_pin, "Batch": "'batch-0001'", "Base": "$StudentBase"}, "requires explicit -Base"),
+            ({**epoch_pin, "Batch": "'batch-0001'", "Base": "$FallbackBase"}, "requires explicit -Base"),
+            ({**epoch_pin, "Batch": "'batch-0001'", "Revision": "$FallbackRevision"}, "requires explicit -Base"),
+            ({**epoch_pin, "Batch": "'batch-0001'", "Base": "'qwen/Qwen3-8B'", "Revision": "$FallbackRevision"}, "requires explicit -Base"),
             (epoch_pin, "-Epochs requires -Batch"),
             ({**{k: v for k, v in epoch_pin.items() if k != "EpochContextLimit"}, "Batch": "'batch-0001'"}, "requires explicit -EpochContextLimit"),
             ({**epoch_pin, "Batch": "'batch-0001'", "EpochContextLimit": "2048"}, "requires explicit -EpochContextLimit"),
@@ -1817,7 +1856,7 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
                 )
                 command = (
                     "$ErrorActionPreference = 'Stop'\n"
-                    "$Winner = $false; $Fallback = $false; $Probe = $false; "
+                    "$Winner = $false; $Fallback = $false; $Student4Bit = $false; $Probe = $false; "
                     "$Epochs = 0; $Steps = 20; $TimeoutMinutes = 90; $Batch = ''; $PSBoundParameters = @{}\n"
                     + prerequisites
                     + setup + "\n"
@@ -1994,22 +2033,157 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
             if path.is_file():
                 self.assertIn(path.relative_to(leaf).as_posix(), names)
 
-    def _trusted_chain(self, root: Path) -> tuple[Path, Path, str]:
+    def _trusted_chain(self, root: Path, *, base=train_adapter.WINNER_BASE,
+                       revision=train_adapter.WINNER_REVISION) -> tuple[Path, Path, str]:
         # Synthetic metadata and weights only. Tests patch the fixed code pin,
         # never add a runtime argument that can approve an arbitrary root.
         snapshot = root / "snapshot"
         snapshot.mkdir(exist_ok=True)
         entry = self._digest_entry(snapshot, "model.safetensors", b"synthetic weights")
-        key = f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"
+        key = f"{base}@{revision}"
         listing = root / "upstream.json"
         listing.write_bytes(json.dumps({key: {"files": [entry]}}).encode())
         trusted = root / "approved-root.json"
         trusted.write_bytes(json.dumps({"models": [{
-            "hf_repo": train_adapter.WINNER_BASE,
-            "hf_revision": train_adapter.WINNER_REVISION,
+            "hf_repo": base,
+            "hf_revision": revision,
             "upstream_weight_digests_sha256": hashlib.sha256(listing.read_bytes()).hexdigest(),
         }]}).encode())
         return trusted, listing, hashlib.sha256(trusted.read_bytes()).hexdigest()
+
+    def test_epoch_8b_authenticates_approved_snapshot_before_model_effects(self):
+        import predict_dev
+        for fault in (None, "student_4bit", "missing_root", "changed_root", "unapproved_entry", "wrong_revision",
+                      "missing_list", "changed_list", "changed_weights", "unknown_student"):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                base, revision = train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION
+                if fault == "student_4bit":
+                    base, revision = train_adapter.STUDENT_BASE, train_adapter.STUDENT_REVISION
+                approved_base = train_adapter.WINNER_BASE if fault == "unapproved_entry" else base
+                approved_revision = train_adapter.WINNER_REVISION if fault == "unapproved_entry" else revision
+                if fault == "unknown_student":
+                    base = approved_base = "Other/Approved-Model"
+                trusted, listing, pin = self._trusted_chain(root, base=approved_base, revision=approved_revision)
+                fx = _build_publication_fixture(root, rows=slice3_train_rows() + slice3_dev_rows())
+                if fault == "changed_root":
+                    trusted.write_bytes(trusted.read_bytes() + b" ")
+                if fault == "changed_list":
+                    listing.write_bytes(listing.read_bytes() + b" ")
+                if fault == "changed_weights":
+                    (root / "snapshot" / "model.safetensors").write_bytes(b"changed weights")
+                if fault == "wrong_revision":
+                    revision = "a" * 40
+                stop = RuntimeError("synthetic model-load boundary; no model loaded")
+                root_constant = "TRUSTED_DIGEST_ROOT_V4_SHA256" if fault == "student_4bit" else "TRUSTED_DIGEST_ROOT_SHA256"
+                with mock.patch.object(train_adapter, root_constant, pin), \
+                     mock.patch.object(train_adapter, "local_snapshot_dir", return_value=root / "snapshot"), \
+                     mock.patch.dict(os.environ, {"ADAPTER_MODELS_DIR": str(root / "models")}), \
+                     mock.patch.object(predict_dev, "_default_template_source", return_value=(fx["code_dir"] / "prompt_template.py").read_bytes()), \
+                     mock.patch.object(train_adapter, "set_seed") as seed, \
+                     mock.patch.object(train_adapter, "FastLanguageModel") as model, \
+                     mock.patch.object(train_adapter.torch, "cuda", mock.Mock(max_memory_reserved=mock.Mock(return_value=0)), create=True) as cuda:
+                    model.from_pretrained.side_effect = stop
+                    with self.assertRaises((RuntimeError, ValueError, SystemExit)) as caught:
+                        train_adapter.train(None, None, base, revision, None, root / "out.json",
+                            winner=False, epochs=1, expected_digests_path=None if fault == "missing_list" else listing,
+                            trusted_digest_root_path=None if fault == "missing_root" else trusted, **fx["train_kwargs"])
+                    if fault in (None, "student_4bit"):
+                        self.assertIs(caught.exception, stop)
+                        model.from_pretrained.assert_called_once_with(str(root / "snapshot"), max_seq_length=4096,
+                            load_in_4bit=True, use_exact_model_name=True, local_files_only=True)
+                        seed.assert_called_once_with(train_adapter.SEED)
+                    else:
+                        self.assertIsNot(caught.exception, stop)
+                        messages = {
+                            "missing_root": "--trusted-digest-root is required",
+                            "changed_root": "does not match the approved SHA-256",
+                            "unapproved_entry": "no unique approved entry",
+                            "wrong_revision": "explicit supported student pin",
+                            "missing_list": "--expected-digests is required",
+                            "changed_list": "upstream digest list does not match",
+                            "changed_weights": "size mismatch for model.safetensors",
+                            "unknown_student": "explicit supported student pin",
+                        }
+                        self.assertIn(messages[fault], str(caught.exception))
+                        seed.assert_not_called()
+                        self.assertEqual(model.mock_calls, [])
+                        self.assertEqual(cuda.mock_calls, [])
+                    if (root / "out.json").exists():
+                        report = json.loads((root / "out.json").read_bytes())
+                        self.assertEqual(report["base_resolved_commit"], revision)
+                        self.assertFalse(report["operational_completion"])
+
+    def test_export_student_guard_requires_exact_model_revision_pairs(self):
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("PowerShell is required for the actual export guard")
+        script = Path(__file__).resolve().parents[1] / "scripts" / "export-adapter.ps1"
+        source = script.read_text(encoding="utf-8")
+        start = source.index("if (-not (($BaseRepo -ceq")
+        guard = source[start:source.index("$utcStamp = Get-UtcStamp", start)]
+        fixture_source = script.with_name("test-export-adapter.ps1").read_text(encoding="utf-8")
+        fixture_revision = re.search(r"^    \$rev = '([0-9a-f]{40})'$", fixture_source, re.MULTILINE).group(1)
+        self.assertEqual(fixture_revision, train_adapter.WINNER_REVISION)
+        cases = [(train_adapter.WINNER_BASE, fixture_revision, True),
+                 (train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION, True),
+                 (train_adapter.FALLBACK_BASE, train_adapter.WINNER_REVISION, False),
+                 (train_adapter.WINNER_BASE, train_adapter.FALLBACK_REVISION, False),
+                 ("Other/Approved-Model", train_adapter.FALLBACK_REVISION, False),
+                 ("qwen/Qwen3-8B", train_adapter.FALLBACK_REVISION, False),
+                 (train_adapter.FALLBACK_BASE, "", False)]
+        for base, revision, permitted in cases:
+            with self.subTest(base=base, revision=revision):
+                command = ("$ErrorActionPreference = 'Stop'\n"
+                           + f"$BaseRepo = '{base}'; $BaseRevision = '{revision}'\n"
+                           + guard + "'GUARDS-PASSED'")
+                result = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
+                    capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode == 0, permitted, result.stdout + result.stderr)
+                self.assertEqual("GUARDS-PASSED" in result.stdout, permitted)
+
+    def test_export_4bit_leaf_requires_exact_bf16_pair_and_merge_stamp(self):
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("PowerShell is required for the actual export identity assertion")
+        script = Path(__file__).resolve().parents[1] / "scripts" / "export-adapter.ps1"
+        source = script.read_text(encoding="utf-8")
+        start = source.index("function Assert-AdapterBaseIdentity(")
+        assertion = source[start:source.index("function Assert-AdapterHashes(", start)]
+        config = {"base_model_name_or_path": train_adapter.STUDENT_BASE, "revision": train_adapter.STUDENT_REVISION,
+                  "merge_source": train_adapter.FALLBACK_BASE, "merge_revision": train_adapter.FALLBACK_REVISION}
+        cases = [(config, train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION, True),
+                 (config, train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, False)]
+        for field in config:
+            for value in (None, 123, "wrong"):
+                cases.append(({**config, field: value}, train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION, False))
+            cases.append(({k: v for k, v in config.items() if k != field},
+                          train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION, False))
+        with tempfile.TemporaryDirectory() as tmp:
+            for stamp, base, revision, permitted in cases:
+                with self.subTest(stamp=stamp, selected=base):
+                    Path(tmp, "adapter_config.json").write_text(json.dumps(stamp), encoding="utf-8")
+                    command = ("$ErrorActionPreference = 'Stop'\n" + assertion
+                               + f"\n$BaseRepo = '{base}'; $BaseRevision = '{revision}'\n"
+                               + "Assert-AdapterBaseIdentity '" + tmp.replace("'", "''") + "'\n'IDENTITY-PASSED'")
+                    result = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
+                                            capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode == 0, permitted, result.stdout + result.stderr)
+                    if not permitted:
+                        self.assertIn("adapter base identity gate", result.stdout + result.stderr)
+
+    def test_epoch_nonfinite_memory_cannot_complete_either_student(self):
+        for student in ((train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION),
+                        (train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION)):
+            for peak in (float("nan"), float("inf"), float("-inf"), -1.0):
+                with self.subTest(student=student, peak=peak), tempfile.TemporaryDirectory() as tmp:
+                    with self.assertRaises(SystemExit):
+                        self._maintenance_epoch_run(Path(tmp), Slice3CompleteTrainer, epochs=1,
+                            student=student, peak_gib=peak)
+                    payload = json.loads((Path(tmp) / "reports" / "maintenance.json").read_bytes())
+                    self.assertFalse(payload["operational_completion"])
+                    self.assertFalse(payload["export_ready"])
+                    self.assertFalse(payload["qualified"])
 
     def test_authenticated_chain_matches_before_local_weight_verification(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2024,6 +2198,73 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
             self.assertEqual(result["reads"], 2)
             self.assertEqual(result["trusted_root_sha256"], pin)
             self.assertEqual(result["upstream_digest_list_sha256"], hashlib.sha256(listing.read_bytes()).hexdigest())
+
+    def test_student_4bit_v4_authenticates_all_14_files_before_probe_load(self):
+        base, revision = train_adapter.STUDENT_BASE, train_adapter.STUDENT_REVISION
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trusted, listing, _ = self._trusted_chain(root, base=base, revision=revision)
+            snapshot = root / "snapshot"
+            (snapshot / "model.safetensors").unlink()
+            names = (".gitattributes", "README.md", "added_tokens.json", "chat_template.jinja",
+                     "config.json", "generation_config.json", "merges.txt",
+                     "model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors",
+                     "model.safetensors.index.json", "special_tokens_map.json", "tokenizer.json",
+                     "tokenizer_config.json", "vocab.json")
+            index = json.dumps({"weight_map": {"a": names[7], "b": names[8]}}).encode()
+            entries = [self._digest_entry(snapshot, name, index if name.endswith("index.json") else b"synthetic")
+                       for name in names]
+            listing.write_bytes(json.dumps({f"{base}@{revision}": {"files": entries}}).encode())
+            record = json.loads(trusted.read_bytes())
+            record["models"][0]["upstream_weight_digests_sha256"] = hashlib.sha256(listing.read_bytes()).hexdigest()
+            trusted.write_bytes(json.dumps(record).encode())
+            pin = hashlib.sha256(trusted.read_bytes()).hexdigest()
+            with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_V4_SHA256", pin), \
+                 mock.patch.object(train_adapter, "local_snapshot_dir", return_value=snapshot), \
+                 mock.patch.object(train_adapter, "set_seed"), \
+                 mock.patch.object(train_adapter, "FastLanguageModel") as model:
+                result = train_adapter.digest_verification_before_load(base, revision, listing, trusted)
+                self.assertEqual((result["files"], result["snapshot_files"], result["reads"]), (14, 14, 2))
+                self.assertEqual(result["trusted_root_sha256"], pin)
+                model.from_pretrained.side_effect = RuntimeError("synthetic load boundary")
+                with self.assertRaisesRegex(RuntimeError, "synthetic load boundary"):
+                    train_adapter.run_probe([], base, revision, root / "probe.json",
+                        probe_rows_total=8, probe_seq_len=2048, expected_digests_path=listing,
+                        trusted_digest_root_path=trusted)
+                model.from_pretrained.assert_called_once_with(str(snapshot), max_seq_length=2048,
+                    load_in_4bit=True, use_exact_model_name=True, local_files_only=True)
+                (snapshot / ".gitattributes").write_bytes(b"corrupted")
+                model.reset_mock()
+                with self.assertRaisesRegex(SystemExit, "digest mismatch for .gitattributes"):
+                    train_adapter.run_probe([], base, revision, root / "probe.json",
+                        probe_rows_total=8, probe_seq_len=2048, expected_digests_path=listing,
+                        trusted_digest_root_path=trusted)
+                model.from_pretrained.assert_not_called()
+
+    def test_student_4bit_requires_v4_and_missing_final_refuses_before_snapshot(self):
+        base, revision = train_adapter.STUDENT_BASE, train_adapter.STUDENT_REVISION
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trusted, listing, pin = self._trusted_chain(root, base=base, revision=revision)
+            with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
+                 mock.patch.object(train_adapter, "local_snapshot_dir") as snapshot:
+                with self.assertRaisesRegex(SystemExit, "root does not match"):
+                    train_adapter.digest_verification_before_load(base, revision, listing, trusted)
+                with self.assertRaisesRegex(SystemExit, "expected-digests is required"):
+                    train_adapter.digest_verification_before_load(base, revision, None, trusted)
+                with self.assertRaisesRegex(SystemExit, "trusted-digest-root is required"):
+                    train_adapter.digest_verification_before_load(base, revision, listing)
+                trusted.rename(root / "m2-trusted-digest-manifest-v4.draft.json")
+                with self.assertRaisesRegex(SystemExit, r"verified read refused for .*m2-trusted-digest-manifest-v4\.json on read 1:"):
+                    train_adapter.digest_verification_before_load(base, revision, listing,
+                        root / "m2-trusted-digest-manifest-v4.json")
+                snapshot.assert_not_called()
+            for old_base, old_revision in ((train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION),
+                                           (train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION)):
+                trusted, listing, pin = self._trusted_chain(root, base=old_base, revision=old_revision)
+                with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_V4_SHA256", pin):
+                    with self.assertRaisesRegex(SystemExit, "root does not match"):
+                        train_adapter.load_authenticated_digests(trusted, listing, old_base, old_revision)
 
     def test_changed_root_refused_before_parse_or_snapshot(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2109,31 +2350,41 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
             self.skipTest("PowerShell is required to evaluate metadata preflight")
         source = (Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1").read_text(encoding="utf-8")
         start = source.index("$TrustedDigestRoot = ''")
-        end = source.index("if (-not [string]::IsNullOrWhiteSpace($ExpectedDigests))", start)
+        end = source.index("foreach ($sub in", start)
         self.assertLess(end, source.index("$gpuLock ="))
         block = source[start:end]
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            trusted, listing, pin = self._trusted_chain(root)
-            block = block.replace("C:\\llm\\reports\\m2-trusted-digest-manifest-v2.json", str(trusted))
-            block = block.replace(train_adapter.TRUSTED_DIGEST_ROOT_SHA256, pin)
-            for mode in ("matching", "changed_list", "changed_root", "fallback"):
-                trusted, listing, _ = self._trusted_chain(root)
+            for mode in ("matching", "matching_8b", "matching_4bit", "missing_v4", "changed_list", "changed_root", "fallback"):
+                approved = ((train_adapter.STUDENT_BASE, train_adapter.STUDENT_REVISION)
+                            if mode in ("matching_4bit", "missing_v4") else
+                            (train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION)
+                            if mode == "matching_8b" else (train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION))
+                trusted, listing, pin = self._trusted_chain(root, base=approved[0], revision=approved[1])
+                fixture_block = block.replace("C:\\llm\\reports\\m2-trusted-digest-manifest-v3.json", str(trusted))
+                fixture_block = fixture_block.replace(train_adapter.TRUSTED_DIGEST_ROOT_SHA256, pin)
+                fixture_block = fixture_block.replace("C:\\llm\\reports\\m2-trusted-digest-manifest-v4.json", str(trusted))
+                fixture_block = fixture_block.replace(train_adapter.TRUSTED_DIGEST_ROOT_V4_SHA256, pin)
+                if mode == "missing_v4":
+                    trusted.rename(root / "m2-trusted-digest-manifest-v4.draft.json")
                 if mode == "changed_list":
                     listing.write_bytes(b"changed")
                 if mode == "changed_root":
                     trusted.write_bytes(b"changed")
-                base = train_adapter.FALLBACK_BASE if mode == "fallback" else train_adapter.WINNER_BASE
-                revision = train_adapter.FALLBACK_REVISION if mode == "fallback" else train_adapter.WINNER_REVISION
+                base = train_adapter.FALLBACK_BASE if mode in ("fallback", "matching_8b") else train_adapter.WINNER_BASE
+                revision = train_adapter.FALLBACK_REVISION if mode in ("fallback", "matching_8b") else train_adapter.WINNER_REVISION
+                if mode in ("matching_4bit", "missing_v4"):
+                    base, revision = approved
                 preamble = (
                     "$ErrorActionPreference = 'Stop'\n"
                     f"$WinnerBase = '{train_adapter.WINNER_BASE}'; $FallbackBase = '{train_adapter.FALLBACK_BASE}'\n"
+                    f"$StudentBase = '{train_adapter.STUDENT_BASE}'; $StudentRevision = '{train_adapter.STUDENT_REVISION}'\n"
                     f"$Base = '{base}'; $Revision = '{revision}'; $ExpectedDigests = '{listing}'\n"
                 )
-                result = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", preamble + block],
+                result = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", preamble + fixture_block],
                                         capture_output=True, text=True, timeout=30)
                 with self.subTest(mode=mode):
-                    self.assertEqual(result.returncode == 0, mode == "matching", result.stderr)
+                    self.assertEqual(result.returncode == 0, mode in ("matching", "matching_8b", "matching_4bit"), result.stderr)
 
     def test_trainer_has_no_pin_override(self):
         with contextlib.redirect_stdout(io.StringIO()):
@@ -2142,13 +2393,25 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
         self.assertEqual(raised.exception.code, 0)
         self.assertNotIn("trusted-root-sha", Path(train_adapter.__file__).read_text(encoding="utf-8"))
 
-    def test_python_and_wrapper_use_the_same_owner_approved_v2_root_pin_and_default(self):
-        approved_pin = "d1a4a2d921c3f5197c2867dcdb50dbfb46d2189bbb88141ed56d3f3eb19d36af"
+    def test_python_and_wrappers_use_the_same_approved_v3_root_pin_and_defaults(self):
+        approved_pin = "37ff31d7e9c11502d6795c93028ba8a617c6d427f2d6b830381f50d9157348af"
         self.assertEqual(train_adapter.TRUSTED_DIGEST_ROOT_SHA256, approved_pin)
         source = (Path(__file__).resolve().parents[1] / "scripts" / "train-adapter.ps1").read_text(encoding="utf-8")
         self.assertIn(f"$TrustedDigestRootSHA256 = '{train_adapter.TRUSTED_DIGEST_ROOT_SHA256}'", source)
-        self.assertIn("$TrustedDigestRoot = 'C:\\llm\\reports\\m2-trusted-digest-manifest-v2.json'", source)
+        self.assertIn("$TrustedDigestRoot = 'C:\\llm\\reports\\m2-trusted-digest-manifest-v3.json'", source)
         self.assertIn("$ExpectedDigests = Join-Path $HotRoot 'reports\\m2-expected-qwen3-14b-v2.json'", source)
+        self.assertIn("$ExpectedDigests = Join-Path $HotRoot 'reports\\m2-expected-qwen3-8b-v2.json'", source)
+        self.assertIn(f"$TrustedDigestRootV4SHA256 = '{train_adapter.TRUSTED_DIGEST_ROOT_V4_SHA256}'", source)
+        self.assertIn("$TrustedDigestRoot = 'C:\\llm\\reports\\m2-trusted-digest-manifest-v4.json'", source)
+        self.assertIn("$ExpectedDigests = Join-Path $HotRoot 'reports\\m2-expected-qwen3-8b-4bit-v1.json'", source)
+        scripts = Path(__file__).resolve().parents[1] / "scripts"
+        export = (scripts / "export-adapter.ps1").read_text(encoding="utf-8")
+        self.assertIn(f"$script:PinnedTrustedDigestManifestSha256 = '{approved_pin}'", export)
+        self.assertIn("'reports\\m2-trusted-digest-manifest-v3.json'", export)
+        self.assertIn("'reports\\m2-expected-qwen3-14b-v2.json'", export)
+        export_fixture = (scripts / "test-export-adapter.ps1").read_text(encoding="utf-8")
+        self.assertIn("$rootPath = Join-Path $cRoot 'reports\\m2-trusted-digest-manifest-v3.json'", export_fixture)
+        self.assertIn(approved_pin, export_fixture)
 
     def _complete_trusted_snapshot(self, root: Path) -> tuple[Path, Path, str]:
         trusted, listing, _ = self._trusted_chain(root)
@@ -2235,27 +2498,29 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
             trusted, listing, pin = self._complete_trusted_snapshot(root)
             snapshot = root / "snapshot"
             seen = []
-            real_hash = train_adapter._sha256_file
+            real_hash = train_adapter._read_file_once
             real_parse = train_adapter._index_weight_map_shards
 
-            def record_hash(path):
+            def record_hash(path, *args):
                 seen.append(path.name)
-                return real_hash(path)
+                return real_hash(path, *args)
 
-            def parse_after_hashes(path):
-                self.assertEqual(len(seen), 8)
-                for name in ("model.safetensors", "config.json", "tokenizer.json", "model.safetensors.index.json"):
+            def parse_after_hashes(path, **kwargs):
+                self.assertEqual(len(seen), 12)
+                for name in (trusted.name, listing.name, "model.safetensors", "config.json", "tokenizer.json", "model.safetensors.index.json"):
                     self.assertEqual(seen.count(name), 2)
-                return real_parse(path)
+                return real_parse(path, **kwargs)
 
             with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
                  mock.patch.object(train_adapter, "local_snapshot_dir", return_value=snapshot), \
-                 mock.patch.object(train_adapter, "_sha256_file", side_effect=record_hash), \
+                 mock.patch.object(train_adapter, "_read_file_once", side_effect=record_hash), \
                  mock.patch.object(train_adapter, "_index_weight_map_shards", side_effect=parse_after_hashes) as parse:
                 train_adapter.digest_verification_before_load(
                     train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted,
                 )
-            parse.assert_called_once_with(snapshot)
+            self.assertEqual(parse.call_count, 1)
+            self.assertEqual(parse.call_args.args, (snapshot,))
+            self.assertIn("payloads", parse.call_args.kwargs)
 
     def test_authenticated_snapshot_file_links_support_repo_and_shared_blobs(self):
         for layout in ("repo", "shared", "two_hops"):
@@ -2302,7 +2567,9 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
     def test_authenticated_cache_links_with_synthetic_file_link_emulation(self):
         # Windows may deny native file symlinks. Emulate only these fixture file
         # links; directory ancestry and all authentication/hash/index code run
-        # unchanged against real synthetic files. This is no native cache smoke.
+        # unchanged against real synthetic files. Redirect os.open as well as
+        # Path.open: otherwise fstat sees the placeholder and stat sees the blob.
+        # This is no native cache smoke.
         for layout in ("repo", "shared", "two_hops", "external", "other_repo", "other_revision", "blob_ancestor"):
             with self.subTest(layout=layout), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -2337,6 +2604,7 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
 
                 original_symlink, original_readlink = Path.is_symlink, Path.readlink
                 original_stat, original_open = Path.stat, Path.open
+                original_os_open = os.open
 
                 def resolve_file(path):
                     for _ in range(5):
@@ -2349,9 +2617,21 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
                      mock.patch.object(Path, "readlink", lambda p: links[p] if p in links else original_readlink(p)), \
                      mock.patch.object(Path, "stat", lambda p, **kw: original_stat(resolve_file(p), **kw)), \
                      mock.patch.object(Path, "open", lambda p, *a, **kw: original_open(resolve_file(p), *a, **kw)), \
+                     mock.patch.object(os, "open", lambda p, *a, **kw: original_os_open(resolve_file(Path(p)), *a, **kw)), \
                      mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin), \
                      mock.patch.object(train_adapter, "local_snapshot_dir", return_value=snapshot):
                     if layout in ("repo", "shared", "two_hops"):
+                        sample = snapshot / "config.json"
+                        fd = original_os_open(sample, os.O_RDONLY)
+                        try:
+                            self.assertNotEqual(os.fstat(fd).st_ino, sample.stat().st_ino)
+                        finally:
+                            os.close(fd)
+                        fd = os.open(sample, os.O_RDONLY)
+                        try:
+                            self.assertEqual(os.fstat(fd).st_ino, sample.stat().st_ino)
+                        finally:
+                            os.close(fd)
                         payload = train_adapter.digest_verification_before_load(
                             train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION, listing, trusted)
                         self.assertEqual(payload["snapshot_files"], 4)
@@ -2594,34 +2874,35 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
             data = b"stable"
             entry = self._digest_entry(root, "stable.bin", data)
             calls = 0
-            real = train_adapter._sha256_file
+            real = train_adapter._read_file_once
 
-            def flaky(path: Path) -> str:
+            def flaky(path: Path, *args) -> bytes:
                 nonlocal calls
                 calls += 1
+                data = real(path, *args)
                 if calls == 2:
-                    return "c" * 64
-                return real(path)
+                    return b"Stable"
+                return data
 
-            with mock.patch.object(train_adapter, "_sha256_file", side_effect=flaky):
+            with mock.patch.object(train_adapter, "_read_file_once", side_effect=flaky):
                 with self.assertRaises(SystemExit) as raised:
                     train_adapter.verify_expected_digests(root, [entry], reads=2)
                 self.assertIn("read 2", str(raised.exception))
 
     def test_load_expected_digests_returns_matching_key(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "digests.json"
-            key = f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"
-            files = [{"path": "config.json", "sha256": "a" * 64, "size": 3}]
-            path.write_text(json.dumps({key: {"files": files}}), encoding="utf-8")
-            loaded = train_adapter.load_expected_digests(path, train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION)
-            self.assertEqual(loaded, files)
+            trusted, listing, pin = self._trusted_chain(Path(tmp))
+            files = json.loads(listing.read_bytes())[f"{train_adapter.WINNER_BASE}@{train_adapter.WINNER_REVISION}"]["files"]
+            with mock.patch.object(train_adapter, "TRUSTED_DIGEST_ROOT_SHA256", pin):
+                loaded = train_adapter.load_expected_digests(listing, train_adapter.WINNER_BASE,
+                    train_adapter.WINNER_REVISION, trusted_root_path=trusted)
+                self.assertEqual(loaded, files)
 
-    def test_load_expected_digests_absent_key(self):
+    def test_load_expected_digests_refuses_unparented_list(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "digests.json"
             path.write_text("{}", encoding="utf-8")
-            with self.assertRaises(SystemExit):
+            with self.assertRaisesRegex(SystemExit, "trusted-digest-root is required"):
                 train_adapter.load_expected_digests(path, train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION)
 
     def test_main_probe_smoke_pin_calls_run_probe(self):
@@ -2673,6 +2954,26 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
         self.assertTrue(train_adapter.is_allowed_probe_pin(
             train_adapter.SMOKE_BASE, train_adapter.SMOKE_REVISION))
         self.assertFalse(train_adapter.is_allowed_probe_pin("org/other-model", "a" * 40))
+
+    def test_student_4bit_pin_is_exact_and_supported_in_both_modes(self):
+        base, revision = train_adapter.STUDENT_BASE, train_adapter.STUDENT_REVISION
+        for predicate in (train_adapter.is_student_4bit_pin, train_adapter.is_allowed_epoch_pin,
+                          train_adapter.is_allowed_probe_pin):
+            self.assertTrue(predicate(base, revision))
+            for wrong_base, wrong_revision in ((base.lower(), revision), (base, "a" * 40),
+                                               (base, train_adapter.FALLBACK_REVISION),
+                                               (train_adapter.FALLBACK_BASE, revision)):
+                self.assertFalse(predicate(wrong_base, wrong_revision))
+        self.assertEqual(train_adapter.probe_pin_name(base, revision), "student_4bit")
+        self.assertTrue(train_adapter.probe_is_authoritative(base, revision, 2048, 8, 8))
+        self.assertFalse(train_adapter.probe_is_authoritative(base, revision, 2048, 8, 16))
+        self.assertFalse(train_adapter.probe_is_authoritative(base, revision, 1024, 8, 8))
+        with mock.patch.object(train_adapter, "load_training_rows", return_value=[row()]), \
+             mock.patch.object(train_adapter, "run_probe", return_value={}) as probe, \
+             contextlib.redirect_stdout(io.StringIO()):
+            train_adapter.main(["--rows", "synthetic/accepted.jsonl", "--report", "synthetic/probe.json",
+                "--base", base, "--revision", revision, "--probe"])
+            self.assertEqual(probe.call_args.args[1:3], (base, revision))
 
     def test_length_gate_pass_boundary(self):
         self.assertTrue(train_adapter.length_gate_pass(2048.0))
@@ -2818,7 +3119,7 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
         self.assertIn("-Fallback", text)
         self.assertIn("mutually exclusive", text)
         self.assertIn("-Fallback is only valid together with -Probe", text)
-        self.assertIn("m1-expected-qwen3-8b.json", text)
+        self.assertIn("m2-expected-qwen3-8b-v2.json", text)
         self.assertIn("ContainsKey('TimeoutMinutes')", text)
         self.assertIn("$TimeoutMinutes = 150", text)
 
@@ -3007,12 +3308,13 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
     def _maintenance_epoch_run(
         self, root: Path, trainer_type, epochs: int, *, peak_gib: float = 1.0, winner: bool = False, scores=None,
         row_count: int = 64, cuda=None, use_gradient_checkpointing="unsloth", flm=None, context_tokenizer=None,
+        student=None,
     ):
         import predict_dev
         rows, dev_rows = slice3_train_rows(row_count), slice3_dev_rows()
         fx = _build_publication_fixture(root, rows=rows + dev_rows)
-        # Epoch mode uses the actual explicit winner pin even in offline fixtures.
-        base, revision = train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION
+        # Epoch mode uses an explicit supported student even in offline fixtures.
+        base, revision = student or (train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION)
         model = mock.Mock(config=types.SimpleNamespace(_commit_hash=revision))
         def save(directory):
             Path(directory, "adapter_config.json").write_bytes(b'{"r":16}')
@@ -3116,23 +3418,26 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
                     self.callback.on_epoch_end(None, self.state, None)
                 return types.SimpleNamespace(training_loss=1.25)
 
-        for winner, peak_gib, admitted, message in (
-            (False, 12.001, False, "exceeds the 12 GiB card"),
-            (True, 11.001, False, "winner probe peak reserved VRAM"),
-            (False, 12.0, True, None),
-            (True, 11.0, True, None),
+        for student, peak_gib, admitted, message in (
+            (student, peak, admitted, message)
+            for student in ((train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION),
+                            (train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION))
+            for peak, admitted, message in ((12.001, False, "exceeds the 12 GiB card"),
+                                            (11.001, False, "strictly below 11.0"),
+                                            (11.0, False, "strictly below 11.0"),
+                                            (10.999, True, None))
         ):
-            with self.subTest(winner=winner, peak=peak_gib), tempfile.TemporaryDirectory() as tmp:
+            with self.subTest(student=student, peak=peak_gib), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 if admitted:
                     returned = self._maintenance_epoch_run(
-                        root, CompleteTrainer, epochs=2, peak_gib=peak_gib, winner=winner)
+                        root, CompleteTrainer, epochs=2, peak_gib=peak_gib, student=student)
                     self.assertTrue(returned["checkpoint_artifacts_ready"])
                     self.assertFalse(returned["export_ready"])
                 else:
                     with self.assertRaisesRegex(SystemExit, message):
                         self._maintenance_epoch_run(
-                            root, CompleteTrainer, epochs=2, peak_gib=peak_gib, winner=winner)
+                            root, CompleteTrainer, epochs=2, peak_gib=peak_gib, student=student)
                 payload = json.loads((root / "reports" / "maintenance.json").read_bytes())
                 self.assertEqual(payload["peak_reserved_vram_gib"], peak_gib)
                 self.assertEqual(payload["completed_epoch_ids"], [1, 2])
@@ -3141,6 +3446,8 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
                 self.assertEqual(payload["checkpoint_artifacts_ready"], admitted)
                 self.assertEqual(payload["artifacts_complete"], admitted)
                 self.assertFalse(payload["export_ready"])
+                self.assertFalse(payload["qualified"])
+                self.assertEqual((payload["base"], payload["base_revision"]), student)
                 if admitted:
                     self.assertIsNotNone(payload["selected_adapter"])
                 else:
@@ -3301,6 +3608,45 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
             self.assertFalse(payload["export_ready"])
             self.assertIsNone(payload["final_adapter"])
             self.assertTrue((root / "models" / "maintenance").is_dir())
+
+    def test_saved_leaves_stamp_all_student_pins_before_hashing(self):
+        for base, revision in ((train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION),
+                               (train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION),
+                               (train_adapter.STUDENT_BASE, train_adapter.STUDENT_REVISION)):
+            with self.subTest(base=base), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                self._maintenance_epoch_run(root, Slice3CompleteTrainer, epochs=1, student=(base, revision))
+                for name in ("midpoint-epoch-01", "epoch-01"):
+                    leaf = root / "models" / "maintenance" / name
+                    config_path = leaf / "adapter_config.json"
+                    config = json.loads(config_path.read_bytes())
+                    expected = {"r": 16, "base_model_name_or_path": base, "revision": revision}
+                    if base == train_adapter.STUDENT_BASE:
+                        expected.update(merge_source=train_adapter.FALLBACK_BASE, merge_revision=train_adapter.FALLBACK_REVISION)
+                    self.assertEqual(config, expected)
+                    self.assertEqual(config_path.read_text(encoding="utf-8"), json.dumps(config, indent=2) + "\n")
+                    manifest = json.loads((leaf / "adapter-hashes.json").read_bytes())
+                    self.assertEqual(manifest["files"]["adapter_config.json"],
+                                     hashlib.sha256(config_path.read_bytes()).hexdigest())
+
+    def test_saved_leaf_overwrites_stale_identity_and_preserves_other_config(self):
+        for base, revision in ((train_adapter.WINNER_BASE, train_adapter.WINNER_REVISION),
+                               (train_adapter.FALLBACK_BASE, train_adapter.FALLBACK_REVISION)):
+            with self.subTest(base=base), tempfile.TemporaryDirectory() as tmp:
+                original = {"r": 16, "target_modules": ["q_proj"], "base_model_name_or_path": "/local/snapshot",
+                            "revision": None, "inference_mode": True}
+                model = mock.Mock()
+                def save(directory):
+                    Path(directory, "adapter_config.json").write_text(json.dumps(original), encoding="utf-8")
+                    Path(directory, "adapter_model.safetensors").write_bytes(b"synthetic adapter")
+                model.save_pretrained.side_effect = save
+                leaf = train_adapter.write_adapter_leaf(model, Path(tmp) / "epoch-01",
+                    base_repo=base, base_revision=revision)
+                config_path = leaf / "adapter_config.json"
+                self.assertEqual(json.loads(config_path.read_bytes()),
+                                 {**original, "base_model_name_or_path": base, "revision": revision})
+                files, _ = train_adapter.write_leaf_manifest(leaf)
+                self.assertEqual(files["adapter_config.json"], hashlib.sha256(config_path.read_bytes()).hexdigest())
 
     def _scratch_leaf(self, root: Path, extra: dict[str, bytes] | None = None) -> Path:
         leaf = root / "epoch-01"
@@ -3894,7 +4240,7 @@ def slice3_context():
         "train_ids": {item["row_id"] for item in training},
         "roster": sorted(item["source_group"] for item in dev),
         "expected_packets": {item["source_group"]: [item["row_id"]] for item in dev},
-        "identity": {"base_revision": train_adapter.SMOKE_REVISION,
+        "identity": {"base_revision": train_adapter.WINNER_REVISION,
                      "weights_manifest_sha256": "b" * 64,
                      "template_sha256": train_adapter.ADMITTED_TEMPLATE_SHA256},
     }
@@ -3975,7 +4321,7 @@ class TestFrozenDevCadence(unittest.TestCase):
         cb = train_adapter.DevEvaluationCallback(model, root, checkpoints,
             context or slice3_context(), max_epochs=max_epochs,
             predict_fn=self.predict_hook, score_fn=self.score_hook,
-            use_gradient_checkpointing=use_gradient_checkpointing)
+            use_gradient_checkpointing=use_gradient_checkpointing, base_repo=train_adapter.WINNER_BASE)
         return cb, types.SimpleNamespace(should_training_stop=False), checkpoints, root
 
     def _event(self, cb, control, progress, *, end=False, tokenizer=True):
@@ -4305,7 +4651,7 @@ class TestFrozenDevCadence(unittest.TestCase):
                     with self.assertRaises((ValueError, ImportError, SystemExit)):
                         train_adapter.DevEvaluationCallback(mock.Mock(), Path(tmp), [], context, max_epochs=6,
                             predict_fn=slice3_predictions, score_fn=lambda *_a, **_k: slice3_score(1),
-                            use_gradient_checkpointing="unsloth")
+                            use_gradient_checkpointing="unsloth", base_repo=train_adapter.WINNER_BASE)
                 self._assert_failed(Path(tmp))
 
     def test_callback_maximum_above_six_is_refused_with_failed_state(self):
@@ -4313,7 +4659,7 @@ class TestFrozenDevCadence(unittest.TestCase):
             with self.assertRaises((ValueError, SystemExit)):
                 train_adapter.DevEvaluationCallback(mock.Mock(), Path(tmp), [], slice3_context(), max_epochs=7,
                     predict_fn=slice3_predictions, score_fn=lambda *_a, **_k: slice3_score(1),
-                    use_gradient_checkpointing="unsloth")
+                    use_gradient_checkpointing="unsloth", base_repo=train_adapter.WINNER_BASE)
             self._assert_failed(Path(tmp))
 
     def test_load_dev_rows_refuses_bad_json_instead_of_silently_skipping(self):
