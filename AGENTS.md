@@ -174,13 +174,9 @@ its result validates Git revisions/event structure, not authenticated authorship
 
 ## Approver carries the merge
 
-Owner protocol decision, 2026-09-08 UTC. The owner's instruction, verbatim:
+**Superseded for merge execution only by WO-G48 Matter 4; retained as historical instruction.**
 
-> If they approve it, they should merge it as well.
-
-**One `ACCEPT` is not merge authority** by itself. **Merge execution:** MERGE_AUTHORITY = owner-merge-law-2026-09-26, reconciled by WO-G48 under explicit owner delegation. The eligible non-contributing accepting reviewer carries the merge into protected or non-protected branches only after every deterministic gate passes. No separate deployment grant is required for merge execution; no protection bypass or other action class is authorized. Governing reference: `docs/human-out-of-the-loop-operation.html#standing-owner-authority-for-pull-request-merge-execution`.
-
-**Superseded for merge execution only by WO-G48 Matter 4; retained as historical instruction.** Governing reference: `docs/human-out-of-the-loop-operation.html#standing-owner-authority-for-pull-request-merge-execution` (`owner-merge-law-2026-09-26`). Previously — **Current runtime enforcement. One `ACCEPT` is not merge authority.** A single exact-SHA `ACCEPT` obliges the
+Previously — **Current runtime enforcement. One `ACCEPT` is not merge authority.** A single exact-SHA `ACCEPT` obliges the
 approver to carry the candidate towards a terminal result rather than hand it
 back to a queue; it does not authorise the merge and does not skip
 `OWNER_DECISION_REQUIRED`. A merge that would otherwise stop for the owner
@@ -189,6 +185,14 @@ requires, without exception, a live grant under
 verdict from a non-author provider, and every other item of the
 evidence bar. In `ATTENDED` state, or with no live grant, the duty discharged
 here is to say so on the pull request and name the blocker — not to merge.
+
+Governing reference: `docs/human-out-of-the-loop-operation.html#standing-owner-authority-for-pull-request-merge-execution` (`owner-merge-law-2026-09-26`).
+
+**Merge execution:** MERGE_AUTHORITY = owner-merge-law-2026-09-26, reconciled by WO-G48 under explicit owner delegation. The eligible non-contributing accepting reviewer carries the merge into protected or non-protected branches only after every deterministic gate passes. No separate deployment grant is required for merge execution; no protection bypass or other action class is authorized. Governing reference: `docs/human-out-of-the-loop-operation.html#standing-owner-authority-for-pull-request-merge-execution`.
+
+Owner protocol decision, 2026-09-08 UTC. The owner's instruction, verbatim:
+
+> If they approve it, they should merge it as well.
 
 Where a merge is authorised, the reviewer that supplied the `ACCEPT` performs the
 merge itself; a rejection goes back to the author with notes. Owner protocol, 2026-09-12, verbatim: "each PR should be authored by one person and reviewed by a single reviewer. The reviewer then either accepts and merges the PR or rejects it and returns it to the author with notes, including but not limited to reasons, suggestions, or coding feedback."
