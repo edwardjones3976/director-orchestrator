@@ -24,6 +24,74 @@ from director_orchestrator.primary_generation import resolved_deployment_digest
 from director_orchestrator import process_isolation
 
 
+def _wo_t14_emit(category, observe):
+    """Append validated boolean observations only; diagnostics never affect tests."""
+    try:
+        target = os.environ.get("GITHUB_STEP_SUMMARY")
+        if not target:
+            return
+        values = observe()
+        if (not re.fullmatch(r"[a-z0-9_]+", category) or not values
+                or not all(re.fullmatch(r"[a-z0-9_]+", key) and type(value) is bool
+                           for key, value in values.items())):
+            return
+        line = "WO-T14-DIAG " + category + " " + " ".join(
+            key + "=" + ("true" if value else "false") for key, value in values.items())
+        with open(target, "a", encoding="utf-8") as summary:
+            summary.write(line + "\n")
+    except Exception:
+        pass
+
+
+def _wo_t14_clock():
+    try:
+        return time.monotonic()
+    except Exception:
+        return None
+
+
+# Fixed codes raised by the snapshot_check -> powershell -> REAL_COMMAND path.
+_WO_T14_RELEASE_CODES = (
+    "platform_check_failed", "doctor_deadline_exhausted", "untrusted_executable",
+    "command_output_exceeded", "system_directory_unavailable",
+)
+
+
+@contextmanager
+def _wo_t14_step(category):
+    started = _wo_t14_clock()
+    error = None
+    try:
+        yield
+    except Exception as caught:
+        error = caught
+        raise
+    finally:
+        ended = _wo_t14_clock()
+        def observations():
+            elapsed = ended - started
+            is_release = isinstance(error, release.ReleaseError)
+            # Compare only against fixed codes; never serialize exception text.
+            code = error.args[0] if is_release and error.args else None
+            known = {
+                "timeout_expired": isinstance(error, subprocess.TimeoutExpired),
+                "called_process_error": isinstance(error, subprocess.CalledProcessError),
+                "os_error": isinstance(error, OSError),
+                "permission_error": isinstance(error, PermissionError),
+                "assertion_error": isinstance(error, AssertionError),
+            }
+            values = {"gt_5s": elapsed > 5, "gt_10s": elapsed > 10,
+                      "gt_20s": elapsed > 20, "gt_30s": elapsed > 30,
+                      "raised": error is not None, "raised_release_error": is_release,
+                      "release_code_is_platform_check_failed": is_release and code == "platform_check_failed",
+                      "release_code_in_allowlist": is_release and code in _WO_T14_RELEASE_CODES}
+            values.update({"code_" + name: is_release and code == name for name in _WO_T14_RELEASE_CODES})
+            values.update(known)
+            values["other"] = error is not None and not is_release and not any(known.values())
+            return values
+        _wo_t14_emit(category, observations)
+
+
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("director_release_under_test", ROOT / "scripts/director-release.py")
 release = importlib.util.module_from_spec(SPEC)
@@ -3690,6 +3758,8 @@ class ReleaseInputAndProcessTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell required for the actual snapshot consumers")
     def test_snapshot_remote_alias_preserves_mandatory_origin(self):
+        _wo_t14_emit("b_test", lambda: {
+            "os_is_windows": os.name == "nt", "github_actions": "GITHUB_ACTIONS" in os.environ})
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             repo, environment, git, commit, tree = self.git_authority_fixture(root)
@@ -3712,17 +3782,21 @@ class ReleaseInputAndProcessTests(unittest.TestCase):
             argv = [shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(harness),
                     "-SnapshotPath", str(repo), "-Commit", commit, "-Tree", tree,
                     "-SelectedGit", shutil.which("git"), "-ScriptRoot", str(ROOT / "scripts")]
-            tool.snapshot_check()
-            REAL_COMMAND(argv, cwd=ROOT, env=environment, deadline=time.monotonic() + 30)
+            with _wo_t14_step("b_positive_snapshot"):
+                tool.snapshot_check()
+            with _wo_t14_step("b_positive_harness"):
+                REAL_COMMAND(argv, cwd=ROOT, env=environment, deadline=time.monotonic() + 30)
             for missing in (False, True):
                 if missing:
                     git("remote", "remove", "origin")
                 else:
                     git("remote", "set-url", "origin", "https://github.com/example/other.git")
                 with self.subTest(missing=missing), self.assertRaisesRegex(release.ReleaseError, "^platform_check_failed$"):
-                    tool.snapshot_check()
+                    with _wo_t14_step("b_negative_snapshot_missing_true" if missing else "b_negative_snapshot_missing_false"):
+                        tool.snapshot_check()
                 with self.subTest(control_missing=missing), self.assertRaisesRegex(release.ReleaseError, "^platform_check_failed$"):
-                    REAL_COMMAND(argv, cwd=ROOT, env=environment, deadline=time.monotonic() + 30)
+                    with _wo_t14_step("b_negative_harness_missing_true" if missing else "b_negative_harness_missing_false"):
+                        REAL_COMMAND(argv, cwd=ROOT, env=environment, deadline=time.monotonic() + 30)
 
     def test_cli_bootstrap_refuses_checkout_imports_without_isolation(self):
         with tempfile.TemporaryDirectory() as directory:

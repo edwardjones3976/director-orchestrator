@@ -23,13 +23,41 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
 import unittest
+import time
 
 from director_orchestrator.documentation import read_document
 from pathlib import Path
+
+
+def _wo_t14_emit(category, observe):
+    """Append validated boolean observations only; diagnostics never affect tests."""
+    try:
+        target = os.environ.get("GITHUB_STEP_SUMMARY")
+        if not target:
+            return
+        values = observe()
+        if (not re.fullmatch(r"[a-z0-9_]+", category) or not values
+                or not all(re.fullmatch(r"[a-z0-9_]+", key) and type(value) is bool
+                           for key, value in values.items())):
+            return
+        line = "WO-T14-DIAG " + category + " " + " ".join(
+            key + "=" + ("true" if value else "false") for key, value in values.items())
+        with open(target, "a", encoding="utf-8") as summary:
+            summary.write(line + "\n")
+    except Exception:
+        pass
+
+
+def _wo_t14_clock():
+    try:
+        return time.monotonic()
+    except Exception:
+        return None
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,8 +71,14 @@ class DeploymentContractTests(unittest.TestCase):
         code = next(node for node in workflow["nodes"] if node["name"] == "Diff Readiness")
         node = shutil.which("node")
         self.assertIsNotNone(node, "Node.js is required to execute the stored n8n status code")
-        result = subprocess.run(
-            [node, "-e", """
+        started = _wo_t14_clock()
+        result = None
+        error = None
+        parsed = False
+        finished = None
+        try:
+            result = subprocess.run(
+                [node, "-e", """
 const fs = require('node:fs');
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 const run = new Function('items', '$getWorkflowStaticData', input.code);
@@ -52,10 +86,27 @@ const store = {};
 const outputs = input.responses.map(json => run([{json}], () => store));
 process.stdout.write(JSON.stringify({outputs, store}));
 """],
-            input=json.dumps({"code": code["parameters"]["jsCode"], "responses": responses}),
-            text=True, encoding="utf-8", capture_output=True, timeout=10, check=True,
-        )
-        return json.loads(result.stdout)
+                input=json.dumps({"code": code["parameters"]["jsCode"], "responses": responses}),
+                text=True, encoding="utf-8", capture_output=True, timeout=10, check=True,
+            )
+            finished = _wo_t14_clock()
+            value = json.loads(result.stdout)
+            parsed = True
+            return value
+        except Exception as caught:
+            error = caught
+            raise
+        finally:
+            ended = finished if finished is not None else _wo_t14_clock()
+            def observations():
+                elapsed = ended - started
+                return {"gt_2s": elapsed > 2, "gt_5s": elapsed > 5,
+                        "gt_8s": elapsed > 8, "gt_10s": elapsed > 10,
+                        "timeout_expired": isinstance(error, subprocess.TimeoutExpired),
+                        "called_process_error": isinstance(error, subprocess.CalledProcessError),
+                        "returncode_is_zero": result is not None and result.returncode == 0,
+                        "stdout_json_parsed": parsed}
+            _wo_t14_emit("a_node", observations)
 
     def _status_response(self, **providers):
         return {"statusCode": 200, "body": {
@@ -67,6 +118,8 @@ process.stdout.write(JSON.stringify({outputs, store}));
         }}
 
     def test_status_executes_provider_changes_and_suppresses_unchanged_health(self):
+        _wo_t14_emit("a_test", lambda: {
+            "os_is_windows": os.name == "nt", "github_actions": "GITHUB_ACTIONS" in os.environ})
         healthy = self._status_response()
         down = self._status_response(gemini=False)
         result = self._run_status_sequence([healthy, healthy, down, down, healthy])
