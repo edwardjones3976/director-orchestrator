@@ -6382,6 +6382,9 @@ with TestClient(app) as client:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:57 UTC | END]]
 class TrustedPaidAcceptanceTests(unittest.TestCase):
     def setUp(self):
+        gate = patch("director_orchestrator.primary_transports.ACCEPTANCE_ABSOLUTE_DEADLINE_ENFORCED", True)
+        gate.start()
+        self.addCleanup(gate.stop)
         from copy import deepcopy
         from types import SimpleNamespace
         from tests.test_primary_live import DefaultLiveServicesTests
@@ -6477,11 +6480,19 @@ class TrustedPaidAcceptanceTests(unittest.TestCase):
                     self.assertEqual(len(self.calls), 1)
                     self.assertEqual(self.calls[0]["response_id"], "resp-fixture")
 
+    @patch("director_orchestrator.primary_transports.ACCEPTANCE_ABSOLUTE_DEADLINE_ENFORCED", False)
+    def test_default_factory_live_graph_closed_gate_with_both_hooks_requires_owner(self):
+        self._default_factory_live_graph_requires_owner(gate_closed=True)
+
     def test_default_factory_live_graph_missing_hooks_requires_owner(self):
+        self._default_factory_live_graph_requires_owner(gate_closed=False)
+
+    def _default_factory_live_graph_requires_owner(self, *, gate_closed):
         from tests.test_primary_live import DefaultLiveServicesTests
         from tests.test_langgraph_primary import _handlers, _runtime, _request
         from director_orchestrator.langgraph_primary import (
-            AcceptanceUnresolved, TerminalClassification, ProviderSubgraphResult, ProviderDisposition)
+            AcceptanceUnresolved, TerminalClassification, ProviderSubgraphResult, ProviderDisposition,
+            AcceptanceResult, AcceptanceDecision)
         from director_orchestrator.antigravity_team import PrimaryProviderBudgetAuthority
         from director_orchestrator.antigravity_team_routing import PrimaryProviderBudgetRouting
         from unittest.mock import Mock
@@ -6497,6 +6508,9 @@ class TrustedPaidAcceptanceTests(unittest.TestCase):
         providers = ("openai", "claude", "cursor")
         capabilities = {provider: SimpleNamespace(transport_kind="test") for provider in providers}
         transport = Mock()
+        transport.configuration_digest.return_value = digest("factory-acceptance-transport")
+        transport.execute.return_value = AcceptanceResult(
+            digest("factory-acceptance-result"), self.context.candidate_sha, AcceptanceDecision.ACCEPT)
         with patch("director_orchestrator.primary_default.discover_local_primary_command_transports", return_value=({}, capabilities)), \
              patch("director_orchestrator.primary_default.build_graph_native_packet_adapters", return_value={p: object() for p in providers}), \
              patch("director_orchestrator.primary_default.build_primary_packet_result_resolver", return_value=lambda _: self.binding), \
@@ -6516,7 +6530,7 @@ class TrustedPaidAcceptanceTests(unittest.TestCase):
                 candidate_sha=self.context.candidate_sha)
         request = _request(self.context.task_id, authority_snapshot_digest=self.context.authority_snapshot_digest)
         # Valid evidence must reach the typed missing-hook refusal for either absent hook.
-        for missing in ("both", "plan", "authority"):
+        for missing in (("neither",) if gate_closed else ("both", "plan", "authority")):
             forwarded.plan_resolver = None if missing in {"both", "plan"} else lambda _: self.plan
             forwarded.authority_recheck = None if missing in {"both", "authority"} else lambda _: None
             runtime = _runtime(_handlers(provider_subgraph=provider, openai_acceptance_revision=forwarded),
@@ -6528,6 +6542,8 @@ class TrustedPaidAcceptanceTests(unittest.TestCase):
         with self.journal.acceptance_transaction() as sql:
             for table in ("acceptance_operation", "acceptance_budget", "acceptance_http"):
                 self.assertEqual(sql.execute("SELECT COUNT(*) FROM " + table).fetchone()[0], 0)
+        if gate_closed:
+            return
         # Other authority errors keep their distinct classifications.
         forwarded.plan_resolver = lambda _: self.plan
         for error, classification, reason in (
@@ -6541,6 +6557,67 @@ class TrustedPaidAcceptanceTests(unittest.TestCase):
                                acceptance_store=self.journal)
             outcome = runtime.start(request)
             self.assertEqual((outcome.terminal_classification, outcome.reason_code), (classification, reason))
+
+    @patch("director_orchestrator.primary_transports.ACCEPTANCE_ABSOLUTE_DEADLINE_ENFORCED", False)
+    def test_closed_gate_precedes_evidence_and_hooks(self):
+        from director_orchestrator.langgraph_primary import AcceptanceEnrollmentRequired
+        from unittest.mock import Mock
+        self.handler.resolver = Mock(side_effect=AssertionError("must not prepare"))
+        self.handler.plan_resolver = Mock(side_effect=AssertionError("must not resolve"))
+        self.handler.authority_recheck = Mock(side_effect=AssertionError("must not recheck"))
+        with self.assertRaisesRegex(AcceptanceEnrollmentRequired, r"R4, #501"):
+            self.handler.prepare_acceptance(self.context)
+        for hook in (self.handler.resolver, self.handler.plan_resolver, self.handler.authority_recheck):
+            hook.assert_not_called()
+        self.assertEqual(self.calls, [])
+
+    def test_closed_gate_known_id_reconciliation_retrieves_and_finishes(self):
+        import httpx
+        from director_orchestrator.primary_transports import OpenAIAcceptanceTransport
+        from director_orchestrator.langgraph_primary import acceptance_identity, _canonical_digest
+        requests = []
+        def respond(request):
+            requests.append(request)
+            self.assertEqual((request.method, request.url.path), ("GET", "/v1/responses/resp-fixture"))
+            return httpx.Response(200, json={"id": "resp-fixture", "model": self.plan.model,
+                "status": "completed", "usage": {"input_tokens": 10, "output_tokens": 16},
+                "output": [{"type": "message", "content": [{"type": "output_text",
+                    "text": json.dumps({"task_id": self.context.task_id,
+                        "candidate_sha": self.context.candidate_sha, "revision": self.context.revision_count,
+                        "evidence_digest": _canonical_digest(binding["evidence"]), "decision": "accept"})}]}]},
+                headers={"x-request-id": "fixture"})
+        self.handler.transport = OpenAIAcceptanceTransport("fake-key", client_factory=lambda: httpx.Client(
+            transport=httpx.MockTransport(respond), trust_env=False))
+        binding, reservation = self.handler.prepare_acceptance(self.context)
+        key, identity = acceptance_identity(self.context, binding)
+        _, row = self.journal.acceptance_claim(key, identity, **reservation)
+        self.journal.acceptance_http(key, row["owner"], "create")
+        self.journal.acceptance_response_id(key, row["owner"], "resp-fixture")
+        with patch("director_orchestrator.primary_transports.ACCEPTANCE_ABSOLUTE_DEADLINE_ENFORCED", False):
+            result = self.handler.reconcile(self.context)
+        self.assertEqual(result.decision.value, "accept")
+        self.assertEqual(len(requests), 1)
+        held = self.journal.acceptance_read(key)
+        self.assertEqual(held["state"], "COMPLETED")
+        self.assertEqual(held["reserved_cents"], row["reserved_cents"])
+
+    def test_closed_gate_reconciliation_refuses_unknown_and_mismatched_ids(self):
+        from director_orchestrator.langgraph_primary import acceptance_identity, AcceptanceUnresolved
+        binding, reservation = self.handler.prepare_acceptance(self.context)
+        key, identity = acceptance_identity(self.context, binding)
+        _, row = self.journal.acceptance_claim(key, identity, **reservation)
+        with patch("director_orchestrator.primary_transports.ACCEPTANCE_ABSOLUTE_DEADLINE_ENFORCED", False):
+            with self.assertRaisesRegex(AcceptanceUnresolved, "unknown response ID"):
+                self.handler.reconcile(self.context)
+            self.journal.acceptance_http(key, row["owner"], "create")
+            self.journal.acceptance_response_id(key, row["owner"], "resp-fixture")
+            self.context = replace(self.context, revision_count=self.context.revision_count + 1)
+            with self.assertRaisesRegex(AcceptanceUnresolved, "missing or stale"):
+                self.handler.reconcile(self.context)
+        self.assertEqual(self.calls, [])
+        held = self.journal.acceptance_read(key)
+        self.assertEqual((held["state"], held["reserved_cents"]),
+                         ("RESPONSE_ID_RECORDED", row["reserved_cents"]))
 
     def test_admission_request_digest_matches_actual_sent_body(self):
         import httpx

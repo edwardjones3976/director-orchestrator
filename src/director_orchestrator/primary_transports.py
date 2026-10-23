@@ -78,6 +78,11 @@ from typing import Any, Collection, Mapping, Sequence
 import httpx
 
 
+# Only the reviewed R4 implementation (issue #501) may set this True.
+# No environment, hook or constructor option overrides it.
+ACCEPTANCE_ABSOLUTE_DEADLINE_ENFORCED = False
+
+
 @dataclass(frozen=True)
 class AcceptanceRequestPlan:
     """Trusted, time-limited authority, never populated from model output.
@@ -188,7 +193,11 @@ class OpenAIAcceptanceTransport:
     def execute(self, *, plan, evidence, context, journal, key, owner, recheck,
                 response_id=None, cancel=False):
         from .langgraph_primary import (AcceptanceResult, AcceptanceDecision, AcceptanceUnresolved,
+                                       AcceptanceEnrollmentRequired,
                                        _canonical_digest, _acceptance_journal_call)
+        if not ACCEPTANCE_ABSOLUTE_DEADLINE_ENFORCED and response_id is None:
+            raise AcceptanceEnrollmentRequired(
+                "paid acceptance disabled until absolute HTTP deadline enforcement (R4, #501) lands")
         plan.reservation()
         if not self._api_key:
             raise ValueError("acceptance transport credentials unavailable")

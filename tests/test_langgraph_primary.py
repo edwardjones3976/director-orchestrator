@@ -1358,6 +1358,10 @@ class PrimaryWorkflowTests(unittest.TestCase):
                 self.assertIs(build.call_args.kwargs["acceptance_store"], canonical)
 
     def test_acceptance_create_disconnect_requires_reconciliation_without_second_create(self):
+        from unittest.mock import patch
+        gate = patch("director_orchestrator.primary_transports.ACCEPTANCE_ABSOLUTE_DEADLINE_ENFORCED", True)
+        gate.start()
+        self.addCleanup(gate.stop)
         import httpx
         import time
         from director_orchestrator.primary_transports import (

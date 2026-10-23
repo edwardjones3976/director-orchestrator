@@ -1529,6 +1529,9 @@ class AcceptanceTransportTests(unittest.TestCase):
     """Every HTTP request is intercepted by MockTransport; no sockets."""
 
     def setUp(self):
+        gate = patch("director_orchestrator.primary_transports.ACCEPTANCE_ABSOLUTE_DEADLINE_ENFORCED", True)
+        gate.start()
+        self.addCleanup(gate.stop)
         from director_orchestrator.primary_transports import (
             AcceptanceRequestPlan, ACCEPTANCE_RESPONSE_SCHEMA)
         from director_orchestrator.langgraph_primary import SqliteAcceptanceJournal, _canonical_digest
@@ -1578,6 +1581,37 @@ class AcceptanceTransportTests(unittest.TestCase):
         return transport.execute(plan=self.plan, evidence=self.evidence, context=self.context,
             journal=self.journal, key=self.key, owner=self.row["owner"],
             recheck=recheck or (lambda: self.rechecks.append(True)), **kwargs)
+
+    @patch("director_orchestrator.primary_transports.ACCEPTANCE_ABSOLUTE_DEADLINE_ENFORCED", False)
+    def test_closed_gate_refuses_before_client_or_journal(self):
+        from unittest.mock import Mock
+        from director_orchestrator.primary_transports import OpenAIAcceptanceTransport
+        from director_orchestrator.langgraph_primary import AcceptanceEnrollmentRequired
+        factory, journal, recheck = Mock(side_effect=AssertionError("client construction reached")), Mock(), Mock()
+        transport = OpenAIAcceptanceTransport("fake-key", client_factory=factory)
+        with self.assertRaisesRegex(AcceptanceEnrollmentRequired, r"R4, #501"):
+            transport.execute(plan=self.plan, evidence=self.evidence, context=self.context,
+                journal=journal, key=self.key, owner=self.row["owner"], recheck=recheck)
+        factory.assert_not_called()
+        self.assertEqual(journal.mock_calls, [])
+        recheck.assert_not_called()
+
+    @patch("director_orchestrator.primary_transports.ACCEPTANCE_ABSOLUTE_DEADLINE_ENFORCED", False)
+    def test_closed_gate_mismatched_response_id_refuses_before_client(self):
+        from director_orchestrator.primary_transports import OpenAIAcceptanceTransport
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved
+        self.journal.acceptance_http(self.key, self.row["owner"], "create")
+        self.journal.acceptance_response_id(self.key, self.row["owner"], "resp-fixture")
+        factory = Mock()
+        transport = OpenAIAcceptanceTransport("fake-key", client_factory=factory)
+        with self.assertRaisesRegex(AcceptanceUnresolved, "durable binding"):
+            transport.execute(plan=self.plan, evidence=self.evidence, context=self.context,
+                journal=self.journal, key=self.key, owner=self.row["owner"], recheck=lambda: None,
+                response_id="resp-mismatched")
+        factory.assert_not_called()
+        held = self.journal.acceptance_read(self.key)
+        self.assertEqual((held["response_id"], held["reserved_cents"]),
+                         ("resp-fixture", self.row["reserved_cents"]))
 
     def test_client_cleanup_failure_keeps_paid_response_unresolved(self):
         from contextlib import contextmanager

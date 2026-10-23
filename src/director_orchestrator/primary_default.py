@@ -1883,6 +1883,15 @@ class TrustedPaidAcceptanceHandler:
                 "work": work, "result": result}
 
     def prepare_acceptance(self, context):
+        from . import primary_transports
+        from .langgraph_primary import AcceptanceEnrollmentRequired
+        if not primary_transports.ACCEPTANCE_ABSOLUTE_DEADLINE_ENFORCED:
+            raise AcceptanceEnrollmentRequired(
+                "paid acceptance disabled until absolute HTTP deadline enforcement (R4, #501) lands")
+        return self._validate_acceptance(context)
+
+    def _validate_acceptance(self, context):
+        """Validate binding, evidence and authority without admitting an operation."""
         evidence = self._evidence(context)
         if self.plan_resolver is None or self.authority_recheck is None:
             from .langgraph_primary import AcceptanceEnrollmentRequired
@@ -1929,7 +1938,7 @@ class TrustedPaidAcceptanceHandler:
 
     def _reconcile(self, context, *, cancel=False):
         from .langgraph_primary import acceptance_identity, AcceptanceUnresolved
-        binding, _ = self.prepare_acceptance(context)
+        binding, _ = self._validate_acceptance(context)
         key, identity = acceptance_identity(context, binding)
         row = self.journal.acceptance_read(key)
         if row is None or json.loads(row["binding"]) != identity:
@@ -1939,7 +1948,7 @@ class TrustedPaidAcceptanceHandler:
         if not row["response_id"]:
             raise AcceptanceUnresolved("unknown response ID cannot be reconciled automatically")
         def recheck():
-            current, _ = self.prepare_acceptance(context)
+            current, _ = self._validate_acceptance(context)
             if current != binding:
                 raise ValueError("acceptance reconciliation authority drift")
         result = self.transport.execute(plan=self.plan_resolver(context), evidence=binding["evidence"],
