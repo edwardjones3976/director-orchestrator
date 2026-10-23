@@ -240,6 +240,20 @@ class DefaultLiveServicesTests(unittest.TestCase):
         completion.assert_called_once_with(self.context)
         effect.assert_called_once_with(self.context)
 
+    def test_acceptance_forwarding_preserves_durable_handler_contract(self):
+        """Do not hide prepare/execute behind a lambda that loses admission."""
+        service = self._services()
+        class DurableHandler:
+            def __call__(handler, context):
+                return self.acceptance
+            def prepare_acceptance(handler, context):
+                raise AssertionError("forwarding itself must not admit or dispatch")
+            def execute_acceptance(handler, *args):
+                raise AssertionError("forwarding itself must not execute transport")
+        handler = DurableHandler()
+        service._acceptance_handler = handler
+        self.assertIs(service.handlers().openai_acceptance_revision, handler)
+
 
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:46 UTC | BEGIN]]
 # Live services require current writer fencing and durable result persistence.
