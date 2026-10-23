@@ -625,7 +625,7 @@ class PaddingAllowanceTests(unittest.TestCase):
 
     def setUp(self):
         self.key = "backbone.input.weight"  # No hard-coded model.embed_tokens name.
-        self.config = {"tie_word_embeddings": False}
+        self.config = {"tie_word_embeddings": False, "pad_token_id": 1, "eos_token_id": 2, "vocab_size": 3}
         self.docs = {
             "config.json": self.config,
             "tokenizer_config.json": {"pad_token": "<pad>", "eos_token": "<eos>"},
@@ -669,12 +669,16 @@ class PaddingAllowanceTests(unittest.TestCase):
             patch.start()
             self.addCleanup(patch.stop)
 
-    def check(self, *, verified=True):
+    def evidence(self, receipt_path=None):
         payloads = {name: json.dumps(doc).encode() for name, doc in self.docs.items()}
-        evidence = trainer.VerifiedSnapshot(None, [entry(name, data) for name, data in payloads.items()])
+        evidence = trainer.VerifiedSnapshot(receipt_path, [entry(name, data) for name, data in payloads.items()])
         evidence.payloads = payloads
+        return evidence
+
+    def check(self, *, verified=True):
+        self.last_evidence = self.evidence()
         return trainer.verify_loaded_model(self.model, self.reference, dtype="bfloat16",
-                                          config=self.config, verified=evidence if verified else None)
+                                          config=self.config, verified=self.last_evidence if verified else None)
 
     def zero_pad(self):
         self.actual[self.key].rows[1] = [0, 0]
@@ -684,6 +688,7 @@ class PaddingAllowanceTests(unittest.TestCase):
             result = self.check(verified=verified)
             self.assertNotIn("input_embedding_pad_row_allowance", result)
             self.assertNotIn("allowance", result["comparison"])
+            self.assertNotIn("input_embedding_pad_row_candidate", self.last_evidence.receipt)
         self.source_hash.assert_not_called()
 
     def test_zero_pad_receipt_and_no_mutation(self):
@@ -750,6 +755,7 @@ class PaddingAllowanceTests(unittest.TestCase):
                 if case.startswith("padding_"):
                     self.embedding.padding_idx = {"padding_none": None, "padding_wrong": 0, "padding_bool": True}[case]
                 elif case == "same_eos":
+                    self.config["eos_token_id"] = 1
                     self.docs["generation_config.json"]["eos_token_id"] = 1
                     self.docs["tokenizer_config.json"]["eos_token"] = "<pad>"
                 elif case == "declared_tie":
@@ -774,7 +780,8 @@ class PaddingAllowanceTests(unittest.TestCase):
         baseline = copy.deepcopy(self.docs)
         mutations = [(file, None, None) for file in baseline]
         mutations += [("generation_config.json", key, value)
-                      for key in ("pad_token_id", "eos_token_id") for value in (None, True, 1.0, "1", -1, 3, [2])]
+                      for key in ("pad_token_id", "eos_token_id") for value in (None, True, 1.0, "1", -1, 3)]
+        mutations.append(("generation_config.json", "pad_token_id", [1]))
         mutations += [("tokenizer_config.json", key, value)
                       for key in ("pad_token", "eos_token") for value in (None, "wrong", {"content": "<pad>"})]
         mutations += [("tokenizer.json", "added_tokens", value) for value in (
@@ -795,7 +802,7 @@ class PaddingAllowanceTests(unittest.TestCase):
     def test_tie_metadata_requires_literal_false(self):
         for value in ("missing", None, 0, 1, "false", "true", "", [], {}):
             with self.subTest(value=value):
-                self.config.clear()
+                self.config.pop("tie_word_embeddings", None)
                 if value != "missing":
                     self.config["tie_word_embeddings"] = value
                 self.actual[self.key].rows = [[1, 2], [3, 4], [5, 6]]
@@ -804,6 +811,119 @@ class PaddingAllowanceTests(unittest.TestCase):
                 with self.assertRaisesRegex(SystemExit, "payload differs"):
                     self.check()
         self.source_hash.assert_not_called()
+
+    def test_scalar_singleton_and_multiple_generation_eos(self):
+        self.docs["tokenizer.json"]["added_tokens"].append({"id": 0, "content": "<end>"})
+        for eos in (2, [2], [2, 0], [0, 2]):
+            with self.subTest(eos=eos):
+                self.docs["generation_config.json"]["eos_token_id"] = eos
+                self.actual[self.key].rows = [[1, 2], [3, 4], [5, 6]]
+                self.assertNotIn("input_embedding_pad_row_allowance", self.check())
+                self.zero_pad()
+                result = self.check()
+                allowance = result["input_embedding_pad_row_allowance"]
+                self.assertEqual(allowance["primary_eos_token_id"], 2)
+                self.assertEqual(allowance["generation_eos_token_ids"], [eos] if type(eos) is int else eos)
+                candidate = self.last_evidence.receipt["input_embedding_pad_row_candidate"]
+                self.assertEqual(candidate, dict(allowance, status="eligible_proposed"))
+
+    def test_captured_8b_metadata_is_eligible_without_large_tensor(self):
+        self.config.update(pad_token_id=151654, eos_token_id=151645, vocab_size=151936)
+        self.docs["tokenizer_config.json"].update(pad_token="<|vision_pad|>", eos_token="<|im_end|>")
+        self.docs["generation_config.json"].update(pad_token_id=151654, eos_token_id=[151645, 151643])
+        self.docs["tokenizer.json"]["added_tokens"] = [
+            {"id": 151654, "content": "<|vision_pad|>"}, {"id": 151645, "content": "<|im_end|>"},
+            {"id": 151643, "content": "<|endoftext|>"}]
+        self.embedding.padding_idx = 151654
+        # Eligibility only: shape metadata carries the vocabulary; payload stays tiny.
+        self.actual[self.key].shape = self.reference[self.key].shape = (151936, 2)
+        candidate = trainer.input_padding_allowance(self.model, self.key, self.actual[self.key],
+                                                   self.reference[self.key], self.config, self.evidence())
+        self.assertEqual(candidate["token_id"], 151654)
+        self.assertEqual(candidate["primary_eos_token_id"], 151645)
+        self.assertEqual(candidate["generation_eos_token_ids"], [151645, 151643])
+
+    def test_invalid_generation_eos_and_model_binding_refuse(self):
+        self.docs["tokenizer.json"]["added_tokens"].append({"id": 0, "content": "<end>"})
+        self.zero_pad()
+        for eos in ([], [2, 2], [0], [2, 1], [True], [2, False], [2.0], ["2"], [[2]],
+                    [2, -1], [2, 3], [2, None], {"id": 2}):
+            with self.subTest(eos=eos):
+                self.docs["generation_config.json"]["eos_token_id"] = eos
+                with self.assertRaisesRegex(SystemExit, "payload differs"):
+                    self.check()
+                self.assertNotIn("input_embedding_pad_row_candidate", self.last_evidence.receipt)
+        self.docs["generation_config.json"]["eos_token_id"] = [2, 0]
+        baseline = dict(self.config)
+        for key in ("pad_token_id", "eos_token_id", "vocab_size"):
+            for value in (None, True, 1.0, "2", [2], -1, 0, 4):
+                with self.subTest(key=key, value=value):
+                    self.config.update(baseline)
+                    if value is None:
+                        del self.config[key]
+                    else:
+                        self.config[key] = value
+                    with self.assertRaisesRegex(SystemExit, "payload differs"):
+                        self.check()
+        self.config.update(baseline)
+        for pad in (0, 2):
+            with self.subTest(generation_pad=pad):
+                self.docs["generation_config.json"]["pad_token_id"] = pad
+                with self.assertRaisesRegex(SystemExit, "payload differs"):
+                    self.check()
+        self.source_hash.assert_not_called()
+
+    def test_additional_eos_requires_unique_nonempty_added_token(self):
+        self.docs["generation_config.json"]["eos_token_id"] = [2, 0]
+        baseline = copy.deepcopy(self.docs["tokenizer.json"]["added_tokens"])
+        for extra in ([], [{"id": 0, "content": ""}], [{"id": 0, "content": None}],
+                      [{"id": 0, "content": "<eos>"}], [{"id": False, "content": "<end>"}],
+                      [{"id": 0.0, "content": "<end>"}], [{"id": 0, "content": "<end>"}] * 2,
+                      [{"id": 0, "content": "<end>"}, {"id": 0, "content": "<other>"}]):
+            with self.subTest(extra=extra):
+                self.docs["tokenizer.json"]["added_tokens"] = baseline + extra
+                self.zero_pad()
+                with self.assertRaisesRegex(SystemExit, "payload differs"):
+                    self.check()
+                self.assertNotIn("input_embedding_pad_row_candidate", self.last_evidence.receipt)
+
+    def test_failed_transform_retains_candidate_without_successful_postload(self):
+        self.config["quantization_config"] = {"load_in_4bit": True}
+        self.model.config = types.SimpleNamespace(**self.config)
+        self.docs["generation_config.json"]["eos_token_id"] = [2]
+        self.zero_pad()
+        self.actual[self.key].rows[0] = [0, 0]
+        tokenizer = mock.Mock()
+        tokenizer.backend_tokenizer.to_str.return_value = json.dumps(self.docs["tokenizer.json"])
+        tokenizers = types.SimpleNamespace(Tokenizer=mock.Mock())
+        tokenizers.Tokenizer.from_str.return_value = tokenizer.backend_tokenizer
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = self.evidence(Path(tmp, "receipt.json"))
+            evidence["trusted_root_sha256"] = "a" * 64
+            saved = []
+            with mock.patch.dict(sys.modules, {"tokenizers": tokenizers}), \
+                 mock.patch.object(trainer, "os", types.SimpleNamespace(name="posix", memfd_create=None)), \
+                 mock.patch.object(trainer.torch, "cuda", types.SimpleNamespace(is_bf16_supported=lambda: True), create=True), \
+                 mock.patch.object(trainer.torch, "bfloat16", "bfloat16", create=True), \
+                 mock.patch.object(trainer, "reference_state_dict", return_value=self.reference), \
+                 mock.patch.object(trainer, "sealed_snapshot") as sealed, \
+                 mock.patch.object(trainer, "FastLanguageModel") as loader, \
+                 mock.patch.object(trainer, "verify_tokenizer_behavior"), \
+                 mock.patch.object(evidence, "persist", side_effect=lambda: saved.append(copy.deepcopy(evidence.receipt))):
+                sealed.return_value.__enter__.return_value = Path(tmp)
+                loader.from_pretrained.return_value = (self.model, tokenizer)
+                with self.assertRaisesRegex(SystemExit, "payload differs"):
+                    trainer.load_verified_model(Path(tmp), evidence, max_seq_length=1536)
+            self.assertEqual(saved[0]["input_embedding_pad_row_candidate"]["status"], "eligible_proposed")
+            self.assertEqual(saved[-1]["status"], "refused")
+            evidence.persist()
+            receipt = json.loads(evidence.receipt_path.read_bytes())
+            self.assertEqual(receipt["status"], "refused")
+            self.assertIn("payload differs", receipt["error"])
+            self.assertEqual(receipt["input_embedding_pad_row_candidate"]["generation_eos_token_ids"], [2])
+            self.assertNotIn("post_load", receipt)
+            self.assertNotIn("loaded_verification", evidence)
+            self.assertNotIn("input_embedding_pad_row_allowance", json.dumps(receipt))
 
     def test_missing_or_mismatched_runtime_source_refuses(self):
         for module in (None, types.SimpleNamespace(), types.SimpleNamespace(__file__=None)):
