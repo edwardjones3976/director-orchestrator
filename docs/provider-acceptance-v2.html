@@ -18,8 +18,10 @@
 <p>Status: dormant, independently reviewable core only. It cannot record acceptance,
 activate a service, enroll an issuer, sign a receipt or consume a challenge.
 The existing GitHub-account v1 acceptance path is unchanged. This new mechanism
-must not approve its own adoption; adoption needs separately authorized independent
-review, security review and exact-head CI before runtime integration.</p>
+must not approve its own adoption; adoption and runtime integration of this
+dormant core need separately authorized independent-review and security receipt
+evidence and exact-head CI—these receipt requirements are distinct from the
+ordinary single-reviewer engineering workflow on a PR.</p>
 <p><code>verify_provider_acceptance(raw, expected=ReviewContext(...), authorities={role: IssuerAuthority(...)}, now=trusted_clock)</code> verifies a closed
 <code>director-provider-acceptance/v2</code> JSON document. <code>context</code> contains the complete
 ActivationIdentity (SHA/tree/profile/Compose/database identity and instance/schema/
@@ -47,8 +49,9 @@ Keys, principals and deployments are distinct for all three roles; reviewer
 provider families are distinct and excluded from material authorship. Another
 OpenAI session cannot independently accept OpenAI material work.</p>
 <p>Before this core can be used, provision two protected independent native issuer
-services (separate OS accounts/VMs, keys and authenticated provider logins).
-Each owner-installed fixed-role runner independently obtains the immutable packet,
+services (separate OS accounts/VMs, keys and authenticated provider logins) for
+the distinct <code>security</code> and <code>independent_review</code> receipt roles; they do not
+prescribe two engineering reviewers for one PR. Each owner-installed fixed-role runner independently obtains the immutable packet,
 launches its pinned provider transport, captures actual terminal session identity
 and result bytes, validates the bound challenge and packet, and signs only evidence
 it observed. There must be no arbitrary sign-receipt or caller-session interface.

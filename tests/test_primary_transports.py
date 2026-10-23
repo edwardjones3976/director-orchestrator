@@ -1525,6 +1525,413 @@ class CompactProviderViewTransportTests(unittest.TestCase):
         self.assertEqual("claude", result["provider"])
 
 
+class AcceptanceTransportTests(unittest.TestCase):
+    """Every HTTP request is intercepted by MockTransport; no sockets."""
+
+    def setUp(self):
+        gate = patch("director_orchestrator.primary_transports.ACCEPTANCE_ABSOLUTE_DEADLINE_ENFORCED", True)
+        gate.start()
+        self.addCleanup(gate.stop)
+        from director_orchestrator.primary_transports import (
+            AcceptanceRequestPlan, ACCEPTANCE_RESPONSE_SCHEMA)
+        from director_orchestrator.langgraph_primary import SqliteAcceptanceJournal, _canonical_digest
+        self.directory = TemporaryDirectory(prefix="acceptance-transport-")
+        self.addCleanup(self.directory.cleanup)
+        self.journal = SqliteAcceptanceJournal(Path(self.directory.name) / "journal.sqlite3")
+        self.plan = AcceptanceRequestPlan(model="fixture-model-immutable", authority_digest="sha256:" + "a" * 64,
+            tariff_digest="sha256:" + "b" * 64, schema_digest=_canonical_digest(ACCEPTANCE_RESPONSE_SCHEMA),
+            valid_until=int(time.time()) + 300, max_input=50000, max_output=8000,
+            max_cache_write=50000, input_rate="2", output_rate="10", cache_write_rate="2.5",
+            fee_bound="0", scope="fixture-envelope")
+        self.context = SimpleNamespace(task_id="task", candidate_sha="a" * 40, revision_count=0)
+        self.evidence = {"verified": "evidence"}
+        self.key = _canonical_digest({"key": "acceptance"})
+        _, self.row = self.journal.acceptance_claim(self.key, {"evidence": self.evidence}, **self.plan.reservation())
+        self.requests = []
+        self.rechecks = []
+
+    def _completed(self, **updates):
+        from director_orchestrator.langgraph_primary import _canonical_digest
+        output = {"task_id": "task", "candidate_sha": "a" * 40, "revision": 0,
+                  "evidence_digest": _canonical_digest(self.evidence), "decision": "accept"}
+        response = {"id": "resp-fixture", "model": self.plan.model, "status": "completed",
+            "usage": {"input_tokens": 500, "output_tokens": 200},
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps(output)}]}]}
+        response.update(updates)
+        return response
+
+    def _execute(self, responses=None, *, failure=None, recheck=None, **kwargs):
+        from director_orchestrator.primary_transports import OpenAIAcceptanceTransport
+        queue = list(responses or [self._completed()])
+        def respond(request):
+            self.requests.append(request)
+            if failure is not None:
+                if callable(failure):
+                    override = failure(request)
+                    if override is not None:
+                        return override
+                else:
+                    raise failure
+            if request.url.path.endswith("input_tokens"):
+                return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 500},
+                    headers={"x-request-id": "fixture-count"})
+            return httpx.Response(200, json=queue.pop(0), headers={"x-request-id": "fixture-response"})
+        transport = OpenAIAcceptanceTransport("fake-key", client_factory=lambda: httpx.Client(
+            transport=httpx.MockTransport(respond), trust_env=False, follow_redirects=False))
+        return transport.execute(plan=self.plan, evidence=self.evidence, context=self.context,
+            journal=self.journal, key=self.key, owner=self.row["owner"],
+            recheck=recheck or (lambda: self.rechecks.append(True)), **kwargs)
+
+    @patch("director_orchestrator.primary_transports.ACCEPTANCE_ABSOLUTE_DEADLINE_ENFORCED", False)
+    def test_closed_gate_refuses_before_client_or_journal(self):
+        from unittest.mock import Mock
+        from director_orchestrator.primary_transports import OpenAIAcceptanceTransport
+        from director_orchestrator.langgraph_primary import AcceptanceEnrollmentRequired
+        factory, journal, recheck = Mock(side_effect=AssertionError("client construction reached")), Mock(), Mock()
+        transport = OpenAIAcceptanceTransport("fake-key", client_factory=factory)
+        with self.assertRaisesRegex(AcceptanceEnrollmentRequired, r"R4, #501"):
+            transport.execute(plan=self.plan, evidence=self.evidence, context=self.context,
+                journal=journal, key=self.key, owner=self.row["owner"], recheck=recheck)
+        factory.assert_not_called()
+        self.assertEqual(journal.mock_calls, [])
+        recheck.assert_not_called()
+
+    @patch("director_orchestrator.primary_transports.ACCEPTANCE_ABSOLUTE_DEADLINE_ENFORCED", False)
+    def test_closed_gate_mismatched_response_id_refuses_before_client(self):
+        from director_orchestrator.primary_transports import OpenAIAcceptanceTransport
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved
+        self.journal.acceptance_http(self.key, self.row["owner"], "create")
+        self.journal.acceptance_response_id(self.key, self.row["owner"], "resp-fixture")
+        factory = Mock()
+        transport = OpenAIAcceptanceTransport("fake-key", client_factory=factory)
+        with self.assertRaisesRegex(AcceptanceUnresolved, "durable binding"):
+            transport.execute(plan=self.plan, evidence=self.evidence, context=self.context,
+                journal=self.journal, key=self.key, owner=self.row["owner"], recheck=lambda: None,
+                response_id="resp-mismatched")
+        factory.assert_not_called()
+        held = self.journal.acceptance_read(self.key)
+        self.assertEqual((held["response_id"], held["reserved_cents"]),
+                         ("resp-fixture", self.row["reserved_cents"]))
+
+    def test_client_cleanup_failure_keeps_paid_response_unresolved(self):
+        from contextlib import contextmanager
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved
+        from director_orchestrator.primary_transports import OpenAIAcceptanceTransport
+        error = httpx.CloseError("client cleanup uncertain")
+        def respond(request):
+            self.requests.append(request)
+            if request.url.path.endswith("input_tokens"):
+                return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 500},
+                                      headers={"x-request-id": "fixture-count"})
+            return httpx.Response(200, json=self._completed(), headers={"x-request-id": "fixture-create"})
+        @contextmanager
+        def client():
+            with httpx.Client(transport=httpx.MockTransport(respond), trust_env=False) as value:
+                yield value
+            raise error
+        transport = OpenAIAcceptanceTransport("fake-key", client_factory=client)
+        with self.assertRaises(AcceptanceUnresolved) as raised:
+            transport.execute(plan=self.plan, evidence=self.evidence, context=self.context,
+                journal=self.journal, key=self.key, owner=self.row["owner"], recheck=lambda: None)
+        self.assertIs(raised.exception.__cause__, error)
+        held = self.journal.acceptance_read(self.key)
+        self.assertEqual((held["response_id"], held["used_requests"], held["reserved_cents"]),
+                         ("resp-fixture", 2, 155))
+        self.assertEqual(len(self.requests), 2)
+        with self.assertRaises(AcceptanceUnresolved):
+            self.journal.acceptance_http(self.key, self.row["owner"], "create")
+
+    def test_malformed_create_envelope_is_unresolved_with_cause(self):
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved
+        def malformed(request):
+            if not request.url.path.endswith("input_tokens"):
+                return httpx.Response(200, content=b'{"id":', headers={"x-request-id": "fixture"})
+        with self.assertRaises(AcceptanceUnresolved) as raised:
+            self._execute(failure=malformed)
+        self.assertIsInstance(raised.exception.__cause__, json.JSONDecodeError)
+        row = self.journal.acceptance_read(self.key)
+        self.assertEqual((row["used_requests"], row["reserved_cents"]), (2, 155))
+        with self.assertRaises(AcceptanceUnresolved):
+            self.journal.acceptance_http(self.key, self.row["owner"], "create")
+        self.assertEqual(len(self.requests), 2)
+
+    def test_malformed_retrieve_keeps_durable_id(self):
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved
+        def malformed(request):
+            if request.method == "GET":
+                return httpx.Response(200, content=b'{', headers={"x-request-id": "fixture"})
+        with self.assertRaises(AcceptanceUnresolved) as raised:
+            self._execute([{"id": "resp-fixture", "status": "queued"}], failure=malformed)
+        self.assertIsInstance(raised.exception.__cause__, json.JSONDecodeError)
+        row = self.journal.acceptance_read(self.key)
+        self.assertEqual((row["response_id"], row["used_requests"], row["reserved_cents"]),
+                         ("resp-fixture", 3, 155))
+        self.assertEqual(len(self.requests), 3)
+
+    def test_response_id_database_exit_failure_requires_reconciliation(self):
+        import sqlite3
+        import psycopg
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved, _canonical_digest
+        original = self.journal.acceptance_response_id
+        errors = (sqlite3.OperationalError("commit acknowledgement lost"),
+                  psycopg.OperationalError("connection lost"),
+                  psycopg.errors.TransactionResolutionUnknown("commit unknown"))
+        for index, error in enumerate(errors):
+            for committed in (False, True):
+                with self.subTest(error=type(error), committed=committed):
+                    self.key = _canonical_digest({"error": index, "committed": committed})
+                    _, self.row = self.journal.acceptance_claim(self.key, {}, **replace(
+                        self.plan, scope=f"db-{index}-{committed}").reservation())
+                    self.requests = []
+                    def uncertain(*args):
+                        if committed:
+                            original(*args)
+                        raise error
+                    with patch.object(self.journal, "acceptance_response_id", side_effect=uncertain):
+                        with self.assertRaises(AcceptanceUnresolved) as raised:
+                            self._execute()
+                    self.assertIs(raised.exception.__cause__, error)
+                    row = self.journal.acceptance_read(self.key)
+                    self.assertEqual(row["response_id"], "resp-fixture" if committed else None)
+                    self.assertEqual((row["reserved_cents"], row["used_requests"]), (155, 2))
+                    with self.assertRaises(AcceptanceUnresolved):
+                        self.journal.acceptance_http(self.key, self.row["owner"], "create")
+                    self.assertEqual(len(self.requests), 2)
+
+    def test_count_create_and_bounded_retrieve_record_id_and_no_hidden_retry(self):
+        result = self._execute([{"id": "resp-fixture", "status": "queued"}, self._completed()])
+        self.assertEqual(result.decision.value, "accept")
+        self.assertEqual([request.method for request in self.requests], ["POST", "POST", "GET"])
+        row = self.journal.acceptance_read(self.key)
+        self.assertEqual((row["state"], row["response_id"], row["used_requests"]),
+                         ("RESPONSE_ID_RECORDED", "resp-fixture", 3))
+        self.assertEqual(row["reserved_cents"], 155)
+        body = json.loads(self.requests[1].content)
+        self.assertTrue(body["store"])
+        self.assertTrue(body["background"])
+        self.assertEqual(body["max_output_tokens"], 8000)
+        self.assertGreaterEqual(len(self.rechecks), 4)
+
+    def test_post_charge_checks_cover_every_request_kind(self):
+        from unittest.mock import patch
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved, _canonical_digest
+        original_http = self.journal.acceptance_http
+        for kind in ("input_tokens", "create", "retrieve", "cancel"):
+            for failure in ("deadline", "valid_until", "revoked"):
+                with self.subTest(kind=kind, failure=failure):
+                    self.key = _canonical_digest({"kind": kind, "failure": failure})
+                    _, self.row = self.journal.acceptance_claim(self.key, {}, **replace(
+                        self.plan, scope=kind + failure).reservation())
+                    if kind in {"retrieve", "cancel"}:
+                        original_http(self.key, self.row["owner"], "create")
+                        self.journal.acceptance_response_id(self.key, self.row["owner"], "resp-fixture")
+                    clock = [0.0]
+                    wall = [self.plan.valid_until - 100]
+                    charged = []
+                    def charge(key, owner, request_kind):
+                        original_http(key, owner, request_kind)
+                        charged.append(request_kind)
+                        if request_kind == kind:
+                            if failure == "deadline":
+                                clock[0] = self.plan.timeout_seconds + 1
+                            elif failure == "valid_until":
+                                wall[0] = self.plan.valid_until + 1
+                    def recheck():
+                        if charged and charged[-1] == kind and failure == "revoked":
+                            raise ValueError("authority revoked")
+                    self.requests = []
+                    options = ({"response_id": "resp-fixture", "cancel": kind == "cancel"}
+                               if kind in {"retrieve", "cancel"} else {})
+                    with patch.object(self.journal, "acceptance_http", side_effect=charge), \
+                         patch("director_orchestrator.primary_transports.monotonic", side_effect=lambda: clock[0]), \
+                         patch("time.time", side_effect=lambda: wall[0]):
+                        expected = AcceptanceUnresolved if failure == "deadline" else ValueError
+                        with self.assertRaises(expected):
+                            self._execute(recheck=recheck, **options)
+                    expected_http = 1 if kind == "create" else 0
+                    self.assertEqual(len(self.requests), expected_http)
+                    row = self.journal.acceptance_read(self.key)
+                    self.assertEqual(row["used_requests"], 2 if kind != "input_tokens" else 1)
+                    self.assertEqual(row["reserved_cents"], 155)
+                    won, _ = self.journal.acceptance_claim(self.key, {}, **replace(
+                        self.plan, scope=kind + failure).reservation())
+                    self.assertFalse(won)
+                    with self.journal.acceptance_transaction() as sql:
+                        creates = sql.execute("SELECT COUNT(*) FROM acceptance_http WHERE operation_key=? AND kind='create'", (self.key,)).fetchone()[0]
+                    self.assertEqual(creates, int(kind != "input_tokens"))
+
+    def test_post_charge_timeout_uses_fresh_remaining_budget(self):
+        from unittest.mock import patch
+        clock = [0.0]
+        original_http = self.journal.acceptance_http
+        def charge(*args):
+            original_http(*args)
+            clock[0] += 7
+        with patch.object(self.journal, "acceptance_http", side_effect=charge), \
+             patch("director_orchestrator.primary_transports.monotonic", side_effect=lambda: clock[0]):
+            self._execute()
+        self.assertEqual([request.extensions["timeout"]["read"] for request in self.requests], [53, 46])
+
+    def test_disconnect_charges_one_request_and_does_not_retry(self):
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved
+        with self.assertRaises(AcceptanceUnresolved):
+            self._execute(failure=httpx.ReadTimeout("fixture disconnected"))
+        self.assertEqual(len(self.requests), 1)
+        self.assertEqual(self.journal.acceptance_read(self.key)["reserved_cents"], 155)
+
+    def test_terminal_failed_cancelled_incomplete_and_missing_id_never_recreate(self):
+        # Each status uses a separately admitted fixture; no case reuses the
+        # original operation to fake a new authorized create.
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved, _canonical_digest
+        for index, status in enumerate(("failed", "cancelled", "incomplete")):
+            self.key = _canonical_digest({"separate-fixture": index})
+            _, self.row = self.journal.acceptance_claim(self.key, {"status": status}, cents=0, requests=2,
+                scope=f"status-fixture-{index}", limit_cents=0, limit_requests=2)
+            with self.subTest(status=status), self.assertRaises(AcceptanceUnresolved):
+                self._execute([self._completed(status=status)])
+            row = self.journal.acceptance_read(self.key)
+            self.assertEqual(row["state"], "RESPONSE_ID_RECORDED")
+            with self.assertRaises(AcceptanceUnresolved):
+                self.journal.acceptance_http(self.key, row["owner"], "create")
+
+    def test_wrong_model_or_output_subject_refuses_after_durable_id(self):
+        with self.assertRaisesRegex(ValueError, "model drift"):
+            self._execute([self._completed(model="other-model")])
+        self.assertEqual(self.journal.acceptance_read(self.key)["response_id"], "resp-fixture")
+
+    def test_known_id_reconciliation_only_and_cancel_keeps_reservation(self):
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved
+        self.journal.acceptance_http(self.key, self.row["owner"], "create")
+        self.journal.acceptance_response_id(self.key, self.row["owner"], "resp-fixture")
+        with self.assertRaises(AcceptanceUnresolved):
+            self._execute([self._completed(status="cancelled")], response_id="resp-fixture", cancel=True)
+        self.assertEqual([(request.method, request.url.path) for request in self.requests],
+            [("POST", "/v1/responses/resp-fixture/cancel")])
+        self.assertEqual(self.journal.acceptance_read(self.key)["reserved_cents"], 155)
+
+    def test_unknown_id_reconciliation_refuses_before_http(self):
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved
+        with self.assertRaises(AcceptanceUnresolved):
+            self._execute(response_id="resp-not-durable")
+        self.assertEqual(self.requests, [])
+
+    def test_request_alone_supplies_trusted_subject(self):
+        captured = {}
+        def respond(request):
+            body = json.loads(request.content)
+            if request.url.path.endswith("input_tokens"):
+                captured.update(body)
+                return None
+            self.assertEqual(captured, {k: body[k] for k in captured})
+            subject = json.loads(body["instructions"].split("\n", 1)[0].removeprefix("TRUSTED SUBJECT: "))
+            self.assertIn("BEGIN UNTRUSTED EVIDENCE\n", body["input"])
+            self.assertIn("END UNTRUSTED EVIDENCE", body["input"])
+            # All response binding values come solely from captured request bytes.
+            subject["decision"] = "accept"
+            response = {"id": "resp-fixture", "model": body["model"], "status": "completed",
+                "usage": {"input_tokens": 500, "output_tokens": 200},
+                "output": [{"type": "message", "content": [{"type": "output_text",
+                    "text": json.dumps(subject)}]}]}
+            return httpx.Response(200, json=response, headers={"x-request-id": "fixture"})
+        self.assertEqual(self._execute(failure=respond).decision.value, "accept")
+
+    def test_count_payload_strict_allowlist_matches_create(self):
+        captured = {}
+        def strict_count(request):
+            body = json.loads(request.content)
+            if request.url.path.endswith("input_tokens"):
+                self.assertEqual(set(body), {"model", "input", "instructions", "tools", "text"})
+                captured.update(body)
+            else:
+                self.assertEqual(captured, {k: body[k] for k in captured})
+            return None
+        self.assertEqual(self._execute(failure=strict_count).decision.value, "accept")
+
+    def test_altered_digest_and_each_subject_field_refused(self):
+        from director_orchestrator.langgraph_primary import _canonical_digest
+        for field, value in (("evidence_digest", "sha256:" + "f" * 64),
+                             ("task_id", "other"), ("candidate_sha", "b" * 40), ("revision", 1)):
+            self.key = _canonical_digest({"altered": field})
+            _, self.row = self.journal.acceptance_claim(self.key, {}, cents=0, requests=5,
+                scope="altered-" + field, limit_cents=0, limit_requests=5)
+            response = self._completed()
+            content = response["output"][0]["content"][0]
+            output = json.loads(content["text"])
+            output[field] = value
+            content["text"] = json.dumps(output)
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "subject/evidence mismatch"):
+                self._execute([response])
+
+    def test_http_failures_preserve_accounting_and_never_retry(self):
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved, _canonical_digest
+        class BrokenStream(httpx.SyncByteStream):
+            def __init__(self, close_failure=False):
+                self.close_failure = close_failure
+            def __iter__(self):
+                if self.close_failure:
+                    yield b'{"id":"resp-fixture","status":"queued"}'
+                else:
+                    yield b'{"partial":'
+                    raise httpx.StreamError("fixture private detail")
+            def close(self):
+                if self.close_failure:
+                    raise httpx.CloseError("fixture private detail")
+        cases = ("count", "timeout", "disconnect", "status", "partial", "close", "retrieve", "cancel")
+        for case in cases:
+            self.key = _canonical_digest({"failure": case})
+            _, self.row = self.journal.acceptance_claim(self.key, {}, **replace(
+                self.plan, scope="failure-" + case).reservation())
+            self.requests = []
+            if case == "cancel":
+                self.journal.acceptance_http(self.key, self.row["owner"], "create")
+                self.journal.acceptance_response_id(self.key, self.row["owner"], "resp-fixture")
+            def fail(request):
+                if request.url.path.endswith("input_tokens"):
+                    if case == "count":
+                        raise httpx.ConnectError("fixture private detail")
+                    return None
+                if case == "retrieve" and request.method == "POST":
+                    return httpx.Response(200, json={"id": "resp-fixture", "status": "queued"},
+                        headers={"x-request-id": "fixture"})
+                if case == "status":
+                    return httpx.Response(503, headers={"x-request-id": "fixture"})
+                if case in {"partial", "close"}:
+                    return httpx.Response(200, stream=BrokenStream(case == "close"),
+                        headers={"x-request-id": "fixture"})
+                raise (httpx.ReadTimeout("fixture private detail") if case == "timeout"
+                       else httpx.RemoteProtocolError("fixture private detail"))
+            options = {"response_id": "resp-fixture", "cancel": True} if case == "cancel" else {}
+            with self.subTest(case=case), self.assertRaises(AcceptanceUnresolved) as caught:
+                self._execute(failure=fail, **options)
+            self.assertIsInstance(caught.exception.__cause__, (httpx.HTTPError, httpx.StreamError))
+            self.assertNotIn("private detail", str(caught.exception))
+            row = self.journal.acceptance_read(self.key)
+            expected = 1 if case in {"count", "cancel"} else 3 if case == "retrieve" else 2
+            self.assertEqual(len(self.requests), expected)
+            self.assertEqual(row["used_requests"], expected + (case == "cancel"))
+            self.assertEqual(row["reserved_cents"], 155)
+            self.assertEqual(row["state"], "RESPONSE_ID_RECORDED" if case in {"retrieve", "cancel"} else "CLAIMED")
+            with self.journal.acceptance_transaction() as sql:
+                creates = sql.execute("SELECT COUNT(*) FROM acceptance_http WHERE operation_key=? AND kind='create'", (self.key,)).fetchone()[0]
+            self.assertEqual(creates, int(case != "count"))
+            self.assertEqual(row["response_id"], "resp-fixture" if case in {"retrieve", "cancel"} else None)
+
+    def test_output_minimum_rejects_instead_of_clamping(self):
+        for value in (1, 15, True, 16.0):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                replace(self.plan, max_output=value).reservation()
+        self.assertEqual(replace(self.plan, max_output=16).reservation()["requests"], 5)
+
+    def test_decimal_rounding_reasoning_cache_fees_and_stale_bounds(self):
+        self.assertEqual(self.plan.reservation()["cents"], 155)
+        self.assertEqual(replace(self.plan, max_input=1, max_output=16, max_cache_write=1).reservation()["cents"], 5)
+        for change in ({"fee_bound": "NaN"}, {"fee_bound": None}, {"input_rate": 2.0},
+                       {"max_output": 0}, {"max_cache_write": 0}, {"valid_until": 1},
+                       {"fee_bound": "2.01"}, {"request_slots": 6}):
+            with self.subTest(change=change), self.assertRaises((ValueError, TypeError)):
+                replace(self.plan, **change).reservation()
+
+
 if __name__ == "__main__":
     unittest.main()
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 10:08 UTC | END]]

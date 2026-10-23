@@ -175,7 +175,7 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
 | [`eval/validate_rows.py`](eval/validate_rows.py) | M2-S1 row validator: schema, canonical `row_id`, provider `terms_verified_at`, manifest binding to both held-out sets, the three D-M2-3 leak-wall checks (lineage, title and objective, shingle near-duplicate with a quarantine band) and the group-wise train/dev split; writes `accepted.jsonl`, `quarantine.jsonl` and `report.json` |
 | [`train/train_adapter.py`](train/train_adapter.py) | M2-T1 QLoRA trainer. Response-only loss on the validator's train rows, with the attention mask kept on the batch. Smoke-base 20-step dry run and the pinned Qwen3-14B probe. `scripts/train-adapter.ps1` holds the GPU lock and the storage guards |
 | [`eval/generate_rows.py`](eval/generate_rows.py) | M2-G1 exemplar harness. One bounded competing-only dispatch per scenario through `dispatch.py`. A dry run writes zero rows and zero receipts. A live run writes schema-valid rows only after the leak wall and the dataset scan |
-| [`decision-log.md`](decision-log.md) | One line per owner or design decision |
+| [`decision-log.html`](decision-log.html) | One line per owner or design decision |
 | [`project-state-report.md`](project-state-report.md) | Evidence-first milestone report (M0 closed under O-031; record reconciliation pending until PR #293 gates pass) |
 
 ## Milestones
