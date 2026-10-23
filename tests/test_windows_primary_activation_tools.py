@@ -1418,6 +1418,7 @@ function docker {
     switch ($args[0]) {
         'ps' {
             if ($script:listingFails) { $global:LASTEXITCODE = 1; return }
+            if ($args -contains "publish=47001") { return }
             foreach ($row in $script:items.Values) {
                 $parts = $row -split '\|'
                 if ($args -contains '--filter') {
@@ -1433,6 +1434,10 @@ function docker {
         'create' {
             $name = $args[[Array]::IndexOf($args, '--name') + 1]
             if ($script:createFails -or $script:items.ContainsKey($name)) { $global:LASTEXITCODE = 1; return }
+            if ($name -eq 'candidate') {
+                Item $name '' 'true' 'true' 'created'
+                return [string]$script:serial
+            }
             if ($args -notcontains '--pull=never') { throw 'Slot may pull image' }
             $labels = @{}
             for ($i = 0; $i -lt $args.Count; $i++) {
@@ -1447,6 +1452,14 @@ function docker {
             Item $name $owner '' '' 'running' $instance
             return [string]$script:serial
         }
+        'start' {
+            Check ($args[1] -eq 'candidate') 'Unexpected PostgreSQL start'
+            $reservations = @(Get-SlotInventory | Where-Object { $_.Owner })
+            Check ($reservations.Count -le 4) 'Started above the four-slot cap'
+            Check (@($reservations | Where-Object { $_.Instance -ceq $script:laneInstanceId }).Count -eq 1) 'Started without instance-bound admission'
+            $script:starts++
+            $script:items['candidate'] = $script:items['candidate'].Replace('|created|', '|running|')
+        }
         'rm' {
             if ($script:removeFails) { $global:LASTEXITCODE = 1; return }
             $id = $args[-1]
@@ -1455,7 +1468,7 @@ function docker {
             }
             $global:LASTEXITCODE = 1
         }
-        default { throw 'Unexpected Docker command (slots must never start)' }
+        default { throw 'Unexpected Docker command in lane fixture' }
     }
 }
 function Check($condition, $message) { if (-not $condition) { throw $message } }
@@ -1623,6 +1636,61 @@ Set-Content -LiteralPath ($sqliteFile + '-wal') 'x'
 Remove-LaneSqlite $sqliteFile
 Check (-not (Test-Path -LiteralPath $sqliteFile)) 'Per-run SQLite was kept'
 Check (-not (Test-Path -LiteralPath ($sqliteFile + '-wal'))) 'Per-run SQLite wal was kept'
+
+# Exercise the actual Start-Lane path: four owners block all PostgreSQL starts.
+$env:DIRECTOR_TEST_LANE_MAX_CONCURRENCY = '4'
+$HostPort = 47001
+$Tls = $false
+$databaseUser = 'fixture'
+$databaseName = 'fixture'
+$script:items = @{}
+$script:laneInstanceId = $null
+$script:starts = 0
+function Assert-DockerReachable {}
+function Wait-LaneReady {}
+function Export-LaneEnvironment {}
+function Get-LaneContainer {
+    if (-not $script:items.ContainsKey($ContainerName)) { return $null }
+    $parts = $script:items[$ContainerName] -split '\|'
+    return @{ Id=$parts[0]; State=$parts[5]; Owned=($parts[3] -eq 'true'); Tls=$false }
+}
+function Remove-LaneContainer { $script:items.Remove($ContainerName) }
+foreach ($number in 1..4) {
+    Item "occupied-$number" '' 'true' 'true'
+    $instance = [string]$script:serial
+    Item "director-test-lane-slot-$number" "occupied-$number" '' '' 'running' $instance
+}
+try { Start-Lane; throw 'Expected fifth-lane timeout' } catch {
+    if ($_.Exception.Message -notlike 'Timed out*cap 4*') { throw }
+}
+Check ($script:starts -eq 0) 'Fifth lane started before admission'
+Check (-not $script:items.ContainsKey('candidate')) 'Timed-out candidate was retained'
+Check (@(Get-SlotInventory | Where-Object { $_.Owner }).Count -eq 4) 'Timeout removed an occupied reservation'
+
+# Release a real owned fixture through Stop-Lane during the next admission wait.
+function Start-Sleep($Milliseconds) {
+    Check ($script:starts -eq 0) 'PostgreSQL started before eligible release'
+    $candidateInstance = $script:laneInstanceId
+    $ContainerName = 'occupied-2'
+    $script:laneInstanceId = ($script:items[$ContainerName] -split '\|')[0]
+    try { Stop-Lane } finally { $script:laneInstanceId = $candidateInstance }
+}
+Start-Lane
+Check ($script:starts -eq 1) 'Fifth lane did not proceed after release'
+Check (@(Get-SlotInventory | Where-Object { $_.Owner }).Count -eq 4) 'Admission did not retain four reservations'
+Check (($script:items['director-test-lane-slot-2'] -split '\|')[6] -eq $script:laneInstanceId) 'Fifth reservation lost instance binding'
+Stop-Lane
+Check (-not $script:items.ContainsKey('candidate')) 'Stop retained admitted candidate'
+Check (-not $script:items.ContainsKey('director-test-lane-slot-2')) 'Stop retained admitted reservation'
+foreach ($number in @(1, 3, 4)) {
+    Check ($script:items.ContainsKey("occupied-$number")) 'Cleanup removed another owner'
+    Check ($script:items.ContainsKey("director-test-lane-slot-$number")) 'Cleanup removed another reservation'
+}
+Item 'candidate' '' '' ''
+try { Start-Lane; throw 'Expected foreign-container refusal' } catch {
+    if ($_.Exception.Message -notlike '*was not created by this script*') { throw }
+}
+Check ($script:starts -eq 1) 'Refused lane started PostgreSQL'
 Write-Output 'slot-checks-passed'
 """
             path = Path(directory) / "slots.ps1"
