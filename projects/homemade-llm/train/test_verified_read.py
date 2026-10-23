@@ -574,10 +574,13 @@ class PaddingAllowanceTests(unittest.TestCase):
                 nn=types.SimpleNamespace(Embedding=Embedding), uint8="uint8", device=lambda value: value)),
             mock.patch.dict(sys.modules, {
                 "bitsandbytes.nn": types.SimpleNamespace(Linear4bit=Linear4bit),
+                "unsloth.models.llama": types.SimpleNamespace(__file__="fixture/unsloth/models/llama.py"),
                 "bitsandbytes.functional": types.SimpleNamespace(
                     QuantState=types.SimpleNamespace(from_dict=lambda *args, **kwargs: object()))}),
             mock.patch.object(trainer, "compare_quant_state"),
         ]
+        self.source_hash = mock.Mock(return_value="e09924b71078efabcd5173002620baa72cf9a09f1d974af4bad5516f5508e225")
+        patches.append(mock.patch.object(trainer, "_sha256_file", self.source_hash))
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
@@ -597,6 +600,7 @@ class PaddingAllowanceTests(unittest.TestCase):
             result = self.check(verified=verified)
             self.assertNotIn("input_embedding_pad_row_allowance", result)
             self.assertNotIn("allowance", result["comparison"])
+        self.source_hash.assert_not_called()
 
     def test_zero_pad_receipt_and_no_mutation(self):
         self.zero_pad()
@@ -610,7 +614,10 @@ class PaddingAllowanceTests(unittest.TestCase):
                          {name: hashlib.sha256(json.dumps(doc).encode()).hexdigest() for name, doc in self.docs.items()})
         self.assertEqual(allowance["source"]["sha256"], "e09924b71078efabcd5173002620baa72cf9a09f1d974af4bad5516f5508e225")
         self.assertEqual(allowance["source"]["lines"], "3004-3025")
-        self.assertIn("1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739", allowance["pinned_image"])
+        self.assertNotIn("pinned_image", allowance)
+        self.assertIn("1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739", allowance["source_reference_image"])
+        self.assertEqual(allowance["source"]["verification"], "loaded module source file SHA-256")
+        self.source_hash.assert_called_once_with(Path("fixture/unsloth/models/llama.py"))
         self.assertIn("input-embedding pad row zeroed by loader (allowance)", result["comparison"])
         self.assertEqual(before, {key: value.tobytes() for key, value in self.actual.items()})
         self.assertEqual(originals, {key: value.tobytes() for key, value in self.reference.items()})
@@ -700,6 +707,37 @@ class PaddingAllowanceTests(unittest.TestCase):
                 self.zero_pad()
                 with self.assertRaisesRegex(SystemExit, "payload differs"):
                     self.check()
+
+    def test_tie_metadata_requires_literal_false(self):
+        for value in ("missing", None, 0, 1, "false", "true", "", [], {}):
+            with self.subTest(value=value):
+                self.config.clear()
+                if value != "missing":
+                    self.config["tie_word_embeddings"] = value
+                self.actual[self.key].rows = [[1, 2], [3, 4], [5, 6]]
+                self.assertNotIn("input_embedding_pad_row_allowance", self.check())
+                self.zero_pad()
+                with self.assertRaisesRegex(SystemExit, "payload differs"):
+                    self.check()
+        self.source_hash.assert_not_called()
+
+    def test_missing_or_mismatched_runtime_source_refuses(self):
+        for module in (None, types.SimpleNamespace(), types.SimpleNamespace(__file__=None)):
+            with self.subTest(module=module), mock.patch.dict(sys.modules, {"unsloth.models.llama": module}):
+                self.actual[self.key].rows = [[1, 2], [3, 4], [5, 6]]
+                self.assertNotIn("input_embedding_pad_row_allowance", self.check())
+                self.zero_pad()
+                with self.assertRaisesRegex(SystemExit, "payload differs"):
+                    self.check()
+        self.source_hash.assert_not_called()
+        for bad_hash in (None, "0" * 64):
+            with self.subTest(hash=bad_hash):
+                self.source_hash.return_value = bad_hash
+                with self.assertRaisesRegex(SystemExit, "payload differs"):
+                    self.check()
+        self.source_hash.side_effect = OSError("source unreadable")
+        with self.assertRaisesRegex(SystemExit, "payload differs"):
+            self.check()
 
 
 # Import real torch/bnb before the offline fixture module in a clean process.

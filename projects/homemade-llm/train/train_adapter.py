@@ -27,6 +27,7 @@ import os
 import re
 import signal
 import stat
+import sys
 import tempfile
 import time
 from contextlib import contextmanager
@@ -715,7 +716,7 @@ def compare_quant_state(name, actual, expected):
 
 def input_padding_allowance(model, name, actual, target, config, verified):
     """WO-G86: recognize only the verified, untied input embedding's padding row."""
-    if verified is None or config.get("tie_word_embeddings") is True:
+    if verified is None or config.get("tie_word_embeddings") is not False:
         return None
     try:
         embedding = model.get_input_embeddings()
@@ -751,13 +752,18 @@ def input_padding_allowance(model, name, actual, target, config, verified):
         if (type(embedding.padding_idx) is not int or embedding.padding_idx != pad_id
                 or pad_id == ids["eos_token_id"]):
             return None
-    except (AttributeError, KeyError, TypeError, ValueError):
+        # Direct Python callers must also prove the loaded module's source identity.
+        source_path = Path(sys.modules["unsloth.models.llama"].__file__)
+        source_sha256 = _sha256_file(source_path)
+        if source_sha256 != "e09924b71078efabcd5173002620baa72cf9a09f1d974af4bad5516f5508e225":
+            return None
+    except (AttributeError, KeyError, TypeError, ValueError, OSError):
         return None
     return {"tensor": name, "token_id": pad_id, "token": tokens["pad_token"],
             "configuration_sha256": {path: hashlib.sha256(data).hexdigest() for path, data in payloads.items()},
-            "pinned_image": "unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739",
+            "source_reference_image": "unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739",
             "source": {"file": "unsloth/models/llama.py", "lines": "3004-3025",
-                       "sha256": "e09924b71078efabcd5173002620baa72cf9a09f1d974af4bad5516f5508e225"}}
+                       "sha256": source_sha256, "verification": "loaded module source file SHA-256"}}
 
 
 def verify_loaded_model(model, reference, *, dtype, config, verified=None):
