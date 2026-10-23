@@ -348,7 +348,9 @@ def durable_acceptance(handler, context, journal):
         # prepare_acceptance and reserve their entire bounded HTTP plan.
         binding, reservation = {}, {}
     key, binding = acceptance_identity(context, binding)
-    won, row = journal.acceptance_claim(key, binding, **reservation)
+    # Re-entry may follow paid I/O from a prior process. A failed claim/readback
+    # transaction cannot establish that the durable operation is safe to repeat.
+    won, row = _acceptance_journal_call(journal.acceptance_claim, key, binding, **reservation)
     if not won:
         return journal.acceptance_replay(row, context.candidate_sha)
     if hasattr(handler, "execute_acceptance"):

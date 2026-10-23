@@ -69,6 +69,7 @@ import hashlib
 import asyncio
 from time import monotonic
 from dataclasses import dataclass
+from contextlib import contextmanager
 from decimal import Decimal, ROUND_CEILING, localcontext
 from functools import partial
 from pathlib import Path
@@ -205,7 +206,17 @@ class OpenAIAcceptanceTransport:
         # No environment proxy or redirect can introduce another HTTP attempt.
         factory = self._client_factory or (lambda: httpx.Client(
             transport=httpx.HTTPTransport(retries=0), trust_env=False, follow_redirects=False))
-        with factory() as client:
+        @contextmanager
+        def acceptance_client():
+            # Client acquisition/cleanup is outside each response stream. Its
+            # failure also cannot prove that an already sent request stopped.
+            try:
+                with factory() as client:
+                    yield client
+            except (httpx.HTTPError, httpx.StreamError) as exc:
+                raise AcceptanceUnresolved("acceptance HTTP client lifecycle unresolved") from exc
+
+        with acceptance_client() as client:
             def request(kind, method, suffix, body=None):
                 recheck()
                 plan.reservation()

@@ -1579,6 +1579,34 @@ class AcceptanceTransportTests(unittest.TestCase):
             journal=self.journal, key=self.key, owner=self.row["owner"],
             recheck=recheck or (lambda: self.rechecks.append(True)), **kwargs)
 
+    def test_client_cleanup_failure_keeps_paid_response_unresolved(self):
+        from contextlib import contextmanager
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved
+        from director_orchestrator.primary_transports import OpenAIAcceptanceTransport
+        error = httpx.CloseError("client cleanup uncertain")
+        def respond(request):
+            self.requests.append(request)
+            if request.url.path.endswith("input_tokens"):
+                return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 500},
+                                      headers={"x-request-id": "fixture-count"})
+            return httpx.Response(200, json=self._completed(), headers={"x-request-id": "fixture-create"})
+        @contextmanager
+        def client():
+            with httpx.Client(transport=httpx.MockTransport(respond), trust_env=False) as value:
+                yield value
+            raise error
+        transport = OpenAIAcceptanceTransport("fake-key", client_factory=client)
+        with self.assertRaises(AcceptanceUnresolved) as raised:
+            transport.execute(plan=self.plan, evidence=self.evidence, context=self.context,
+                journal=self.journal, key=self.key, owner=self.row["owner"], recheck=lambda: None)
+        self.assertIs(raised.exception.__cause__, error)
+        held = self.journal.acceptance_read(self.key)
+        self.assertEqual((held["response_id"], held["used_requests"], held["reserved_cents"]),
+                         ("resp-fixture", 2, 155))
+        self.assertEqual(len(self.requests), 2)
+        with self.assertRaises(AcceptanceUnresolved):
+            self.journal.acceptance_http(self.key, self.row["owner"], "create")
+
     def test_malformed_create_envelope_is_unresolved_with_cause(self):
         from director_orchestrator.langgraph_primary import AcceptanceUnresolved
         def malformed(request):

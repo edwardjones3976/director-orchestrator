@@ -1392,6 +1392,47 @@ class PrimaryWorkflowTests(unittest.TestCase):
             self.assertEqual(sum(r.url.path == "/v1/responses" for r in calls), 1)
             self.assertEqual(len(calls), 2)
 
+    def test_acceptance_reentry_claim_database_failure_keeps_paid_attempt_unresolved(self):
+        import sqlite3
+        import psycopg
+        from unittest.mock import patch
+        from director_orchestrator.langgraph_primary import acceptance_identity
+        for error in (sqlite3.OperationalError("readback exit uncertain"),
+                      psycopg.OperationalError("connection lost"),
+                      psycopg.errors.TransactionResolutionUnknown("commit unknown")):
+            for completed in (False, True):
+                with self.subTest(error=type(error), completed=completed), tempfile.TemporaryDirectory() as directory:
+                    journal = SqliteAcceptanceJournal(os.path.join(directory, "journal.sqlite3"))
+                    original_claim = journal.acceptance_claim
+                    prior = []
+                    executions = []
+                    class Handler:
+                        def prepare_acceptance(self, context):
+                            reservation = dict(cents=5, requests=2, limit_cents=5, limit_requests=2)
+                            key, binding = acceptance_identity(context, {})
+                            _, row = original_claim(key, binding, **reservation)
+                            journal.acceptance_http(key, row["owner"], "create")
+                            journal.acceptance_response_id(key, row["owner"], "resp-prior")
+                            if completed:
+                                journal.acceptance_finish(key, row["owner"], AcceptanceResult(
+                                    _digest("prior-paid"), context.candidate_sha, AcceptanceDecision.ACCEPT))
+                            prior.append(journal.acceptance_read(key))
+                            return {}, reservation
+                        def execute_acceptance(self, *args):
+                            executions.append(args)
+                            raise AssertionError("must not dispatch again")
+                    with patch.object(journal, "acceptance_claim", side_effect=error) as claim:
+                        runtime = _runtime(_handlers(openai_acceptance_revision=Handler()), acceptance_store=journal)
+                        outcome = runtime.start(_request("DIR-REENTRY-DB-UNCERTAIN"))
+                    self.assertEqual(outcome.terminal_classification, TerminalClassification.RECONCILIATION_REQUIRED)
+                    self.assertEqual(outcome.reason_code, "acceptance_unresolved")
+                    self.assertEqual(claim.call_count, 1)
+                    self.assertEqual(executions, [])
+                    held = journal.acceptance_read(prior[0]["operation_key"])
+                    self.assertEqual(held, prior[0])
+                    self.assertEqual((held["response_id"], held["reserved_cents"], held["used_requests"]),
+                                     ("resp-prior", 5, 1))
+
     def test_acceptance_finish_database_failures_classified_unresolved(self):
         import sqlite3
         import psycopg
