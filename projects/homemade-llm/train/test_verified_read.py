@@ -490,6 +490,218 @@ class VerifiedReadTests(unittest.TestCase):
         self.assertIn("unverified smoke loading is disabled", result.stdout)
 
 
+class PaddingAllowanceTests(unittest.TestCase):
+    class Tensor:
+        """Small bf16 byte fixture exercising the production byte comparator."""
+        def __init__(self, rows, *, storage=None, offset=0):
+            self.rows = copy.deepcopy(rows)
+            self.shape = (len(rows), len(rows[0]))
+            self.dtype = "bfloat16"
+            self.device = types.SimpleNamespace(type="cpu")
+            self.storage = storage if storage is not None else object()
+            self.offset = offset
+
+        def data_ptr(self):
+            return id(self.storage) + self.offset
+
+        def untyped_storage(self):
+            return types.SimpleNamespace(data_ptr=lambda: id(self.storage))
+
+        def is_floating_point(self):
+            return True
+
+        def to(self, *, dtype):
+            result = self.clone()
+            result.dtype = dtype
+            return result
+
+        def clone(self):
+            result = PaddingAllowanceTests.Tensor(self.rows)
+            result.dtype = self.dtype
+            return result
+
+        def __getitem__(self, index):
+            return types.SimpleNamespace(zero_=lambda: self.rows[index].__setitem__(slice(None), [0] * self.shape[1]))
+
+        def detach(self):
+            return self
+
+        contiguous = detach
+        cpu = detach
+        numpy = detach
+
+        def reshape(self, *_):
+            return self
+
+        def view(self, *_):
+            return self
+
+        def tobytes(self):
+            return b"".join(value.to_bytes(2, "little") for row in self.rows for value in row)
+
+    def setUp(self):
+        self.key = "backbone.input.weight"  # No hard-coded model.embed_tokens name.
+        self.config = {"tie_word_embeddings": False}
+        self.docs = {
+            "config.json": self.config,
+            "tokenizer_config.json": {"pad_token": "<pad>", "eos_token": "<eos>"},
+            "generation_config.json": {"pad_token_id": 1, "eos_token_id": 2},
+            "tokenizer.json": {"added_tokens": [{"id": 1, "content": "<pad>"}, {"id": 2, "content": "<eos>"}]},
+        }
+        self.reference = {self.key: self.Tensor([[1, 2], [3, 4], [5, 6]]),
+                          "lm_head.weight": self.Tensor([[7, 8], [9, 10], [11, 12]]),
+                          "linear.weight": self.Tensor([[13, 14]]),
+                          "linear.weight.quant_state.bitsandbytes__nf4": self.Tensor([[15]])}
+        self.actual = {key: value.clone() for key, value in self.reference.items()}
+        class Embedding:
+            pass
+        embedding = Embedding()
+        embedding.weight = self.actual[self.key]
+        embedding.padding_idx = 1
+        self.embedding = embedding
+        class Linear4bit:
+            pass
+        linear = Linear4bit()
+        linear.weight = self.actual["linear.weight"]
+        linear.weight.quant_state = linear.quant_state = object()
+        self.model = types.SimpleNamespace(
+            get_input_embeddings=lambda: embedding,
+            lm_head=types.SimpleNamespace(weight=self.actual["lm_head.weight"]),
+            named_modules=lambda: [("backbone.input", embedding), ("linear", linear)],
+            state_dict=lambda: dict(self.actual))
+        patches = [
+            mock.patch.object(trainer, "torch", types.SimpleNamespace(
+                nn=types.SimpleNamespace(Embedding=Embedding), uint8="uint8", device=lambda value: value)),
+            mock.patch.dict(sys.modules, {
+                "bitsandbytes.nn": types.SimpleNamespace(Linear4bit=Linear4bit),
+                "bitsandbytes.functional": types.SimpleNamespace(
+                    QuantState=types.SimpleNamespace(from_dict=lambda *args, **kwargs: object()))}),
+            mock.patch.object(trainer, "compare_quant_state"),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def check(self, *, verified=True):
+        payloads = {name: json.dumps(doc).encode() for name, doc in self.docs.items()}
+        evidence = trainer.VerifiedSnapshot(None, [entry(name, data) for name, data in payloads.items()])
+        evidence.payloads = payloads
+        return trainer.verify_loaded_model(self.model, self.reference, dtype="bfloat16",
+                                          config=self.config, verified=evidence if verified else None)
+
+    def zero_pad(self):
+        self.actual[self.key].rows[1] = [0, 0]
+
+    def test_exact_identity_nonzero_padding_and_no_metadata(self):
+        for verified in (True, False):
+            result = self.check(verified=verified)
+            self.assertNotIn("input_embedding_pad_row_allowance", result)
+            self.assertNotIn("allowance", result["comparison"])
+
+    def test_zero_pad_receipt_and_no_mutation(self):
+        self.zero_pad()
+        before = {key: value.tobytes() for key, value in self.actual.items()}
+        originals = {key: value.tobytes() for key, value in self.reference.items()}
+        result = self.check()
+        allowance = result["input_embedding_pad_row_allowance"]
+        self.assertEqual((allowance["tensor"], allowance["token_id"], allowance["token"]),
+                         (self.key, 1, "<pad>"))
+        self.assertEqual(allowance["configuration_sha256"],
+                         {name: hashlib.sha256(json.dumps(doc).encode()).hexdigest() for name, doc in self.docs.items()})
+        self.assertEqual(allowance["source"]["sha256"], "e09924b71078efabcd5173002620baa72cf9a09f1d974af4bad5516f5508e225")
+        self.assertEqual(allowance["source"]["lines"], "3004-3025")
+        self.assertIn("1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739", allowance["pinned_image"])
+        self.assertIn("input-embedding pad row zeroed by loader (allowance)", result["comparison"])
+        self.assertEqual(before, {key: value.tobytes() for key, value in self.actual.items()})
+        self.assertEqual(originals, {key: value.tobytes() for key, value in self.reference.items()})
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = trainer.VerifiedSnapshot(Path(tmp, "receipt.json"), [])
+            evidence.receipt.update(status="verified", post_load=result)
+            evidence.persist()
+            self.assertEqual(json.loads(evidence.receipt_path.read_bytes())["post_load"], result)
+
+    def test_corrupt_rows_and_negative_zero_refuse(self):
+        for rows in ([[0, 0], [3, 4], [5, 6]], [[1, 2], [0, 1], [5, 6]],
+                     [[1, 2], [0, 0x8000], [5, 6]], [[0, 0], [0, 0], [5, 6]]):
+            with self.subTest(rows=rows):
+                self.actual[self.key].rows = rows
+                with self.assertRaisesRegex(SystemExit, "payload differs"):
+                    self.check()
+
+    def test_other_tensor_and_shape_dtype_checks_remain_exact(self):
+        self.zero_pad()
+        head = self.actual["lm_head.weight"]
+        head.rows[1] = [0, 0]
+        with self.assertRaisesRegex(SystemExit, "payload differs: lm_head.weight"):
+            self.check()
+        head.rows[1] = [9, 10]
+        tensor = self.actual[self.key]
+        for field, value in (("shape", (3, 1)), ("dtype", "float16")):
+            with self.subTest(field=field), mock.patch.object(tensor, field, value):
+                with self.assertRaisesRegex(SystemExit, "shape/dtype differs"):
+                    self.check()
+
+    def test_allowance_preserves_existing_dtype_conversion(self):
+        self.zero_pad()
+        self.reference[self.key].dtype = "float32"
+        result = self.check()
+        self.assertEqual(result["casts"], [{"name": self.key, "from": "float32", "to": "bfloat16"}])
+        self.assertIn("input_embedding_pad_row_allowance", result)
+        self.assertEqual(self.reference[self.key].dtype, "float32")
+
+    def test_each_eligibility_condition_refuses_and_exact_still_passes(self):
+        cases = ("padding_none", "padding_wrong", "padding_bool", "same_eos", "declared_tie",
+                 "shared_storage", "shared_offset", "not_embedding", "wrong_name", "wrong_tensor", "no_metadata")
+        for case in cases:
+            with self.subTest(case=case):
+                self.doCleanups()
+                self.setUp()
+                if case.startswith("padding_"):
+                    self.embedding.padding_idx = {"padding_none": None, "padding_wrong": 0, "padding_bool": True}[case]
+                elif case == "same_eos":
+                    self.docs["generation_config.json"]["eos_token_id"] = 1
+                    self.docs["tokenizer_config.json"]["eos_token"] = "<pad>"
+                elif case == "declared_tie":
+                    self.config["tie_word_embeddings"] = True
+                elif case.startswith("shared_"):
+                    self.model.lm_head.weight.storage = self.embedding.weight.storage
+                    self.model.lm_head.weight.offset = 2 if case == "shared_offset" else 0
+                elif case == "not_embedding":
+                    self.model.get_input_embeddings = lambda: types.SimpleNamespace(weight=self.actual[self.key], padding_idx=1)
+                elif case == "wrong_name":
+                    self.key = "other.weight"
+                    self.actual[self.key] = self.actual.pop("backbone.input.weight")
+                    self.reference[self.key] = self.reference.pop("backbone.input.weight")
+                elif case == "wrong_tensor":
+                    self.embedding.weight = self.embedding.weight.clone()
+                self.assertNotIn("input_embedding_pad_row_allowance", self.check(verified=case != "no_metadata"))
+                self.zero_pad()
+                with self.assertRaisesRegex(SystemExit, "payload differs"):
+                    self.check(verified=case != "no_metadata")
+
+    def test_invalid_metadata_refuses(self):
+        baseline = copy.deepcopy(self.docs)
+        mutations = [(file, None, None) for file in baseline]
+        mutations += [("generation_config.json", key, value)
+                      for key in ("pad_token_id", "eos_token_id") for value in (None, True, 1.0, "1", -1, 3, [2])]
+        mutations += [("tokenizer_config.json", key, value)
+                      for key in ("pad_token", "eos_token") for value in (None, "wrong", {"content": "<pad>"})]
+        mutations += [("tokenizer.json", "added_tokens", value) for value in (
+            [], None, [{"id": 1, "content": "wrong"}],
+            [{"id": True, "content": "<pad>"}, {"id": 2, "content": "<eos>"}],
+            baseline["tokenizer.json"]["added_tokens"] + [{"id": 1, "content": "duplicate"}])]
+        for file, key, value in mutations:
+            with self.subTest(file=file, key=key, value=value):
+                self.docs = copy.deepcopy(baseline)
+                if key is None:
+                    del self.docs[file]
+                else:
+                    self.docs[file][key] = value
+                self.zero_pad()
+                with self.assertRaisesRegex(SystemExit, "payload differs"):
+                    self.check()
+
+
 # Import real torch/bnb before the offline fixture module in a clean process.
 # CPU mocks cannot qualify the GPU destination path.
 TENSOR_CHECK = r'''

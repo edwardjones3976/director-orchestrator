@@ -713,7 +713,54 @@ def compare_quant_state(name, actual, expected):
         fail(f"unexpected nested quantization state: {name}")
 
 
-def verify_loaded_model(model, reference, *, dtype, config):
+def input_padding_allowance(model, name, actual, target, config, verified):
+    """WO-G86: recognize only the verified, untied input embedding's padding row."""
+    if verified is None or config.get("tie_word_embeddings") is True:
+        return None
+    try:
+        embedding = model.get_input_embeddings()
+        if not isinstance(embedding, torch.nn.Embedding):
+            return None
+        names = {key + ".weight" for key, module in model.named_modules() if module is embedding}
+        if name not in names or actual.data_ptr() != embedding.weight.data_ptr():
+            return None
+        head = model.lm_head.weight
+        if (embedding.weight.data_ptr() == head.data_ptr()
+                or embedding.weight.untyped_storage().data_ptr() == head.untyped_storage().data_ptr()):
+            return None
+        files = ("config.json", "tokenizer_config.json", "generation_config.json", "tokenizer.json")
+        payloads = {path: verified.checked_bytes(path) for path in files}
+        configs = {path: json.loads(data) for path, data in payloads.items()}
+        if configs["config.json"] != config:
+            return None
+        tokens = configs["tokenizer_config.json"]
+        ids = configs["generation_config.json"]
+        added = configs["tokenizer.json"]["added_tokens"]
+        if not isinstance(added, list) or len(target.shape) != 2:
+            return None
+        for kind in ("pad", "eos"):
+            token, token_id = tokens[kind + "_token"], ids[kind + "_token_id"]
+            if (not isinstance(token, str) or not token or type(token_id) is not int
+                    or not 0 <= token_id < target.shape[0]):
+                return None
+            matches = [item for item in added if item["id"] == token_id or item["content"] == token]
+            if (len(matches) != 1 or type(matches[0]["id"]) is not int
+                    or matches[0]["id"] != token_id or matches[0]["content"] != token):
+                return None
+        pad_id = ids["pad_token_id"]
+        if (type(embedding.padding_idx) is not int or embedding.padding_idx != pad_id
+                or pad_id == ids["eos_token_id"]):
+            return None
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+    return {"tensor": name, "token_id": pad_id, "token": tokens["pad_token"],
+            "configuration_sha256": {path: hashlib.sha256(data).hexdigest() for path, data in payloads.items()},
+            "pinned_image": "unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739",
+            "source": {"file": "unsloth/models/llama.py", "lines": "3004-3025",
+                       "sha256": "e09924b71078efabcd5173002620baa72cf9a09f1d974af4bad5516f5508e225"}}
+
+
+def verify_loaded_model(model, reference, *, dtype, config, verified=None):
     from bitsandbytes.nn import Linear4bit
     from bitsandbytes.functional import QuantState
     actual = model.state_dict()
@@ -754,16 +801,33 @@ def verify_loaded_model(model, reference, *, dtype, config):
     if set(actual) != set(expected):
         fail("loaded tensor names differ from the verified checkpoint")
     casts = []
+    allowance = None
     for name, value in expected.items():
         target = value
         if name not in quantized and not any(name.startswith(k + ".") for k in quantized):
             if value.is_floating_point() and value.dtype != dtype:
                 target = value.to(dtype=dtype)
                 casts.append({"name": name, "from": str(value.dtype), "to": str(dtype)})
-        compare_tensor(name, actual[name], target)
-    return {"tensors": len(actual), "linear4bit": len(quantized), "casts": casts,
+        try:
+            compare_tensor(name, actual[name], target)
+        except SystemExit as exc:
+            if str(exc) != f"loaded tensor payload differs: {name}":
+                raise
+            candidate = input_padding_allowance(model, name, actual[name], target, config, verified)
+            if candidate is None:
+                raise
+            # Clone after the existing dtype conversion; never change either source weight.
+            padded = target.clone()
+            padded[candidate["token_id"]].zero_()
+            compare_tensor(name, actual[name], padded)
+            allowance = candidate
+    result = {"tensors": len(actual), "linear4bit": len(quantized), "casts": casts,
             "gpu_destinations": sorted({str(t.device) for t in actual.values() if t.device.type == "cuda"}),
             "comparison": "exact payload/shape/dtype; decoded quantization state"}
+    if allowance is not None:
+        result["input_embedding_pad_row_allowance"] = allowance
+        result["comparison"] += "; input-embedding pad row zeroed by loader (allowance)"
+    return result
 
 
 def tokenizer_json_matches(actual, expected):
@@ -861,7 +925,7 @@ def load_verified_model(snapshot, verification, *, max_seq_length):
             # Re-derive after loading to detect reference/buffer mutation as well.
             reference = reference_state_dict(verification)
             verification["loaded_verification"] = verify_loaded_model(
-                model, reference, dtype=dtype, config=config)
+                model, reference, dtype=dtype, config=config, verified=verification)
         verification.receipt.update(status="verified", loader="sealed-memfd pathname fallback",
                                     post_load=verification["loaded_verification"])
         verification.persist()
