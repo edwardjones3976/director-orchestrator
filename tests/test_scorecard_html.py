@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import re
 import os
 from pathlib import Path
 import subprocess
@@ -16,6 +17,57 @@ import unittest
 from unittest.mock import patch
 
 from director_orchestrator import scorecard_html as html
+
+
+def _g67b_diag(category, observe):
+    """Best-effort sanitized observations; never expose an exception or affect checks.
+
+    Only a fixed-pattern label and boolean values are ever written. Under
+    GitHub Actions they go to the job summary, which the parallel runner's
+    redacted log does not filter; elsewhere they go to stderr.
+    """
+    def emit(line):
+        target = os.environ.get("GITHUB_STEP_SUMMARY")
+        if target:
+            with open(target, "a", encoding="utf-8") as summary:
+                summary.write(line + "\n")
+        else:
+            print(line, file=sys.__stderr__, flush=True)
+    try:
+        if not re.fullmatch(r"[A-Za-z0-9_]{1,96}", category):
+            raise ValueError
+        payload = observe()
+        if payload is None:
+            return
+        if not payload or not all(isinstance(key, str) and re.fullmatch(r"[a-z0-9_]{1,48}", key)
+                                  and isinstance(value, bool) for key, value in payload.items()):
+            raise ValueError
+        emit("WO-G67B-DIAG " + category + " " + " ".join(
+            key + "=" + ("true" if value else "false") for key, value in sorted(payload.items())))
+    except Exception:
+        try:
+            emit("WO-G67B-DIAG diag_error " + (category if re.fullmatch(r"[A-Za-z0-9_]{1,96}", category) else "invalid"))
+        except Exception:
+            pass
+
+
+def _g67b_tempdir(tmp):
+    path = Path(tmp)
+    return {
+        "tempdir_changes_under_resolve": str(path) != str(path.resolve()),
+        "tempdir_has_tilde_component": any("~" in part for part in path.parts),
+    }
+
+
+def _g67b_path_pair(expected, actual):
+    expected, actual = Path(expected), Path(actual)
+    observations = {
+        "expected_equals_actual": expected == actual,
+        "expected_equals_actual_after_resolve": expected.resolve() == actual.resolve(),
+    }
+    if expected.exists() and actual.exists():
+        observations["samefile"] = expected.samefile(actual)
+    return observations
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -191,6 +243,10 @@ class ScorecardHtmlTests(unittest.TestCase):
                                             "--output-dir", str(output)]), redirect_stdout(io.StringIO()) as stdout:
             self.assertEqual(cli.main(), 0)
         metadata = json.loads(stdout.getvalue().splitlines()[-1])
+        _g67b_diag("scorecard_tempdir", lambda: _g67b_tempdir(self.folder))
+        for kind in ("html", "json"):
+            _g67b_diag("scorecard_" + kind, lambda kind=kind: _g67b_path_pair(
+                output / ("completion-scorecard." + kind), metadata[kind]))
         self.assertEqual(Path(metadata["html"]), output / "completion-scorecard.html")
         self.assertNotIn("markdown", metadata)
         self.assertFalse((output / "completion-scorecard.md").exists())

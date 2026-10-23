@@ -35,6 +35,46 @@ from director_orchestrator.host_provider_bridge import (
 )
 
 
+def _g67b_diag(category, observe):
+    """Best-effort sanitized observations; never expose an exception or affect checks.
+
+    Only a fixed-pattern label and boolean values are ever written. Under
+    GitHub Actions they go to the job summary, which the parallel runner's
+    redacted log does not filter; elsewhere they go to stderr.
+    """
+    def emit(line):
+        target = os.environ.get("GITHUB_STEP_SUMMARY")
+        if target:
+            with open(target, "a", encoding="utf-8") as summary:
+                summary.write(line + "\n")
+        else:
+            print(line, file=sys.__stderr__, flush=True)
+    try:
+        if not re.fullmatch(r"[A-Za-z0-9_]{1,96}", category):
+            raise ValueError
+        payload = observe()
+        if payload is None:
+            return
+        if not payload or not all(isinstance(key, str) and re.fullmatch(r"[a-z0-9_]{1,48}", key)
+                                  and isinstance(value, bool) for key, value in payload.items()):
+            raise ValueError
+        emit("WO-G67B-DIAG " + category + " " + " ".join(
+            key + "=" + ("true" if value else "false") for key, value in sorted(payload.items())))
+    except Exception:
+        try:
+            emit("WO-G67B-DIAG diag_error " + (category if re.fullmatch(r"[A-Za-z0-9_]{1,96}", category) else "invalid"))
+        except Exception:
+            pass
+
+
+def _g67b_tempdir(tmp):
+    path = Path(tmp)
+    return {
+        "tempdir_changes_under_resolve": str(path) != str(path.resolve()),
+        "tempdir_has_tilde_component": any("~" in part for part in path.parts),
+    }
+
+
 ROOT = Path(__file__).resolve().parents[1]
 PWSH = shutil.which("pwsh")
 # The Z.ai lane's bridge entry shape: [executable, GLM model, max turns, write mode, key-ID digest].
@@ -1181,6 +1221,27 @@ if ($args -contains '-m' -and $args[$args.IndexOf('-m') + 1] -eq 'director_orche
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 observed = json.loads(capture.read_text(encoding="utf-8-sig"))
+                case = "enabled" if enabled else "disabled"
+                _g67b_diag("windows_tempdir_" + case, lambda: _g67b_tempdir(temporary))
+                # Emit every key before the first comparison can fail. keys is the
+                # literal allowlist above; no environment-derived names are emitted.
+                for diagnostic_name in keys:
+                    def key_observations(name=diagnostic_name):
+                        expected_copy = str(root.resolve()) if name == "DIRECTOR_HOST_PROVIDER_WORKSPACE" else profile.get(name)
+                        if name == "XAI_API_KEY" and expected_copy is None:
+                            expected_copy = parent[name]
+                        actual_copy = observed.get(name) or None
+                        payload = {"profile_present": name in profile,
+                                   "observed_present": actual_copy is not None,
+                                   "equal": actual_copy == expected_copy}
+                        if name == "DIRECTOR_HOST_PROVIDER_WORKSPACE":
+                            payload.update(equal_raw=actual_copy == expected_copy,
+                                           equal_after_canonicalize=Path(actual_copy).resolve() == Path(expected_copy).resolve())
+                        return payload
+                    _g67b_diag("windows_" + case + "_" + diagnostic_name, key_observations)
+                    _g67b_diag("windows_parent_" + case + "_" + diagnostic_name,
+                               lambda name=diagnostic_name: {"parent_restoration_equal":
+                                   json.loads(restored.read_text(encoding="utf-8-sig")).get(name) == parent[name]})
                 for name in keys:
                     expected = str(root.resolve()) if name == "DIRECTOR_HOST_PROVIDER_WORKSPACE" else profile.get(name)
                     if name == "XAI_API_KEY" and expected is None:

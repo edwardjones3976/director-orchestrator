@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from dataclasses import asdict, replace
@@ -37,6 +39,57 @@ from director_orchestrator.primary_activation_evidence import (
     load_pinned_owner_local_adoption,
     owner_local_acceptance_facts,
 )
+
+
+def _g67b_diag(category, observe):
+    """Best-effort sanitized observations; never expose an exception or affect checks.
+
+    Only a fixed-pattern label and boolean values are ever written. Under
+    GitHub Actions they go to the job summary, which the parallel runner's
+    redacted log does not filter; elsewhere they go to stderr.
+    """
+    def emit(line):
+        target = os.environ.get("GITHUB_STEP_SUMMARY")
+        if target:
+            with open(target, "a", encoding="utf-8") as summary:
+                summary.write(line + "\n")
+        else:
+            print(line, file=sys.__stderr__, flush=True)
+    try:
+        if not re.fullmatch(r"[A-Za-z0-9_]{1,96}", category):
+            raise ValueError
+        payload = observe()
+        if payload is None:
+            return
+        if not payload or not all(isinstance(key, str) and re.fullmatch(r"[a-z0-9_]{1,48}", key)
+                                  and isinstance(value, bool) for key, value in payload.items()):
+            raise ValueError
+        emit("WO-G67B-DIAG " + category + " " + " ".join(
+            key + "=" + ("true" if value else "false") for key, value in sorted(payload.items())))
+    except Exception:
+        try:
+            emit("WO-G67B-DIAG diag_error " + (category if re.fullmatch(r"[A-Za-z0-9_]{1,96}", category) else "invalid"))
+        except Exception:
+            pass
+
+
+def _g67b_tempdir(tmp):
+    path = Path(tmp)
+    return {
+        "tempdir_changes_under_resolve": str(path) != str(path.resolve()),
+        "tempdir_has_tilde_component": any("~" in part for part in path.parts),
+    }
+
+
+def _g67b_path_pair(expected, actual):
+    expected, actual = Path(expected), Path(actual)
+    observations = {
+        "expected_equals_actual": expected == actual,
+        "expected_equals_actual_after_resolve": expected.resolve() == actual.resolve(),
+    }
+    if expected.exists() and actual.exists():
+        observations["samefile"] = expected.samefile(actual)
+    return observations
 
 
 def identity(**changes: str) -> ActivationIdentity:
@@ -171,6 +224,11 @@ class LocalActivationEvidenceTests(unittest.TestCase):
             read_only=True,
         )
         replay.require_accepted(ident)
+        _g67b_diag("local_tempdir", lambda: _g67b_tempdir(self.temporary.name))
+        _g67b_diag("local_selected_path", lambda: {
+            **_g67b_path_pair(Path(self.temporary.name) / "selected.evidence.json", replay.path),
+            "selected_basename_correct": replay.path.name == "selected.evidence.json",
+        })
         self.assertEqual(replay.path, Path(self.temporary.name) / "selected.evidence.json")
         (Path(self.temporary.name) / "security.txt").write_bytes(b"changed after store construction")
         with self.assertRaises(ActivationEvidenceError):

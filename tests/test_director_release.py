@@ -24,6 +24,38 @@ from director_orchestrator.primary_generation import resolved_deployment_digest
 from director_orchestrator import process_isolation
 
 
+def _g67b_diag(category, observe):
+    """Best-effort sanitized observations; never expose an exception or affect checks.
+
+    Only a fixed-pattern label and boolean values are ever written. Under
+    GitHub Actions they go to the job summary, which the parallel runner's
+    redacted log does not filter; elsewhere they go to stderr.
+    """
+    def emit(line):
+        target = os.environ.get("GITHUB_STEP_SUMMARY")
+        if target:
+            with open(target, "a", encoding="utf-8") as summary:
+                summary.write(line + "\n")
+        else:
+            print(line, file=sys.__stderr__, flush=True)
+    try:
+        if not re.fullmatch(r"[A-Za-z0-9_]{1,96}", category):
+            raise ValueError
+        payload = observe()
+        if payload is None:
+            return
+        if not payload or not all(isinstance(key, str) and re.fullmatch(r"[a-z0-9_]{1,48}", key)
+                                  and isinstance(value, bool) for key, value in payload.items()):
+            raise ValueError
+        emit("WO-G67B-DIAG " + category + " " + " ".join(
+            key + "=" + ("true" if value else "false") for key, value in sorted(payload.items())))
+    except Exception:
+        try:
+            emit("WO-G67B-DIAG diag_error " + (category if re.fullmatch(r"[A-Za-z0-9_]{1,96}", category) else "invalid"))
+        except Exception:
+            pass
+
+
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("director_release_under_test", ROOT / "scripts/director-release.py")
 release = importlib.util.module_from_spec(SPEC)
@@ -1788,6 +1820,38 @@ class ReleasePreparationTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, "configuration-only Compose producer failed")
             graphs.append(json.loads(result.stdout))
             self.assertRegex(resolved_deployment_digest(graphs[-1], self.image), r"^[0-9a-f]{64}$")
+        def compose_version():
+            version = subprocess.run(
+                ["docker", "compose", "version", "--short"], cwd=self.root,
+                env=release.child_environment(), capture_output=True, timeout=20,
+            )
+            identifier = version.stdout.decode("ascii", errors="replace").strip()
+            parsed = re.fullmatch(r"v?([0-9]{1,3})\.([0-9]{1,3})\.[0-9]{1,3}(?:-(?:alpha|beta|rc)[0-9]{1,3})?", identifier)
+            # Booleans only: bands bracket the Compose releases that changed rendering.
+            return {"version_parsed": version.returncode == 0 and parsed is not None,
+                    "major_is_2": bool(parsed) and parsed[1] == "2",
+                    "minor_ge_30": bool(parsed) and int(parsed[2]) >= 30,
+                    "minor_ge_35": bool(parsed) and int(parsed[2]) >= 35,
+                    "minor_ge_40": bool(parsed) and int(parsed[2]) >= 40}
+        _g67b_diag("release_version", compose_version)
+        for index, graph in enumerate(graphs):
+            def mount_observations(graph=graph):
+                mount = next(item for item in graph["services"]["orchestrator"]["volumes"]
+                             if item.get("target") == "/repository")
+                expected = {"type", "source", "target", "read_only", "bind"}
+                bind = mount.get("bind")
+                observations = {"has_" + key: key in mount for key in sorted(expected | {"volume"})}
+                observations.update(
+                    has_unexpected_key=bool(set(mount) - expected),
+                    bind_is_dict=isinstance(bind, dict),
+                    bind_has_create_host_path=isinstance(bind, dict) and "create_host_path" in bind,
+                    bind_create_host_path_is_false=isinstance(bind, dict) and bind.get("create_host_path") is False,
+                    bind_has_extra_keys=isinstance(bind, dict) and bool(set(bind) - {"create_host_path"}),
+                    type_is_bind=mount.get("type") == "bind",
+                    read_only_is_true=mount.get("read_only") is True,
+                    bind_equals_expected=bind == {"create_host_path": False})
+                return observations
+            _g67b_diag("release_mount_primary" if index == 0 else "release_mount_sibling", mount_observations)
         release.isolated_sibling(*graphs, 18080)
         graphs[1]["services"]["orchestrator"]["ports"][0]["published"] = "8080"
         with self.assertRaisesRegex(release.ReleaseError, "sibling_port_not_isolated"):
