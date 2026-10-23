@@ -1351,42 +1351,58 @@ class PostgresValidationTests(unittest.TestCase):
         call -- the reservation does not exist until admission returns -- and
         holds it, uncontended with claim/fence/settle's own row locks, across
         the rest of the operation.
+
+        The blocker's connection and transaction-local timeouts are prepared
+        before ``service.run()`` starts the shared 2s clock (CI 40000064851;
+        a 2.1s blocker-connect delay reproduced the line-1397 refusal
+        locally, without establishing the hosted cause). Only the advisory
+        lock itself, on the real admitted reservation, runs inside that
+        clock. If the service refuses before claim, the parked blocker is
+        released without locking and joined in the finally.
         """
         import threading
         import time as time_module
         fixture=self._responses_service_fixture()
         box={"watchdog_fired":None,"errors":[]}
+        ready,go,held,release=threading.Event(),threading.Event(),threading.Event(),threading.Event()
+        def blocker():
+            try:
+                with self.store.connect() as db:
+                    db.execute("SELECT set_config('statement_timeout','15000',true),"
+                        "set_config('lock_timeout','15000',true)")
+                    ready.set()
+                    if not go.wait(10):
+                        raise AssertionError("commit blocker never received the admitted reservation")
+                    if release.is_set():
+                        return
+                    db.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,20260914))",
+                               (box["reservation"],)).fetchone()
+                    held.set()
+                    released_explicitly=release.wait(3.0)
+                    box["watchdog_fired"]=not released_explicitly
+            except BaseException as error:
+                box["errors"].append(error)
+                ready.set();held.set()
         def wrapped_claim(original):
             def wrapped(*args,**kwargs):
-                reservation=args[0]["reservation"]
-                box["reservation"]=reservation
-                release,held=threading.Event(),threading.Event()
-                def blocker():
-                    try:
-                        with self.store.connect() as db:
-                            db.execute("SELECT set_config('statement_timeout','15000',true),"
-                                "set_config('lock_timeout','15000',true)")
-                            db.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,20260914))",
-                                       (reservation,)).fetchone()
-                            held.set()
-                            released_explicitly=release.wait(3.0)
-                            box["watchdog_fired"]=not released_explicitly
-                    except BaseException as error:
-                        box["errors"].append(error)
-                        held.set()
-                thread=threading.Thread(target=blocker,daemon=True)
-                box["release"]=release;box["thread"]=thread
-                thread.start()
+                box["reservation"]=args[0]["reservation"]
+                go.set()
                 acquired=held.wait(10)
                 if box["errors"]:
-                    release.set();thread.join(5)
                     raise AssertionError(f"commit blocker setup failed: {box['errors'][0]!r}") from box["errors"][0]
                 if not acquired:
-                    release.set();thread.join(5)
                     raise AssertionError("commit contention blocker never acquired its advisory lock")
                 return original(*args,**kwargs)
             return wrapped
         try:
+            thread=threading.Thread(target=blocker,daemon=True)
+            box["release"]=release;box["thread"]=thread
+            thread.start()
+            prepared=ready.wait(10)
+            if box["errors"]:
+                raise AssertionError(f"commit blocker setup failed: {box['errors'][0]!r}") from box["errors"][0]
+            if not prepared:
+                raise AssertionError("commit blocker never prepared its connection")
             with patch.object(self.store,"claim_execution",wrapped_claim(self.store.claim_execution)):
                 started=time_module.monotonic()
                 with self.assertRaises(Exception) as caught:
@@ -1418,9 +1434,8 @@ class PostgresValidationTests(unittest.TestCase):
             self.assertIsNone(row[1])
             self.assertEqual(0,succeeded)
         finally:
-            release=box.get("release");thread=box.get("thread")
-            if release is not None:
-                release.set()
+            release.set();go.set()
+            thread=box.get("thread")
             if thread is not None:
                 thread.join(5)
 
