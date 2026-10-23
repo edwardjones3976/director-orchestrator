@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Slack discussion tagging protocol · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a><a href="slack-collaboration-bus.html">Slack coordination</a></nav></header>
+<main id="content">
+<p class="eyebrow">Team communication · Version 1 · 4 October 2026 Pacific</p>
+<h1>Slack discussion tagging protocol</h1>
+<p class="lede">Use one existing task thread, a short searchable header and one accountable owner. Mention a verified recipient only when that recipient needs to act. Plain provider names are the default for updates and daily reports.</p>
+<p>Codex, the acting Director and Foreman, maintains this protocol. Claude remains Director-Orchestrator completion lead and administrator #2; Cursor remains administrator #3. Apply the <a href="project-leadership.html">current appointments</a>, <a href="team-staff-and-briefings.html">briefing standard</a> and <a href="slack-collaboration-bus.html">runtime collaboration contract</a>. This guide governs human-visible discussion; it introduces no runtime parser or new authority.</p>
+<nav aria-label="Protocol contents"><a href="#quick-start">Quick start</a> · <a href="#tags">Tags</a> · <a href="#mentions">Mentions</a> · <a href="#details">Required details</a> · <a href="#threads">Threads and channels</a> · <a href="#follow-up">Follow-up</a> · <a href="#examples">Examples</a> · <a href="#verification">Verification</a></nav>
+
+<section id="quick-start" aria-labelledby="quick-start-heading">
+<h2 id="quick-start-heading">The method to use</h2>
+<ol>
+<li>Find the existing issue, PR, work order and Slack parent thread. Reuse that thread; start a parent only for a genuinely new task.</li>
+<li>Begin the parent or a material handoff with <code>[Director-Orchestrator] [work ID] [message kind] [state]</code>. State one clear question, requested action or result.</li>
+<li>Name one accountable owner. Add a live mention only for an intended action, after verifying recipient identity, channel access and the route. A native app mention may dispatch work.</li>
+<li>Link the durable record and evidence; give the next checkpoint with a date and timezone. Keep detailed findings in the authorized issue/PR, with a sanitized Slack summary.</li>
+<li>Return questions and results in the originating thread. Record delivery and substantive response separately, and reconcile uncertain sends before retrying.</li>
+</ol>
+<p>Discussion tags classify a message. A Slack mention routes attention or may activate an app. Git and contribution attribution follow <a href="contribution-attribution-policy.html">their existing policy</a>; these discussion labels do not reinstate retired contribution envelopes, custom trailers or acknowledgement ceremonies.</p>
+</section>
+
+<section id="tags" aria-labelledby="tags-heading">
+<h2 id="tags-heading">A small, consistent vocabulary</h2>
+<p>Use uppercase kind and state tags inside square brackets. Keep the project tag exactly <code>[Director-Orchestrator]</code>. Choose the existing work-order ID as the work tag; if none exists, use <code>[PR-123]</code> or <code>[ISSUE-123]</code>. Retain that first work tag throughout the discussion. If a work order or PR is added later, link its ID on the <code>Source:</code> line as an alias rather than replacing the thread's work tag or creating another task. Follow with one kind and, when useful, one actual state. Ordinary replies may omit the repeated header when the thread already supplies context.</p>
+<table><caption>Message kinds</caption><thead><tr><th scope="col">Tag</th><th scope="col">Use</th></tr></thead><tbody>
+<tr><td><code>[QUESTION]</code></td><td>One answerable question, with its owner and response checkpoint.</td></tr>
+<tr><td><code>[ASSIGNMENT]</code></td><td>A bounded, authorized job issued once by the responsible lead; include scope, limits and acceptance evidence.</td></tr>
+<tr><td><code>[HANDOFF]</code></td><td>A concrete transfer of work, context or custody to one responsible recipient.</td></tr>
+<tr><td><code>[REVIEW]</code></td><td>An independent review request or verdict bound to the exact candidate.</td></tr>
+<tr><td><code>[DECISION]</code></td><td>An actual decision with the decision-maker, authority reference, scope and consequence.</td></tr>
+<tr><td><code>[UPDATE]</code></td><td>A material change or result. Use plain provider names rather than task-triggering app mentions.</td></tr>
+<tr><td><code>[ACK]</code></td><td>A substantive receipt acknowledgement with the recipient's next action or blocker. It is not a source ACCEPT or an owner approval.</td></tr>
+</tbody></table>
+<table><caption>Discussion states; these do not rename runtime task states</caption><thead><tr><th scope="col">Tag</th><th scope="col">Required meaning</th></tr></thead><tbody>
+<tr><td><code>[UPCOMING]</code></td><td>Planned or assigned; implementation has not been confirmed.</td></tr>
+<tr><td><code>[IN_PROGRESS]</code></td><td>The responsible session confirms work is underway.</td></tr>
+<tr><td><code>[AWAITING_REVIEW]</code></td><td>A fixed candidate and required evidence are ready for the named eligible reviewer.</td></tr>
+<tr><td><code>[BLOCKED]</code></td><td>State the concrete blocker, owner, attempted disposition and next checkpoint.</td></tr>
+<tr><td><code>[COMPLETED]</code></td><td>The stated assignment's acceptance conditions are met. Name the completed stage; source completion alone does not establish merge, deployment or live qualification.</td></tr>
+<tr><td><code>[UNKNOWN]</code></td><td>Evidence is absent, stale or ambiguous. Name what must be reconciled; do not infer success or failure.</td></tr>
+</tbody></table>
+<p>Use a separate <code>Priority:</code> line for urgency or a verified P1/P2 finding, including its impact. Decorative emojis are optional. A reaction, read marker, tag or app launch acknowledgement never substitutes for an explicit verdict or acceptance evidence.</p>
+</section>
+
+<section id="mentions" aria-labelledby="mentions-heading">
+<h2 id="mentions-heading">Use real mentions deliberately</h2>
+<table><caption>Choose the smallest necessary audience</caption><thead><tr><th scope="col">Situation</th><th scope="col">Method</th><th scope="col">Check first</th></tr></thead><tbody>
+<tr><td>Status, daily briefing, credit or historical reference</td><td>Write plain names such as Codex, Claude, Gemini/Antigravity, Grok or Z.ai/GLM.</td><td>No app activation is intended.</td></tr>
+<tr><td>A person must answer or act</td><td>In Slack's composer, select the real member from the mention picker. In an app/API message, use <code>&lt;@MEMBER_ID&gt;</code> after resolving the actual ID.</td><td>Correct workspace, member and channel membership. App-published mentions notify channel members; a private-channel non-member cannot read the message.</td></tr>
+<tr><td>A provider app must receive a bounded assignment</td><td>Mention one verified native app member only if that established route is intended to launch this exact work. Otherwise use its verified native session or accountable relay.</td><td>Actual app/user identity, connected account, recipient access, capability, existing task/session, authority, budget and attempt limits. Installation and membership alone do not establish a working inbox.</td></tr>
+<tr><td>An existing approved role group needs attention</td><td>Select the existing group; app/API syntax is <code>&lt;!subteam^GROUP_ID&gt;</code>.</td><td>Verify membership and intended audience. A group is not a substitute for one accountable owner. Do not create a group or mass-dispatch provider apps for convenience.</td></tr>
+<tr><td>Channel-wide incident or coordinated stop</td><td>The acting Foreman may authorize a top-level <code>@here</code> or <code>@channel</code> notice in the established project channel, linked to the incident thread.</td><td>The whole audience needs the notice. Routine updates use neither. Do not use <code>@everyone</code> for project work.</td></tr>
+</tbody></table>
+<p>A typed display name, role title, guessed ID or app ID is not a verified member mention. Match the supported transport's syntax and read back the rendered recipient. <code>@here</code> targets active members; <code>@channel</code> targets channel members. These broad mentions do not notify when used in threads and do not override paused notifications. They are not proof of receipt or execution. <a href="https://slack.com/help/articles/202009646-Notify-a-channel-or-workspace">Slack notification rules</a>.</p>
+<p>Keep templates and quoted examples inside code formatting, using placeholders. For app/API text, escape literal <code>&amp;</code>, <code>&lt;</code> and <code>&gt;</code>, but preserve intentional verified mention markup. In this HTML source, angle brackets are escaped so the examples render correctly. Avoid automatic display-name parsing; it can notify an unintended audience. <a href="https://docs.slack.dev/messaging/formatting-message-text/">Official mention and formatting syntax</a>.</p>
+</section>
+
+<section id="details" aria-labelledby="details-heading">
+<h2 id="details-heading">Include the details needed to act</h2>
+<p>A parent or substantial handoff contains: <strong>action/question; durable task source; one accountable owner; actual stage/state; evidence; next checkpoint.</strong> Keep ordinary replies brief and link back to the parent instead of duplicating the whole work order.</p>
+<ul>
+<li><strong>Assignments:</strong> responsible session, one writer and repository/worktree scope, owned paths, deliverable, dependencies, relevant hop/revision/timeout/budget limits, cancellation or fallback conditions and acceptance evidence. Link the full authorized order rather than posting private paths or raw packets.</li>
+<li><strong>Review or merge handoffs:</strong> PR URL, branch, full head and tree, review base/target-tip base and merge base as applicable, current CI/security evidence, sole eligible reviewer, holds and exact requested action. A title or short SHA cannot bind the candidate.</li>
+<li><strong>Provider results:</strong> actual provider/product, served model if native evidence supplies it, session/run correlation and receipt. Mark a merely requested model as requested; do not turn a client's brand or prose self-description into provider identity.</li>
+<li><strong>Repairs:</strong> reproduced symptom, evidence, cause or explicit investigation gap, impact, Foreman-directed disposition, responsible writer and remaining limits. Relevant Firecrawl/Perplexity research is required for every Foreman repair case, normally at intake and always at a named checkpoint before a repair limit. Record applicable receipt reuse.</li>
+<li><strong>Questions:</strong> technical/development questions between providers first receive external context from Firecrawl or Perplexity; begin the answer with <code>RESEARCH:</code> queries and sources. Keep private context out of those queries. Answer process questions directly.</li>
+<li><strong>Time:</strong> give an absolute date and <code>America/Los_Angeles</code> checkpoint, with UTC when useful across sessions. Record evidence times in ISO 8601 UTC. Distinguish a reporting checkpoint from a completion commitment.</li>
+</ul>
+<p>Use the smallest adequate summary. Link authorized issue/PR details rather than pasting raw provider output, private source, credentials, personal contact details or administrator-only findings into the wider channel.</p>
+</section>
+
+<section id="threads" aria-labelledby="threads-heading">
+<h2 id="threads-heading">Keep the right conversation in the right place</h2>
+<ul>
+<li><strong>Project discussion:</strong> reuse the existing private <code>project-director</code> channel and one parent thread per live task. For supported tool/API replies, supply the parent's timestamp as <code>thread_ts</code>, not a new unrelated parent.</li>
+<li><strong>Administrator coordination:</strong> <code>director-admin-ops</code> is restricted to the owner and the three appointed administrators. Provider-family membership does not grant an administrator seat. Keep detailed restricted work in its authorized destination.</li>
+<li><strong>Daily pass-down:</strong> <code>director-passdown</code> receives one consolidated report at 23:00 America/Los_Angeles, with separately attributed Codex/Claude/Cursor contributions and exactly seven next actions. Use plain provider names. Ongoing questions and acknowledgements belong in administrator coordination or the responsible session.</li>
+<li><strong>Durable decisions and evidence:</strong> use <a href="https://github.com/edwardjones3976/director-orchestrator/issues/299">#299</a> and the concerned issue/PR. Slack carries the concise linked summary. Return every provider answer, clarification or explicit blocker through its originating channel; copying a summary elsewhere does not close the original question.</li>
+</ul>
+<p>Follow the thread while responsible for the task. Broadcast a thread reply to the channel only for a milestone, material blocker or decision the wider audience needs. If an urgent top-level alert is necessary, point to the same incident thread and work ID; it does not create a second assignment. A private-channel mention does not grant access or authorize inviting someone. <a href="https://slack.com/help/articles/205240127-Use-mentions-in-Slack">Slack mention and access behavior</a>.</p>
+</section>
+
+<section id="follow-up" aria-labelledby="follow-up-heading">
+<h2 id="follow-up-heading">Acknowledge and close the loop</h2>
+<p>During a known active work window, target an acknowledgement within 15 minutes. A substantive ACK says “received”, accepts the next action or names the blocker, and gives a checkpoint. For an urgent shared-work blocker, target a meaningful update within 30 minutes. Routine work uses the named assignment checkpoint; a session that is interactive or unavailable is not a daemon or a guaranteed always-on responder. These are Foreman operating targets, not new spending authority or proof of availability.</p>
+<p>When the checkpoint passes, the Foreman checks the existing record and session once, sends one justified follow-up through the established channel, and records a blocker or the next responsible checkpoint. Escalate through Codex/Claude/Cursor within their appointments without reassigning another writer's work or inferring takeover from silence. Reuse fresh evidence and avoid unchanged polling, mass mentions, model calls merely for status or duplicate assignments.</p>
+<p>For a transport failure, keep the recorded attempt rules: one primary attempt; one recovery only for a demonstrably temporary failure; a third only with different transport or new information. After three recorded failures, mark that route unavailable and use the configured fallback. An ambiguous paid dispatch is reconciled rather than replayed. This guide does not change the runtime's persisted idempotency or delivery-attempt contract.</p>
+<p>Every question ends with an answer, necessary clarification or explicit blocker and tracked follow-up in its original thread. Closure identifies the accepted deliverable, actual completion stage, evidence, unresolved limits and next responsible owner. An ACK or reaction is not an independent review ACCEPT, a merge or an owner decision.</p>
+</section>
+
+<section id="examples" aria-labelledby="examples-heading">
+<h2 id="examples-heading">Copyable message patterns</h2>
+<p>Replace the placeholders; the examples deliberately contain no live app mentions, real task claims or executable handoffs.</p>
+<h3>Question or blocked work</h3>
+<pre><code>[Director-Orchestrator] [EXISTING-WORK-ID] [QUESTION] [BLOCKED]
+Action: Answer whether the named prerequisite is satisfied.
+Source: existing issue/PR URL and authorized work order.
+Owner: responsible person/provider (plain name; verify before adding a mention).
+Stage/evidence: what is verified, what is missing, and the evidence link.
+Next checkpoint: YYYY-MM-DD HH:MM America/Los_Angeles; UTC if useful.</code></pre>
+<h3>Review handoff</h3>
+<pre><code>[Director-Orchestrator] [EXISTING-WORK-ID] [REVIEW] [AWAITING_REVIEW]
+Action: Review the fixed candidate; return ACCEPT, CHANGES_REQUIRED or blocker.
+Owner/reviewer: one eligible non-author reviewer and its established session.
+Candidate: PR URL; branch; full head; tree; review base; target tip/merge base as needed.
+Evidence: exact-head CI/security results, tests and native receipt links.
+Holds/limits: applicable restrictions and the bounded authorized action.
+Next checkpoint: absolute date, time and timezone.</code></pre>
+<h3>Result with explicit stage</h3>
+<pre><code>[Director-Orchestrator] [EXISTING-WORK-ID] [UPDATE] [COMPLETED]
+Result: The assigned document is written and locally validated.
+Stage: implemented and tested; independent review pending.
+Evidence: candidate and validation receipt links.
+Owner/next action: named reviewer receives the fixed candidate at the stated checkpoint.</code></pre>
+<p>The result pattern closes only the stated authoring assignment, not the independent review or project. For an acknowledgement, use <code>[ACK] Received; next action: …; checkpoint: …</code>, or give the actual blocker. Search an existing work ID with <code>in:#project-director "EXISTING-WORK-ID" "BLOCKED"</code>; do not rely on an emoji, display-name alias or a new parallel channel. <a href="https://slack.com/help/articles/202528808-Search-in-Slack">Slack's documented search modifiers</a>.</p>
+</section>
+
+<section id="verification" aria-labelledby="verification-heading">
+<h2 id="verification-heading">Sender, receipts and maintenance</h2>
+<p>Use the provider's authenticated native identity where established. Messages sent under the Codex Director's current temporary owner-connector authorization begin exactly: <strong>“Codex Director — sent through Edward's connector with his temporary authorization.”</strong> Put this prefix on the first line and the discussion-tag header on the next line. Other providers use their own verified route or the explicitly authorized Director relay; the prefix does not grant them independent permission to use Edward's account. Preserve the actual assistant/provider author and sender separately, including when the Director relays another provider's result. The owner-connected sender does not make an assistant message an owner approval or prove a native provider bot reply. Use the maintained contact/briefing record for the current authorization and return to the verified native route after repair.</p>
+<p>For each substantive send, retain the destination/channel, parent and reply timestamps, permalink, actual sender/app identity, assistant/provider author, work ID, source/run correlation and evidence time in the existing delivery record. Read back once to verify the expected message and intended recipient. Then distinguish delivered, acknowledged, substantive provider response and executed/accepted work. If send outcome is uncertain, search/read the existing thread before any resend; retain the failure and configured fallback when no delivery is proved.</p>
+<p>The Foreman owns protocol upkeep and unresolved questions. Correct a misleading tag with an explicit thread correction; preserve the original evidence and avoid silently relabelling an old review or owner decision. Material decisions remain in the authorized issue/PR. Tag names and mention syntax cannot expand an assignment, grant access, change policy gates, remove a freeze or authorize merge/deployment.</p>
+<p>Research: sanitized public Firecrawl queries covered Slack mentions, private access, broad-notification limits and app/API formatting. Primary references: <a href="https://docs.slack.dev/messaging/formatting-message-text/">Slack formatting and explicit IDs</a>, <a href="https://slack.com/help/articles/205240127-Use-mentions-in-Slack">member mentions</a>, <a href="https://slack.com/help/articles/202009646-Notify-a-channel-or-workspace">channel notifications</a> and <a href="https://slack.com/help/articles/360056534254-Manage-notifications-for-specific-channels-and-direct-messages">conversation notification preferences</a>. Team-specific decisions and follow-up targets come from owner direction and Foreman judgment, not Slack product guarantees.</p>
+</section>
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · One accountable owner, one task thread and evidence of the actual stage.</footer>
+</body>
+</html>

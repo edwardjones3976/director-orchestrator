@@ -2161,7 +2161,6 @@ class OrchestrationEngine:
                 )
             )
 
-        settlements = []
         packet_generation = record.plan_generation
 
         async def dispatch_one(item):
@@ -2186,17 +2185,62 @@ class OrchestrationEngine:
                     writer_token=token,
                 )
                 return item, outcome, None
-            except Exception as exc:
+            except BaseException as exc:
                 return item, None, exc
-            finally:
-                # Review 4112697677: completed, failed, raised or cancelled, the member's reservation settles.
-                settlements.append(self._settle_packet_spend(
-                    record, assignment, _task_effect_key, outcome,
-                    plan_generation=packet_generation))
 
-        observed = await asyncio.gather(
-            *(dispatch_one(item) for item in dispatchable)
-        )
+        dispatch_tasks = [
+            asyncio.create_task(dispatch_one(item)) for item in dispatchable
+        ]
+        cancellation = None
+        try:
+            observed = await asyncio.gather(*dispatch_tasks)
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+            results = await asyncio.gather(
+                *dispatch_tasks, return_exceptions=True
+            )
+            observed = [
+                result if not isinstance(result, BaseException)
+                else (item, None, result)
+                for item, result in zip(dispatchable, results)
+            ]
+        settlements = []
+        settlement_error = None
+        for item, outcome, _error in observed:
+            (
+                _member,
+                assignment,
+                _work,
+                _adapter,
+                _token,
+                _state,
+                task_effect_key,
+                _workload_reservation,
+            ) = item
+            # Settle only after the whole parallel batch has returned so an
+            # owner reset cannot erase a sibling result still being persisted.
+            try:
+                settlements.append(self._settle_packet_spend(
+                    record, assignment, task_effect_key, outcome,
+                    plan_generation=packet_generation))
+            except BaseException as exc:
+                settlements.append(False)
+                if settlement_error is None:
+                    settlement_error = exc
+        if cancellation is None:
+            cancellation = next(
+                (
+                    error
+                    for _item, _outcome, error in observed
+                    if isinstance(error, BaseException)
+                    and not isinstance(error, Exception)
+                ),
+                None,
+            )
+        if cancellation is not None:
+            raise cancellation
+        if settlement_error is not None:
+            raise settlement_error
         current = self.store.get(record.task_id)
         if (current is None or current.plan is None or current.plan != record.plan
                 or current.plan_generation != packet_generation):

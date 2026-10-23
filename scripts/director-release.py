@@ -189,6 +189,7 @@ def compose_input_check(pins, runtime_pin):
     """Close file inputs before Compose can load and erase their provenance."""
     pinned_file(runtime_pin)
     runtime_path = Path(runtime_pin["path"]).resolve()
+    models = []
     for pin in pins:
         try:
             model = yaml.load(pinned_file(pin), Loader=ComposeInputLoader)
@@ -196,6 +197,7 @@ def compose_input_check(pins, runtime_pin):
             raise ReleaseError("compose_yaml_unsupported") from None
         require(isinstance(model, dict) and set(model) <= {"name", "version", "services", "networks", "volumes"},
                 "compose_external_input_unsupported")
+        models.append(model)
         try:
             compose_interpolation_check(model)
         except ValueError as error:
@@ -222,6 +224,37 @@ def compose_input_check(pins, runtime_pin):
                     path = Path(pins[0]["path"]).parent / path
                 unlinked(path)
                 require(str(path.resolve()) == str(runtime_path), "compose_env_file_unbound")
+    return models
+
+
+def preserve_explicit_bind_false(graph, models):
+    """Recover a serializer omission only from unambiguous effective input.
+
+    Multiple files require Compose merge semantics, so they supply no proof
+    here. Likewise, interpolated targets and short syntax cannot independently
+    identify the effective mount. Keep those cases closed rather than guess.
+    The returned graph is also persisted, so never persist a lossy false value.
+    """
+    if len(models) != 1:
+        return graph
+    for name, service in models[0].get("services", {}).items():
+        mounts = service.get("volumes", [])
+        if not isinstance(mounts, list) or any(
+                not isinstance(mount, dict) or not isinstance(mount.get("target"), str) or
+                "$" in mount["target"] for mount in mounts):
+            continue
+        targets = [mount["target"] for mount in mounts]
+        if len(targets) != len(set(targets)):
+            continue
+        proven = {mount["target"] for mount in mounts if mount.get("type") == "bind" and
+                  isinstance(mount.get("bind"), dict) and
+                  set(mount["bind"]) == {"create_host_path"} and
+                  mount["bind"]["create_host_path"] is False}
+        for mount in graph.get("services", {}).get(name, {}).get("volumes", []):
+            if mount.get("type") == "bind" and mount.get("target") in proven and (
+                    "bind" not in mount or type(mount["bind"]) is dict and not mount["bind"]):
+                mount["bind"] = {"create_host_path": False}
+    return graph
 
 
 def child_environment():
@@ -963,7 +996,7 @@ class Release:
         return env
 
     def compose_document(self, runtime):
-        compose_input_check(self.spec["compose_files"], self.spec["runtime_env"])
+        models = compose_input_check(self.spec["compose_files"], self.spec["runtime_env"])
         try:
             env = compose_environment(self.compose_base_environment(), runtime)
         except ValueError as error:
@@ -972,7 +1005,10 @@ class Release:
                 "--env-file", self.spec["runtime_env"]["path"]]
         for pin in self.spec["compose_files"]:
             args.extend(["-f", pin["path"]])
-        return document(self.run([*args, "config", "--format", "json"], env=env))
+        graph = document(self.run([*args, "config", "--format", "json"], env=env))
+        # Revalidate the exact pins after rendering; stale input is not proof.
+        compose_input_check(self.spec["compose_files"], self.spec["runtime_env"])
+        return preserve_explicit_bind_false(graph, models)
 
     def compose_check(self):
         self.owner_check()
@@ -1599,7 +1635,8 @@ def stock_mounts(graph, *, registry_path=None):
                         set(mount) <= {"type", "source", "target", "read_only", "volume"}, "sibling_mount_unsupported")
             else:
                 require(mount.get("type") == "bind" and mount.get("read_only") is True and
-                        mount.get("bind") == {"create_host_path": False} and
+                        type(mount.get("bind")) is dict and set(mount["bind"]) == {"create_host_path"} and
+                        mount["bind"]["create_host_path"] is False and
                         set(mount) <= {"type", "source", "target", "read_only", "bind"}, "sibling_mount_unsupported")
                 source = Path(mount["source"])
                 unlinked(source)

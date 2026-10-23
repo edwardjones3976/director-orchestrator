@@ -18,15 +18,26 @@ Runs inside the pinned Unsloth image (see ``scripts/train-adapter.ps1``).
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import math
+import mmap
 import os
+import re
+import signal
+import stat
+import sys
+import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 os.environ["HF_HOME"] = os.environ.get("HF_HOME", "/workspace/hf")
+# Captured before any HF import: importing unsloth repoints HF_HOME/HF_HUB_CACHE to a writable /tmp fallback when the mounted
+# cache is read-only, and Hub freezes its default cache then. Snapshots are always resolved from this root.
+HF_ROOT = Path(os.environ["HF_HOME"])
 
 import torch  # noqa: E402
 from unsloth import FastLanguageModel  # noqa: E402
@@ -35,7 +46,11 @@ from huggingface_hub import snapshot_download  # noqa: E402
 from transformers import TrainerCallback, set_seed  # noqa: E402
 from trl import SFTConfig, SFTTrainer  # noqa: E402
 
-import prompt_template  # noqa: E402
+def _prompt_template():
+    # Epoch admission runs before any row renderer is used. In the trusted
+    # bootstrap this import resolves the already verified in-memory module.
+    import prompt_template
+    return prompt_template
 
 SMOKE_BASE = "unsloth/qwen3-0.6b-unsloth-bnb-4bit"
 SMOKE_REVISION = "e86f5289a2ca40ab7114071959dc2079cf97cb3c"
@@ -43,8 +58,13 @@ WINNER_BASE = "Qwen/Qwen3-14B"
 WINNER_REVISION = "40c069824f4251a91eefaf281ebe4c544efd3e18"
 FALLBACK_BASE = "Qwen/Qwen3-8B"
 FALLBACK_REVISION = "b968826d9c46dd6066d109eabc6255188de91218"
+STUDENT_BASE = "unsloth/Qwen3-8B-unsloth-bnb-4bit"
+STUDENT_REVISION = "62efd7f9d748e394734a7adae2adf96e13a2abc8"
 # Approved root bytes, not a caller-supplied digest or a weight-list self-check.
-TRUSTED_DIGEST_ROOT_SHA256 = "d1a4a2d921c3f5197c2867dcdb50dbfb46d2189bbb88141ed56d3f3eb19d36af"
+TRUSTED_DIGEST_ROOT_SHA256 = "37ff31d7e9c11502d6795c93028ba8a617c6d427f2d6b830381f50d9157348af"
+# Draft bytes; the wrapper requires the final v4 filename after owner approval.
+TRUSTED_DIGEST_ROOT_V4_SHA256 = "6795b16f0ccfb2ae48b358784b979f92a4f19fb1ef09262fbbd31339dbd79e87"
+VERIFIED_READ_TIMEOUT_SECONDS = 180
 PROBE_STEPS = 20
 WINNER_VRAM_GIB = 11.0
 CARD_VRAM_GIB = 12.0
@@ -84,10 +104,21 @@ def is_fallback_pin(base: str, revision: str) -> bool:
     return base == FALLBACK_BASE and revision == FALLBACK_REVISION
 
 
+def is_student_4bit_pin(base: str, revision: str) -> bool:
+    return base == STUDENT_BASE and revision == STUDENT_REVISION
+
+
+def is_allowed_epoch_pin(base: str, revision: str) -> bool:
+    """Exact supported students; manifest authentication still precedes loading."""
+    return (is_winner_pin(base, revision) or is_fallback_pin(base, revision)
+            or is_student_4bit_pin(base, revision))
+
+
 def is_allowed_probe_pin(base: str, revision: str) -> bool:
     return (
         is_winner_pin(base, revision)
         or is_fallback_pin(base, revision)
+        or is_student_4bit_pin(base, revision)
         or is_smoke_pin(base, revision)
     )
 
@@ -97,6 +128,8 @@ def probe_pin_name(base: str, revision: str) -> str:
         return "winner"
     if is_fallback_pin(base, revision):
         return "fallback"
+    if is_student_4bit_pin(base, revision):
+        return "student_4bit"
     if is_smoke_pin(base, revision):
         return "smoke"
     fail(f"probe pin is not recognized for {base}@{revision}")
@@ -114,7 +147,7 @@ def probe_is_authoritative(
     projection_row_count: int,
 ) -> bool:
     return (
-        (is_winner_pin(base, revision) or is_fallback_pin(base, revision))
+        is_allowed_epoch_pin(base, revision)
         and probe_seq_len == SEQ
         and projection_row_count == loaded_row_count
     )
@@ -153,13 +186,15 @@ def _sha256_file(path: Path) -> str:
 
 
 def _index_weight_map_shards(
-    snapshot_dir: Path, *, blob_roots: tuple[Path, ...] = (),
+    snapshot_dir: Path, *, blob_roots: tuple[Path, ...] = (), payloads=None,
 ) -> tuple[set[str], bool]:
     index_path = snapshot_dir / "model.safetensors.index.json"
-    if not index_path.is_file():
+    has_index = index_path.name in payloads if payloads is not None else index_path.is_file()
+    if not has_index:
         return set(), False
     try:
-        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        payload = json.loads(payloads[index_path.name] if payloads is not None
+                             else index_path.read_bytes())
     except (OSError, json.JSONDecodeError) as exc:
         fail(f"model.safetensors.index.json is not usable: {exc}")
     weight_map = payload.get("weight_map")
@@ -238,16 +273,19 @@ def require_confined_relative_path(
 
 
 def verify_expected_digests(
-    snapshot_dir: Path, expected_files: list[dict], reads: int = 2,
-    *, blob_roots: tuple[Path, ...] = (),
+    snapshot_dir: Path, expected_files: list[dict], reads: int = 3,
+    *, blob_roots: tuple[Path, ...] = (), receipt_path: Path | None = None,
+    evidence=None,
 ) -> dict:
     """Authenticate every snapshot file before parsing any model-loading input.
 
     A weights-only approved list is insufficient when other snapshot files are
     present. Missing trusted metadata is a refusal, never a locally minted hash.
     """
-    if reads < 1:
-        fail("reads must be positive")
+    if reads not in (2, 3):
+        fail("verified reads require two consecutive matches in at most three reads")
+    result = evidence if evidence is not None else VerifiedSnapshot(receipt_path, expected_files)
+    result.entries = {entry["path"]: entry for entry in expected_files}
     seen_paths: set[str] = set()
     manifest_weight_paths: list[str] = []
     for entry in expected_files:
@@ -257,6 +295,10 @@ def verify_expected_digests(
         require_confined_relative_path(
             rel, snapshot_dir, "digest manifest paths must be confined relative snapshot files",
             blob_roots=blob_roots)
+        if (type(entry.get("size")) is not int or entry["size"] < 0
+                or not isinstance(entry.get("sha256"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"])):
+            fail(f"invalid trusted size or digest for {rel}")
         if rel in seen_paths:
             fail(f"duplicate path in digest manifest: {rel}")
         seen_paths.add(rel)
@@ -273,24 +315,16 @@ def verify_expected_digests(
     total_bytes = 0
     for entry in expected_files:
         rel = entry["path"]
-        expected_sha = entry["sha256"]
         expected_size = entry["size"]
         path = snapshot_dir / rel
-        if not path.is_file():
-            fail(f"missing expected file: {rel}")
-        actual_size = path.stat().st_size
-        if actual_size != expected_size:
-            fail(f"size mismatch for {rel}")
-        for read_index in range(1, reads + 1):
-            actual_sha = _sha256_file(path)
-            if actual_sha != expected_sha:
-                fail(f"digest mismatch for {rel} on read {read_index}")
+        result.payloads[rel] = verified_file_bytes(path, entry, result, reads=reads)
         total_bytes += expected_size
     # The index is executable loading metadata too: do not parse it before its
     # own bytes (and every other cached file) have passed the approved hashes.
+    for name in result.payloads:
+        result.checked_bytes(name)
     index_shards, weight_map_checked = (
-        _index_weight_map_shards(snapshot_dir, blob_roots=blob_roots) if blob_roots
-        else _index_weight_map_shards(snapshot_dir)
+        _index_weight_map_shards(snapshot_dir, blob_roots=blob_roots, payloads=result.payloads)
     )
     manifest_weight_set = set(manifest_weight_paths)
     if weight_map_checked:
@@ -300,15 +334,188 @@ def verify_expected_digests(
             shard_path = snapshot_dir / shard
             if not shard_path.is_file():
                 fail(f"index shard missing from snapshot: {shard}")
-    return {
+    result.update({
         "files": len(expected_files),
-        "reads": reads,
+        "reads": max(item["attempt"] for item in result.receipt["attempts"]),
         "bytes": total_bytes,
         "weight_files": len(manifest_weight_paths),
         "weight_map_checked": weight_map_checked,
         "snapshot_files": len(on_disk_files),
         "snapshot_coverage": "all_regular_files",
-    }
+    })
+    return result
+
+
+class VerifiedSnapshot(dict):
+    """Report fields stay JSON-safe; retained buffers never enter a report."""
+
+    def __init__(self, receipt_path, entries):
+        super().__init__()
+        self.payloads = {}
+        self.trust_payloads = {}
+        self.entries = {entry["path"]: entry for entry in entries}
+        self.receipt_path = receipt_path
+        self.receipt = {"format": "verified-read/v1", "status": "reading", "attempts": []}
+        self.persist()
+
+    def persist(self):
+        if self.receipt_path is not None:
+            # A failed write/fsync/readback is a refusal, including on the failure path.
+            data = (json.dumps(self.receipt, indent=2) + "\n").encode()
+            self.receipt_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.receipt_path.with_name(self.receipt_path.name + ".tmp")
+            with temporary.open("wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            if temporary.read_bytes() != data:
+                fail("verified-read evidence receipt readback differs")
+            os.replace(temporary, self.receipt_path)
+            if os.name == "posix":
+                directory = os.open(self.receipt_path.parent, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+
+    def checked_bytes(self, name):
+        data, entry = self.payloads[name], self.entries[name]
+        if len(data) != entry["size"] or hashlib.sha256(data).hexdigest() != entry["sha256"]:
+            fail(f"retained buffer corruption: {name}")
+        return data
+
+
+@contextmanager
+def _read_deadline(seconds=VERIFIED_READ_TIMEOUT_SECONDS):
+    # Linux trainer reads must be interruptible; never return an overdue buffer.
+    if not hasattr(signal, "setitimer"):
+        yield  # Host-only fixture checks also check elapsed time below.
+        return
+    def expired(*_args):
+        raise TimeoutError(f"verified read exceeded {seconds} seconds")
+    previous = signal.signal(signal.SIGALRM, expired)
+    timer = signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, *timer)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def _read_file_once(path, expected_size, attempt):
+    """One complete read; O_DIRECT alignment failure may fall back before any bytes."""
+    fd = None
+    unsupported = (errno.EINVAL, errno.EOPNOTSUPP, errno.ENOSYS)
+    try:
+        direct = hasattr(os, "O_DIRECT")
+        try:
+            fd = os.open(path, os.O_RDONLY | (os.O_DIRECT if direct else 0))
+        except OSError as exc:
+            if not direct or exc.errno not in unsupported:
+                raise
+            direct = False
+            fd = os.open(path, os.O_RDONLY)
+        before = os.fstat(fd)
+        attempt["size"] = before.st_size
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError("irregular input")
+        if expected_size is not None and before.st_size != expected_size:
+            raise ValueError(f"size mismatch for {path.name}")
+        read_size = before.st_size if expected_size is None else expected_size
+        chunks = []
+        digest = hashlib.sha256()
+        with mmap.mmap(-1, 1024 * 1024) as aligned:
+            while True:
+                if direct:
+                    attempt["method"] = "O_DIRECT"
+                    try:
+                        count = os.readv(fd, [aligned])
+                        chunk = aligned[:count]
+                    except OSError as exc:
+                        if chunks or exc.errno not in unsupported:
+                            raise
+                        os.close(fd)
+                        fd = os.open(path, os.O_RDONLY)
+                        direct = False
+                        continue
+                else:
+                    if hasattr(os, "posix_fadvise"):
+                        attempt["method"] = "posix_fadvise(DONTNEED)"
+                        if not chunks:
+                            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+                    elif os.name == "nt":
+                        attempt["method"] = "host buffered fixture read"
+                    else:
+                        raise OSError("no supported cache-bypassing read method")
+                    chunk = os.read(fd, 1024 * 1024)
+                attempt["bytes_read"] += len(chunk)
+                digest.update(chunk)
+                attempt["digest"] = digest.hexdigest()
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                if attempt["bytes_read"] > read_size:
+                    raise ValueError("input grew while reading")
+                # An unaligned direct tail is EOF; fstat below detects size changes.
+                if direct and len(chunk) < 1024 * 1024:
+                    break
+        after = os.fstat(fd)
+        signature = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+        if signature(before) != signature(after) or signature(after) != signature(path.stat()):
+            raise ValueError("input changed while reading")
+        attempt["identity"] = list(signature(after))
+        if attempt["bytes_read"] != read_size:
+            raise ValueError("short read")
+        return b"".join(chunks)
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def verified_file_bytes(path, entry, evidence, *, reads=3):
+    if reads not in (2, 3):
+        fail("verified reads require two consecutive matches in at most three reads")
+    consecutive, identity = 0, None
+    previous = None
+    for number in range(1, reads + 1):
+        start = time.monotonic()
+        attempt = {"file": str(path), "attempt": number, "digest": None, "size": None,
+                   "bytes_read": 0, "seconds": None, "error": None, "method": None,
+                   "timeout_seconds": VERIFIED_READ_TIMEOUT_SECONDS,
+                   "expected_size": entry.get("size"),
+                   "size_authority": "trusted" if entry.get("size") is not None else "observed only"}
+        try:
+            with _read_deadline(VERIFIED_READ_TIMEOUT_SECONDS):
+                data = _read_file_once(path, entry.get("size"), attempt)
+                attempt["digest"] = hashlib.sha256(data).hexdigest()
+                if len(data) != (entry["size"] if entry.get("size") is not None else attempt["size"]):
+                    raise ValueError(f"size mismatch for {entry['path']}: short read or wrong size")
+                if identity is not None and identity != attempt.get("identity"):
+                    raise ValueError("input changed between reads")
+                identity = attempt.get("identity")
+                if time.monotonic() - start >= VERIFIED_READ_TIMEOUT_SECONDS:
+                    raise TimeoutError(f"verified read exceeded {VERIFIED_READ_TIMEOUT_SECONDS} seconds")
+                good = attempt["digest"] == entry["sha256"]
+                if good and consecutive and previous != data:
+                    raise ValueError("authenticated bytes changed between reads")
+                consecutive = consecutive + 1 if good else 0
+                previous = data if good else None
+                if not good:
+                    attempt["error"] = "digest mismatch"
+        except BaseException as exc:
+            attempt["error"] = f"{type(exc).__name__}: {exc}"
+            evidence.receipt["status"] = "refused"
+            fail(f"verified read refused for {path} on read {number}: {exc}")
+        finally:
+            attempt["seconds"] = time.monotonic() - start
+            evidence.receipt["attempts"].append(attempt)
+            evidence.persist()
+        if consecutive == 2:
+            return data
+    evidence.receipt["status"] = "refused"
+    evidence.persist()
+    detail = entry.get("mismatch", "")
+    fail(f"digest mismatch for {entry['path']}: {detail}; exhausted reads on read {reads}; path {path}")
 
 
 def _expected_digest_files(data: bytes, base: str, revision: str) -> list[dict]:
@@ -328,27 +535,27 @@ def _expected_digest_files(data: bytes, base: str, revision: str) -> list[dict]:
     return files
 
 
-def load_expected_digests(path: Path, base: str, revision: str) -> list[dict]:
-    try:
-        data = path.read_bytes()
-    except OSError as exc:
-        fail(f"expected digests file is not usable: {exc}")
-    return _expected_digest_files(data, base, revision)
+def load_expected_digests(path: Path, base: str, revision: str, *, trusted_root_path=None) -> list[dict]:
+    return load_authenticated_digests(trusted_root_path, path, base, revision)[0]
 
 
 def load_authenticated_digests(
     root_path: Path | None, path: Path, base: str, revision: str,
+    *, evidence=None,
 ) -> tuple[list[dict], dict[str, str]]:
     """Authenticate root -> exact model/revision -> list bytes before parsing the list."""
     if root_path is None:
         fail("--trusted-digest-root is required for pinned M2 models")
-    try:
-        root_bytes = root_path.read_bytes()
-    except OSError as exc:
-        fail(f"trusted digest root is not usable: {exc}")
-    root_sha = hashlib.sha256(root_bytes).hexdigest()
-    if root_sha != TRUSTED_DIGEST_ROOT_SHA256:
-        fail("trusted digest root does not match the approved SHA-256")
+    expected_root_sha = (TRUSTED_DIGEST_ROOT_V4_SHA256 if is_student_4bit_pin(base, revision)
+                         else TRUSTED_DIGEST_ROOT_SHA256)
+    if evidence is None:
+        evidence = VerifiedSnapshot(None, [])
+    root_bytes = verified_file_bytes(root_path, {
+        "path": root_path.name, "sha256": expected_root_sha,
+        "mismatch": "trusted digest root does not match the approved SHA-256",
+    }, evidence)
+    evidence.trust_payloads["root"] = root_bytes
+    root_sha = expected_root_sha
     try:
         root = json.loads(root_bytes.decode("utf-8"))
     except (UnicodeError, json.JSONDecodeError) as exc:
@@ -364,12 +571,11 @@ def load_authenticated_digests(
     if (not isinstance(upstream_sha, str) or len(upstream_sha) != 64
             or any(char not in "0123456789abcdef" for char in upstream_sha)):
         fail("approved model entry has no valid upstream digest-list SHA-256")
-    try:
-        data = path.read_bytes()
-    except OSError as exc:
-        fail(f"expected digests file is not usable: {exc}")
-    if hashlib.sha256(data).hexdigest() != upstream_sha:
-        fail("upstream digest list does not match the approved root")
+    data = verified_file_bytes(path, {
+        "path": path.name, "sha256": upstream_sha,
+        "mismatch": "upstream digest list does not match the approved root",
+    }, evidence)
+    evidence.trust_payloads["expected_digests"] = data
     return _expected_digest_files(data, base, revision), {
         "trusted_root_sha256": root_sha, "upstream_digest_list_sha256": upstream_sha,
         "base": base, "revision": revision,
@@ -379,7 +585,7 @@ def load_authenticated_digests(
 def local_snapshot_dir(base: str, revision: str) -> Path:
     from huggingface_hub import snapshot_download
 
-    return Path(snapshot_download(repo_id=base, revision=revision, local_files_only=True))
+    return Path(snapshot_download(repo_id=base, revision=revision, cache_dir=HF_ROOT / "hub", local_files_only=True))
 
 
 def digest_verification_before_load(
@@ -387,31 +593,367 @@ def digest_verification_before_load(
     revision: str,
     expected_digests_path: Path | None,
     trusted_digest_root_path: Path | None = None,
+    resolved: list[Path] | None = None,
+    receipt_path: Path | None = None,
 ) -> dict | None:
+    """Admission first (unchanged order), then the one snapshot resolution, then digest verification of that snapshot.
+
+    Retain authenticated buffers; a snapshot pathname alone is never load authority."""
     if is_winner_pin(base, revision) and expected_digests_path is None:
         fail("--expected-digests is required for the winner pin")
     if is_fallback_pin(base, revision) and expected_digests_path is None:
         fail("--expected-digests is required for the fallback pin")
-    requires_root = base in (WINNER_BASE, FALLBACK_BASE)
+    requires_root = base in (WINNER_BASE, FALLBACK_BASE, STUDENT_BASE)
     if requires_root and expected_digests_path is None:
         fail("--expected-digests is required for pinned M2 models")
     if expected_digests_path is None:
         return None
     binding = {}
+    evidence = VerifiedSnapshot(receipt_path, [])
     if requires_root or trusted_digest_root_path is not None:
         expected_files, binding = load_authenticated_digests(
             trusted_digest_root_path, expected_digests_path, base, revision,
+            evidence=evidence,
         )
     else:
-        expected_files = load_expected_digests(expected_digests_path, base, revision)
+        fail("--trusted-digest-root is required: expected digests have no authenticated parent")
     snapshot_dir = local_snapshot_dir(base, revision)
+    if resolved is not None:
+        resolved.append(snapshot_dir)
     blob_roots = authenticated_cache_blob_roots(snapshot_dir, base, revision) if binding else ()
-    return {**verify_expected_digests(snapshot_dir, expected_files, blob_roots=blob_roots), **binding}
+    result = verify_expected_digests(snapshot_dir, expected_files, blob_roots=blob_roots,
+                                     receipt_path=receipt_path, evidence=evidence)
+    result.update(binding)
+    return result
 
 
-def resolve_commit(config_commit: str | None, repo: str, revision: str) -> str:
-    """The commit the base was actually loaded from. A pinned 40-hex revision must match."""
-    commit = config_commit or Path(snapshot_download(repo, revision=revision, local_files_only=True)).name
+@contextmanager
+def sealed_snapshot(verified):
+    """Unsloth's pathname API sees sealed memory, never the original snapshot."""
+    if not hasattr(os, "memfd_create"):
+        fail("verified model loading requires Linux memfd seals")
+    import fcntl
+    descriptors = []
+    with tempfile.TemporaryDirectory(prefix="verified-model-") as directory:
+        try:
+            for name in verified.entries:
+                data = verified.checked_bytes(name)
+                target = Path(directory) / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                fd = os.memfd_create("verified-model", os.MFD_ALLOW_SEALING | os.MFD_CLOEXEC)
+                descriptors.append(fd)
+                view = memoryview(data)
+                while view:
+                    written = os.write(fd, view)
+                    if written <= 0:
+                        fail("short write to retained snapshot")
+                    view = view[written:]
+                seals = fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL
+                fcntl.fcntl(fd, fcntl.F_ADD_SEALS, seals)
+                if fcntl.fcntl(fd, fcntl.F_GET_SEALS) & seals != seals:
+                    fail("retained snapshot could not be sealed")
+                target.symlink_to(f"/proc/self/fd/{fd}")
+                if _sha256_file(target) != verified.entries[name]["sha256"]:
+                    fail(f"sealed snapshot copy differs: {name}")
+            yield Path(directory)
+        finally:
+            for fd in descriptors:
+                os.close(fd)
+
+
+def reference_state_dict(verified):
+    from safetensors.torch import load
+    weight_names = {name for name in verified.entries if _is_weight_manifest_path(name)}
+    if not weight_names or any(not name.endswith(".safetensors") for name in weight_names):
+        fail("verified loading only defines safetensors comparisons")
+    index_name = "model.safetensors.index.json"
+    weight_map = None
+    if index_name in verified.entries:
+        weight_map = json.loads(verified.checked_bytes(index_name))["weight_map"]
+        if set(weight_map.values()) != weight_names:
+            fail("verified index and shard set differ")
+    elif weight_names != {"model.safetensors"}:
+        fail("multiple/nonstandard shards require a verified weight_map")
+    reference = {}
+    for name in sorted(weight_names):
+        shard = load(verified.checked_bytes(name))
+        if set(reference) & set(shard):
+            fail("duplicate tensor name across shards")
+        if weight_map is not None and any(weight_map.get(key) != name for key in shard):
+            fail("tensor differs from verified index weight_map")
+        reference.update(shard)
+    if weight_map is not None and set(reference) != set(weight_map):
+        fail("verified index tensor names differ from shard contents")
+    return reference
+
+
+def compare_tensor(name, actual, expected):
+    if actual.device.type not in ("cpu", "cuda"):
+        fail(f"undefined destination comparison for {name}: {actual.device}")
+    if actual.device.type == "cuda":
+        torch.cuda.synchronize(actual.device)
+    if actual.shape != expected.shape or actual.dtype != expected.dtype:
+        fail(f"loaded tensor shape/dtype differs: {name}")
+    # Byte equality includes NaN encodings and signed zero; no numerical tolerance.
+    actual_bytes = actual.detach().contiguous().reshape(-1).view(torch.uint8).cpu().numpy().tobytes()
+    expected_bytes = expected.detach().contiguous().reshape(-1).view(torch.uint8).cpu().numpy().tobytes()
+    if hashlib.sha256(actual_bytes).digest() != hashlib.sha256(expected_bytes).digest():
+        fail(f"loaded tensor payload differs: {name}")
+
+
+def compare_quant_state(name, actual, expected):
+    if actual is None:
+        fail(f"Linear4bit quant_state is missing: {name}")
+    for field in ("quant_type", "blocksize", "dtype", "shape", "nested"):
+        if getattr(actual, field) != getattr(expected, field):
+            fail(f"loaded quantization metadata differs: {name}.{field}")
+    compare_tensor(name + ".absmax", actual.absmax, expected.absmax)
+    compare_tensor(name + ".quant_map", actual.code, expected.code)
+    if actual.nested:
+        compare_tensor(name + ".offset", actual.offset.reshape(1), expected.offset.reshape(1))
+        compare_quant_state(name + ".nested", actual.state2, expected.state2)
+    elif actual.state2 is not None or actual.offset is not None:
+        fail(f"unexpected nested quantization state: {name}")
+
+
+def input_padding_allowance(model, name, actual, target, config, verified):
+    """WO-G86: recognize only the verified, untied input embedding's padding row."""
+    if verified is None or config.get("tie_word_embeddings") is not False:
+        return None
+    try:
+        embedding = model.get_input_embeddings()
+        if not isinstance(embedding, torch.nn.Embedding):
+            return None
+        names = {key + ".weight" for key, module in model.named_modules() if module is embedding}
+        if name not in names or actual.data_ptr() != embedding.weight.data_ptr():
+            return None
+        head = model.lm_head.weight
+        if (embedding.weight.data_ptr() == head.data_ptr()
+                or embedding.weight.untyped_storage().data_ptr() == head.untyped_storage().data_ptr()):
+            return None
+        files = ("config.json", "tokenizer_config.json", "generation_config.json", "tokenizer.json")
+        payloads = {path: verified.checked_bytes(path) for path in files}
+        configs = {path: json.loads(data) for path, data in payloads.items()}
+        if configs["config.json"] != config:
+            return None
+        tokens = configs["tokenizer_config.json"]
+        ids = configs["generation_config.json"]
+        added = configs["tokenizer.json"]["added_tokens"]
+        if not isinstance(added, list) or len(target.shape) != 2:
+            return None
+        for kind in ("pad", "eos"):
+            token, token_id = tokens[kind + "_token"], ids[kind + "_token_id"]
+            if (not isinstance(token, str) or not token or type(token_id) is not int
+                    or not 0 <= token_id < target.shape[0]):
+                return None
+            matches = [item for item in added if item["id"] == token_id or item["content"] == token]
+            if (len(matches) != 1 or type(matches[0]["id"]) is not int
+                    or matches[0]["id"] != token_id or matches[0]["content"] != token):
+                return None
+        pad_id = ids["pad_token_id"]
+        if (type(embedding.padding_idx) is not int or embedding.padding_idx != pad_id
+                or pad_id == ids["eos_token_id"]):
+            return None
+        # Direct Python callers must also prove the loaded module's source identity.
+        source_path = Path(sys.modules["unsloth.models.llama"].__file__)
+        source_sha256 = _sha256_file(source_path)
+        if source_sha256 != "e09924b71078efabcd5173002620baa72cf9a09f1d974af4bad5516f5508e225":
+            return None
+    except (AttributeError, KeyError, TypeError, ValueError, OSError):
+        return None
+    return {"tensor": name, "token_id": pad_id, "token": tokens["pad_token"],
+            "configuration_sha256": {path: hashlib.sha256(data).hexdigest() for path, data in payloads.items()},
+            "source_reference_image": "unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739",
+            "source": {"file": "unsloth/models/llama.py", "lines": "3004-3025",
+                       "sha256": source_sha256, "verification": "loaded module source file SHA-256"}}
+
+
+def verify_loaded_model(model, reference, *, dtype, config, verified=None):
+    from bitsandbytes.nn import Linear4bit
+    from bitsandbytes.functional import QuantState
+    actual = model.state_dict()
+    expected = dict(reference)
+    quantized = set()
+    for name, module in model.named_modules():
+        if not isinstance(module, Linear4bit):
+            continue
+        key = name + ".weight"
+        if module.weight.quant_state is None or module.quant_state is None:
+            fail(f"Linear4bit quant_state is missing: {name}")
+        siblings = {k[len(key) + 1:]: v for k, v in reference.items() if k.startswith(key + ".")}
+        if not siblings:
+            # shortcut: only prequantized checkpoints have a byte-exact reference; add
+            # an independently validated on-load quantization mapping before enabling others.
+            fail(f"undefined on-load quantization comparison: {key}")
+        state = QuantState.from_dict(dict(siblings), device=torch.device("cpu"))
+        compare_quant_state(key, module.weight.quant_state, state)
+        compare_quant_state(key + ".module", module.quant_state, state)
+        serialized = {k[len(key) + 1:]: v for k, v in actual.items() if k.startswith(key + ".")}
+        compare_quant_state(key + ".serialized", QuantState.from_dict(serialized,
+                            device=torch.device("cpu")), state)
+        quantized.add(key)
+        # Packed JSON may change key ordering; compare the decoded fields above.
+        for sibling in siblings:
+            full = key + "." + sibling
+            if sibling.startswith("quant_state."):
+                expected.pop(full)
+                if full not in actual:
+                    fail(f"missing serialized quantization metadata: {full}")
+                actual.pop(full)
+    if not quantized:
+        fail("no Linear4bit modules in the loaded 4-bit model")
+    if config.get("tie_word_embeddings") is True and "lm_head.weight" not in expected:
+        if model.get_output_embeddings().weight is not model.get_input_embeddings().weight:
+            fail("declared tied embeddings are not tied")
+        expected["lm_head.weight"] = reference["model.embed_tokens.weight"]
+    if set(actual) != set(expected):
+        fail("loaded tensor names differ from the verified checkpoint")
+    casts = []
+    allowance = None
+    for name, value in expected.items():
+        target = value
+        if name not in quantized and not any(name.startswith(k + ".") for k in quantized):
+            if value.is_floating_point() and value.dtype != dtype:
+                target = value.to(dtype=dtype)
+                casts.append({"name": name, "from": str(value.dtype), "to": str(dtype)})
+        try:
+            compare_tensor(name, actual[name], target)
+        except SystemExit as exc:
+            if str(exc) != f"loaded tensor payload differs: {name}":
+                raise
+            candidate = input_padding_allowance(model, name, actual[name], target, config, verified)
+            if candidate is None:
+                raise
+            # Clone after the existing dtype conversion; never change either source weight.
+            padded = target.clone()
+            padded[candidate["token_id"]].zero_()
+            compare_tensor(name, actual[name], padded)
+            allowance = candidate
+    result = {"tensors": len(actual), "linear4bit": len(quantized), "casts": casts,
+            "gpu_destinations": sorted({str(t.device) for t in actual.values() if t.device.type == "cuda"}),
+            "comparison": "exact payload/shape/dtype; decoded quantization state"}
+    if allowance is not None:
+        result["input_embedding_pad_row_allowance"] = allowance
+        result["comparison"] += "; input-embedding pad row zeroed by loader (allowance)"
+    return result
+
+
+def tokenizer_json_matches(actual, expected):
+    """WO-G78: exact JSON except the three captured Qwen2 constructor rewrites."""
+    def canonical(value):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
+
+    if canonical(actual) == canonical(expected):
+        return True
+    if not isinstance(actual, dict) or not isinstance(expected, dict) or actual.keys() != expected.keys():
+        return False
+    bytelevel = {"type": "ByteLevel", "add_prefix_space": False, "trim_offsets": False, "use_regex": False}
+    template = {"type": "TemplateProcessing", "single": [{"Sequence": {"id": "A", "type_id": 0}}],
+                "pair": [{"Sequence": {"id": "A", "type_id": 0}}, {"Sequence": {"id": "B", "type_id": 1}}],
+                "special_tokens": {}}
+    for key, original in expected.items():
+        loaded = actual[key]
+        if canonical(loaded) == canonical(original):
+            continue
+        if key == "decoder" and canonical(original) == canonical(bytelevel):
+            allowed = {"type": "ByteLevel", "add_prefix_space": True, "trim_offsets": True, "use_regex": True}
+        elif key == "post_processor" and canonical(original) == canonical(bytelevel):
+            allowed = template
+        elif (key == "pre_tokenizer" and isinstance(original, dict)
+              and original.keys() == {"type", "pretokenizers"} and original["type"] == "Sequence"
+              and isinstance(original["pretokenizers"], list)):
+            allowed = {"type": "Sequence", "pretokenizers": [
+                dict(part, trim_offsets=True) if canonical(part) == canonical(bytelevel) else part
+                for part in original["pretokenizers"]]}
+        else:
+            return False
+        if canonical(loaded) != canonical(allowed):
+            return False
+    return True
+
+
+def verify_tokenizer_behavior(actual, expected):
+    """Fixed WO-G78 corpus; compare backend encodings and real single/pair decoding."""
+    texts = (
+        "Hello world", " leading space", "  two spaces\nnewline\r\nCRLF",
+        "naïve café 東京 😀 — “quotes”",
+        "<|im_start|>system\nYou are DIRECTOR.<|im_end|>\n<|im_start|>user\nWhat's 2+2?<|im_end|>",
+        "def f(x):\n    return x**2  # comment\n", "</think>\n\nanswer", "", " ", "\t\ttabs",
+        "won't can't I'd", "1234567890 3.14159 -0.5e-3", "https://example.com/a?b=c&d=e",
+        "trailing space ", "<|endoftext|>",
+    )
+    pairs = (("Question?", "Answer."), ("<|im_start|>user\nhi<|im_end|>", " reply"))
+    try:
+        for special in (False, True):
+            for inputs in tuple((text,) for text in texts) + pairs:
+                loaded = actual.encode(*inputs, add_special_tokens=special)
+                reference = expected.encode(*inputs, add_special_tokens=special)
+                for field in ("ids", "tokens", "offsets", "type_ids", "attention_mask"):
+                    if getattr(loaded, field) != getattr(reference, field):
+                        raise ValueError
+                for skip in (False, True):
+                    if actual.decode(loaded.ids, skip_special_tokens=skip) != expected.decode(reference.ids, skip_special_tokens=skip):
+                        raise ValueError
+    except Exception:
+        fail("loaded tokenizer behavior differs from verified tokenizer bytes")
+
+
+def load_verified_model(snapshot, verification, *, max_seq_length):
+    """Verification-bound pathname fallback; no unverified loader branch exists."""
+    if (not isinstance(verification, VerifiedSnapshot) or verification.receipt_path is None
+            or not verification.get("trusted_root_sha256")):
+        fail("verified loading requires retained bytes, an approved root and a durable receipt")
+    try:
+        config = json.loads(verification.checked_bytes("config.json"))
+        if not config.get("quantization_config", {}).get("load_in_4bit"):
+            fail("full-precision winner/fallback loading refused; prequantized checkpoint required; follow-up WO-G32-LDR-FP1")
+        if os.name != "posix" or not hasattr(os, "memfd_create"):
+            fail("verified model loading requires the Linux trainer image")
+        reference = reference_state_dict(verification)
+        del reference
+        # Unsloth's normal automatic dtype choice, made explicit for comparison.
+        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        with sealed_snapshot(verification) as retained_path:
+            model, tokenizer = FastLanguageModel.from_pretrained(
+                str(retained_path), max_seq_length=max_seq_length, load_in_4bit=True,
+                dtype=dtype, use_exact_model_name=True, local_files_only=True,
+                trust_remote_code=False)
+            # Do not accept a loader's tokenizer/config fallback to another cache.
+            from tokenizers import Tokenizer
+            expected_tokenizer = Tokenizer.from_str(verification.checked_bytes("tokenizer.json").decode())
+            if not tokenizer_json_matches(json.loads(tokenizer.backend_tokenizer.to_str()),
+                                          json.loads(expected_tokenizer.to_str())):
+                fail("loaded tokenizer differs from verified tokenizer bytes")
+            verify_tokenizer_behavior(tokenizer.backend_tokenizer, expected_tokenizer)
+            for field in ("model_type", "vocab_size", "hidden_size", "intermediate_size",
+                          "num_hidden_layers", "num_attention_heads", "num_key_value_heads",
+                          "tie_word_embeddings"):
+                if field in config and getattr(model.config, field, None) != config[field]:
+                    fail(f"loaded model config differs: {field}")
+            # Re-derive after loading to detect reference/buffer mutation as well.
+            reference = reference_state_dict(verification)
+            verification["loaded_verification"] = verify_loaded_model(
+                model, reference, dtype=dtype, config=config, verified=verification)
+        verification.receipt.update(status="verified", loader="sealed-memfd pathname fallback",
+                                    post_load=verification["loaded_verification"])
+        verification.persist()
+        verification["verified_read_receipt"] = str(verification.receipt_path)
+        verification.payloads.clear()
+        return model, tokenizer
+    except BaseException as exc:
+        verification.receipt.update(status="refused", error=f"{type(exc).__name__}: {exc}")
+        verification.persist()
+        raise
+
+
+def resolve_commit(config_commit: str | None, repo: str, revision: str, snapshot: Path | None = None) -> str:
+    """The commit the base was actually loaded from. A pinned 40-hex revision must match.
+
+    A local-path load usually leaves ``config._commit_hash`` empty; the commit is then the name of the snapshot that was verified and
+    loaded (``snapshot``), never a second lookup."""
+    if snapshot is None and not config_commit:
+        snapshot = local_snapshot_dir(repo, revision)
+    commit = config_commit or snapshot.name
     if not commit:
         fail(f"could not resolve the commit for {repo}@{revision}")
     if len(revision) == 40 and commit != revision:
@@ -511,14 +1053,14 @@ def _require_accepted_row(row: dict[str, Any], line_number: int) -> None:
     if not isinstance(source, dict):
         fail(f"line {line_number}: input is not an object")
     try:
-        prompt_template.input_contract(source)
+        _prompt_template().input_contract(source)
     except (KeyError, TypeError, ValueError) as exc:
         fail(f"line {line_number}: {exc}")
 
 
 def messages_for(row: dict[str, Any]) -> list[dict[str, str]]:
     """Training chat through the shared template, using the row's input block as written. Thinking stays off at the call site (D-M1-3)."""
-    return prompt_template.render_messages(row["input"], row["target"])
+    return _prompt_template().render_messages(row["input"], row["target"])
 
 
 def labels_for_token_ids(prompt_ids: list[int], full_ids: list[int]) -> list[int]:
@@ -577,7 +1119,7 @@ def create_run_directory(report_path: Path) -> Path:
     return run_dir
 
 
-def write_adapter_leaf(model: Any, leaf_dir: Path) -> Path:
+def write_adapter_leaf(model: Any, leaf_dir: Path, *, base_repo: str, base_revision: str) -> Path:
     """Explicit adapter-only save into a clean ``epoch-NN`` leaf directory.
 
     Assumption to confirm on the real host: the pinned ``peft`` writes exactly
@@ -586,8 +1128,23 @@ def write_adapter_leaf(model: Any, leaf_dir: Path) -> Path:
     (optimizer/RNG/trainer state) is never copied into the leaf, so leaves are
     export inputs, not resume checkpoints.
     """
+    if not is_allowed_epoch_pin(base_repo, base_revision):
+        fail("adapter leaf requires a verified student pin")
     leaf_dir.mkdir(parents=True, exist_ok=False)
     model.save_pretrained(str(leaf_dir))
+    config_path = leaf_dir / "adapter_config.json"
+    if config_path.is_symlink() or _is_directory_link(config_path) or not config_path.is_file():
+        fail("adapter leaf config must be a regular file")
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    if not isinstance(config, dict):
+        fail("adapter leaf config must be a JSON object")
+    config["base_model_name_or_path"] = base_repo
+    config["revision"] = base_revision
+    if is_student_4bit_pin(base_repo, base_revision):
+        # GGUF export merges into the paired bf16 source, not quantized weights.
+        config["merge_source"] = FALLBACK_BASE
+        config["merge_revision"] = FALLBACK_REVISION
+    config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     return leaf_dir
 
 
@@ -1073,11 +1630,11 @@ def _validate_dev_row(row: Any, split: str) -> None:
     source = row.get("input")
     if not isinstance(source, dict):
         raise ValueError("invalid row input")
-    prompt_template.input_contract(source)
+    _prompt_template().input_contract(source)
     for key in ("objective", "repository", "title"):
         if not isinstance(source.get(key), str) or not source[key].strip():
             raise ValueError("invalid input field")
-    if "context" in source and prompt_template.context_shape_errors(source["context"]):
+    if "context" in source and _prompt_template().context_shape_errors(source["context"]):
         raise ValueError("invalid cited context")
 
 
@@ -1121,8 +1678,9 @@ class DevEvaluationCallback(TrainerCallback):
                  frozen_dev_context: dict[str, Any], max_epochs: int,
                  predict_fn: Any = None, score_fn: Any = None,
                  requested_epochs: int | None = None, *,
-                 use_gradient_checkpointing: str | bool) -> None:
+                 use_gradient_checkpointing: str | bool, base_repo: str) -> None:
         self.model, self.run_dir, self.checkpoints = model, run_dir, checkpoints
+        self.base_repo = base_repo
         self.use_gradient_checkpointing = use_gradient_checkpointing
         self.best_primary = None
         self.best_per_field = {}
@@ -1290,7 +1848,8 @@ class DevEvaluationCallback(TrainerCallback):
             if progress is None:
                 raise ValueError("missing epoch progress")
             if 0.5 <= progress < 1 and 1 not in self.midpoints_done:
-                leaf_dir = write_adapter_leaf(self.model, self.run_dir / "midpoint-epoch-01")
+                leaf_dir = write_adapter_leaf(self.model, self.run_dir / "midpoint-epoch-01",
+                    base_repo=self.base_repo, base_revision=self.identity["base_revision"])
                 _, digest = write_leaf_manifest(leaf_dir)
                 self._evaluate(1, "midpoint", digest, control, kwargs.get("processing_class") or kwargs.get("tokenizer"))
                 self.midpoints_done.add(1)
@@ -1315,7 +1874,8 @@ class DevEvaluationCallback(TrainerCallback):
             step = getattr(state, "global_step", None)
             if type(step) is not int or step < 0:
                 raise ValueError("invalid global step")
-            leaf_dir = write_adapter_leaf(self.model, self.run_dir / epoch_leaf_name(epoch))
+            leaf_dir = write_adapter_leaf(self.model, self.run_dir / epoch_leaf_name(epoch),
+                base_repo=self.base_repo, base_revision=self.identity["base_revision"])
             entry = leaf_report_entry(leaf_dir, epoch=epoch, global_step=step)
             _require_hex(entry.get("manifest_sha256"), 64, "leaf manifest digest")
             self.checkpoints.append(entry)
@@ -1430,6 +1990,7 @@ def build_report(
     state: str | None = None,
     selected_primary: dict[str, int] | None = None,
     completed_epoch_ids: list[int] | None = None,
+    publication: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     report = {
         "run": run,
@@ -1448,6 +2009,7 @@ def build_report(
         "thinking": "disabled",
     }
     if epochs is not None:
+        report["publication"] = publication
         report["requested_epochs"] = epochs
         completed_ids = [entry["epoch"] for entry in checkpoints or []] if completed_epoch_ids is None else completed_epoch_ids
         report["completed_epochs"] = len(completed_ids)
@@ -1491,10 +2053,400 @@ def build_report(
 
 
 ADMITTED_TEMPLATE_SHA256 = "6ee4833fbce2b0f38f37b5cd51f5424cd154a78cbfc9d9ae3643359a709908ea"
+EPOCH_AUTHORITY_SHA256 = "bd201f2f0d7c67f5c179f9071391a8518ec24629a7ef867ae2e5c94ab34b009d"
+
+
+def _epoch_authority():
+    """Load the exact verifier buffer pinned by this authenticated trainer."""
+    if '_BOOTSTRAP_AUTHORITY' in globals():
+        return globals()['_BOOTSTRAP_AUTHORITY']
+    path = Path(__file__).with_name('epoch_authority.py')
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        fail(f'epoch authority source unavailable: {exc}')
+    return _verified_source_module(data, path, EPOCH_AUTHORITY_SHA256, 'epoch_authority',
+                                   'epoch authority source differs from trainer pin')
+
+
+def _verified_source_module(data: bytes, path: Path, expected_sha256: str, name: str, mismatch: str):
+    """Hash and execute the same source buffer; never import a later path read."""
+    import types
+    if hashlib.sha256(data).hexdigest() != expected_sha256:
+        fail(mismatch)
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    exec(compile(data, str(path), "exec"), module.__dict__)
+    return module
+
+# WO-R5 slice 4: authenticate the staged publication binding (rows, trainer,
+# predictor, scorer, renderer) before any GPU, model or tokenizer resource is
+# touched in epoch mode.
+_HEX64_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_HEX40_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+_PUBLICATION_BATCH_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+
+PUBLICATION_BINDING_FORMAT = "adapter-publication-binding/v1"
+PUBLICATION_RESOLUTION_FORMAT = "route-r-resolution/v1"
+PUBLICATION_PROFILE_FORMAT = "route-r-publication-profile/v1"
+
+# (dir, name) -> the candidate.* key that must agree with this file's digest, or
+# None when the file carries no candidate identity of its own (the row files).
+PUBLICATION_PAYLOAD_FILES: dict[tuple[str, str], str | None] = {
+    ("rows", "accepted.jsonl"): None,
+    ("rows", "report.json"): None,
+    ("rows", "profile.json"): None,
+    ("train", "train_adapter.py"): "trainer_sha256",
+    ("train", "prompt_template.py"): "template_sha256",
+    ("eval", "predict_dev.py"): "predictor_sha256",
+    ("eval", "dev_selection.py"): "scorer_sha256",
+}
+PUBLICATION_CANDIDATE_KEYS = frozenset(
+    {"commit", "trainer_sha256", "predictor_sha256", "scorer_sha256", "template_sha256"})
+PUBLICATION_RESOLUTION_KEYS = frozenset({
+    "format", "batch", "verified", "accepted_jsonl_sha256", "profile_sha256",
+    "publication_sha256", "trust_root_sha256", "validation_report_sha256", "bridge_sha256",
+})
+PUBLICATION_PROFILE_KEYS = frozenset({
+    "format", "batch", "built_by", "accepted_jsonl_sha256", "candidate_row_sha256",
+    "bundle_manifest_sha256", "recount_sha256", "validation_report_sha256", "row_schema_sha256",
+    "trust_root_sha256", "verified_pins_sha256", "source_groups_and_splits", "input_lineage_sha256",
+    "split_table_sha256", "constructor_inputs_sha256", "constructor_manifest_sha256",
+    "constructor_receipt_sha256", "constructor_admission_sha256", "constructor_recount_sha256",
+})
+PUBLICATION_PROFILE_SCALAR_SHA_FIELDS = (
+    "accepted_jsonl_sha256", "bundle_manifest_sha256", "recount_sha256", "validation_report_sha256",
+    "row_schema_sha256", "trust_root_sha256", "verified_pins_sha256", "split_table_sha256",
+    "constructor_inputs_sha256", "constructor_manifest_sha256", "constructor_receipt_sha256",
+    "constructor_admission_sha256", "constructor_recount_sha256",
+)
+PUBLICATION_REPORT_KEYS = frozenset(
+    {"format", "batch", "rows_in", "rows_admitted", "schema_valid", "splits", "accepted_jsonl_sha256"})
+
+
+def _publication_object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate key: {key!r}")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(token: str) -> Any:
+    raise ValueError(f"non-finite JSON constant is not allowed: {token}")
+
+
+def _load_strict_json(text: str) -> Any:
+    return json.loads(text, object_pairs_hook=_publication_object_pairs, parse_constant=_reject_json_constant)
+
+
+def _require_hex_field(value: Any, pattern: "re.Pattern[str]", label: str) -> None:
+    if not isinstance(value, str) or not pattern.fullmatch(value):
+        fail(f"publication binding {label} is invalid")
+
+
+def _read_publication_rows(
+    binding_path: Path, rows_dir: Path, code_dir: Path, eval_dir: Path,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Authenticate the staged publication binding before any model, tokenizer or callback is touched.
+
+    Re-hashes every payload file named in ``files`` against the binding's own
+    record, refuses any missing, duplicate or extra entry and refuses any
+    unexpected entry in the three staged directories (while never touching
+    anything outside them), cross-checks every declared identity (candidate
+    hashes, resolution digests, the admitted renderer digest), and re-derives
+    the per-source-group split and unique-group counts from the accepted rows,
+    the authenticated profile and the validation report. Reads accepted.jsonl
+    twice against its bound digest before parsing any rows, then returns the
+    publication metadata and those authenticated rows without rereading files.
+    Any defect calls ``fail`` (raising ``SystemExit``) before returning.
+    """
+    binding_path = Path(binding_path)
+    if not binding_path.is_file():
+        fail(f"publication binding not found: {binding_path}")
+    try:
+        binding = _load_strict_json(binding_path.read_text(encoding="utf-8"))
+    except (ValueError, json.JSONDecodeError) as exc:
+        fail(f"publication binding is not usable: {exc}")
+    if not isinstance(binding, dict) or set(binding) != {
+            "format", "batch", "candidate", "resolution", "root_sha256", "files"}:
+        fail("publication binding must contain exactly format, batch, candidate, resolution, root_sha256, files")
+    if binding["format"] != PUBLICATION_BINDING_FORMAT:
+        fail(f"publication binding format must be {PUBLICATION_BINDING_FORMAT!r}")
+    batch = binding["batch"]
+    if not isinstance(batch, str) or not _PUBLICATION_BATCH_PATTERN.fullmatch(batch):
+        fail("publication binding batch is invalid")
+
+    candidate = binding["candidate"]
+    if not isinstance(candidate, dict) or set(candidate) != PUBLICATION_CANDIDATE_KEYS:
+        fail("publication binding candidate must contain exactly commit, trainer_sha256, "
+             "predictor_sha256, scorer_sha256, template_sha256")
+    _require_hex_field(candidate["commit"], _HEX40_PATTERN, "candidate.commit")
+    for key in ("trainer_sha256", "predictor_sha256", "scorer_sha256", "template_sha256"):
+        _require_hex_field(candidate[key], _HEX64_PATTERN, f"candidate.{key}")
+    if candidate["template_sha256"] != ADMITTED_TEMPLATE_SHA256:
+        fail("publication binding candidate template_sha256 is not the admitted renderer digest")
+
+    resolution = binding["resolution"]
+    if not isinstance(resolution, dict) or set(resolution) != PUBLICATION_RESOLUTION_KEYS:
+        fail("publication binding resolution has an unexpected key set")
+    if resolution["format"] != PUBLICATION_RESOLUTION_FORMAT:
+        fail(f"publication binding resolution format must be {PUBLICATION_RESOLUTION_FORMAT!r}")
+    if resolution["batch"] != batch:
+        fail("publication binding resolution batch does not match the binding batch")
+    if resolution["verified"] is not True:
+        fail("publication binding resolution is not verified")
+    for key in ("accepted_jsonl_sha256", "profile_sha256", "publication_sha256",
+                "trust_root_sha256", "validation_report_sha256", "bridge_sha256"):
+        _require_hex_field(resolution[key], _HEX64_PATTERN, f"resolution.{key}")
+
+    root_sha256 = binding["root_sha256"]
+    _require_hex_field(root_sha256, _HEX64_PATTERN, "root_sha256")
+    if resolution["trust_root_sha256"] != root_sha256:
+        fail("publication binding root_sha256 does not match the resolution's trust_root_sha256")
+
+    files = binding["files"]
+    if not isinstance(files, list):
+        fail("publication binding files must be a list")
+    by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for entry in files:
+        if (not isinstance(entry, dict) or set(entry) != {"dir", "name", "sha256", "bytes"}
+                or not isinstance(entry.get("dir"), str) or not isinstance(entry.get("name"), str)
+                or (entry["dir"], entry["name"]) not in PUBLICATION_PAYLOAD_FILES
+                or not isinstance(entry.get("sha256"), str) or not _HEX64_PATTERN.fullmatch(entry["sha256"])
+                or type(entry.get("bytes")) is not int or entry["bytes"] < 0):
+            fail(f"publication binding files entry is invalid: {entry!r}")
+        key = (entry["dir"], entry["name"])
+        if key in by_key:
+            fail(f"publication binding files has a duplicate entry: {key[0]}/{key[1]}")
+        by_key[key] = entry
+    missing = set(PUBLICATION_PAYLOAD_FILES) - set(by_key)
+    extra = set(by_key) - set(PUBLICATION_PAYLOAD_FILES)
+    if missing or extra:
+        fail("publication binding files must list exactly the seven payload files "
+             f"(missing={sorted(missing)}, extra={sorted(extra)})")
+
+    dir_paths = {"rows": Path(rows_dir), "train": Path(code_dir), "eval": Path(eval_dir)}
+    payloads: dict[tuple[str, str], bytes] = {}
+    for (directory, name), entry in by_key.items():
+        path = dir_paths[directory] / name
+        if not path.is_file():
+            fail(f"publication binding payload file is missing: {directory}/{name}")
+        # Authenticate the exact bytes consumed below. Accepted rows need two
+        # independent reads; neither row JSON nor caller-provided objects are
+        # consumed until both reads match the admitted digest.
+        for _ in range(2 if (directory, name) == ("rows", "accepted.jsonl") else 1):
+            try:
+                data = path.read_bytes()
+            except OSError as exc:
+                fail(f"publication payload cannot be read: {directory}/{name}: {exc}")
+            if len(data) != entry["bytes"]:
+                fail(f"publication binding payload file has an unexpected byte count: {directory}/{name}")
+            if hashlib.sha256(data).hexdigest() != entry["sha256"]:
+                fail(f"publication binding payload file does not match its recorded digest: {directory}/{name}")
+        payloads[(directory, name)] = data
+
+    for directory, path in dir_paths.items():
+        allowed_names = {name for (d, name) in PUBLICATION_PAYLOAD_FILES if d == directory}
+        unexpected = {child.name for child in path.iterdir()} - allowed_names
+        if unexpected:
+            fail(f"unexpected entries in the staged {directory} directory: {sorted(unexpected)}")
+
+    for (directory, name), identity_key in PUBLICATION_PAYLOAD_FILES.items():
+        if identity_key is not None and candidate[identity_key] != by_key[(directory, name)]["sha256"]:
+            fail(f"publication binding candidate.{identity_key} does not match the staged {directory}/{name}")
+
+    for resolution_key, (directory, name) in (
+        ("accepted_jsonl_sha256", ("rows", "accepted.jsonl")),
+        ("validation_report_sha256", ("rows", "report.json")),
+        ("profile_sha256", ("rows", "profile.json")),
+    ):
+        if resolution[resolution_key] != by_key[(directory, name)]["sha256"]:
+            fail(f"publication binding resolution.{resolution_key} does not match the staged {directory}/{name}")
+
+    try:
+        profile = _load_strict_json(payloads[("rows", "profile.json")].decode("utf-8"))
+    except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        fail(f"profile.json is not usable: {exc}")
+    if not isinstance(profile, dict) or set(profile) != PUBLICATION_PROFILE_KEYS:
+        fail("profile.json has an unexpected key set")
+    if profile["format"] != PUBLICATION_PROFILE_FORMAT:
+        fail(f"profile.json format must be {PUBLICATION_PROFILE_FORMAT!r}")
+    if profile["batch"] != batch:
+        fail("profile.json batch does not match the publication binding")
+    if not isinstance(profile["built_by"], str) or not profile["built_by"].strip():
+        fail("profile.json built_by is invalid")
+    for field in PUBLICATION_PROFILE_SCALAR_SHA_FIELDS:
+        _require_hex_field(profile[field], _HEX64_PATTERN, f"profile.{field}")
+    if profile["accepted_jsonl_sha256"] != resolution["accepted_jsonl_sha256"]:
+        fail("profile.json accepted_jsonl_sha256 does not match the resolution")
+    if profile["validation_report_sha256"] != resolution["validation_report_sha256"]:
+        fail("profile.json validation_report_sha256 does not match the resolution")
+    if profile["trust_root_sha256"] != resolution["trust_root_sha256"]:
+        fail("profile.json trust_root_sha256 does not match the resolution")
+
+    _epoch_authority().authenticate(binding, profile,
+        by_key[("rows", "accepted.jsonl")]["sha256"],
+        by_key[("rows", "report.json")]["sha256"],
+        by_key[("rows", "profile.json")]["sha256"])
+
+    groups_and_splits = profile["source_groups_and_splits"]
+    if (not isinstance(groups_and_splits, dict) or not groups_and_splits
+            or any(not isinstance(group, str) or not group.strip() or split not in ("train", "dev")
+                   for group, split in groups_and_splits.items())):
+        fail("profile.json source_groups_and_splits must map each source group to 'train' or 'dev'")
+
+    lineage = profile["input_lineage_sha256"]
+    if (not isinstance(lineage, dict) or set(lineage) != set(groups_and_splits)
+            or any(not isinstance(v, str) or not _HEX64_PATTERN.fullmatch(v) for v in lineage.values())):
+        fail("profile.json input_lineage_sha256 must be an object keyed exactly like source_groups_and_splits")
+
+    row_digests = profile["candidate_row_sha256"]
+    if (not isinstance(row_digests, list)
+            or not row_digests
+            or any(not isinstance(d, str) or not _HEX64_PATTERN.fullmatch(d) for d in row_digests)
+            or len(set(row_digests)) != len(row_digests)):
+        fail("profile.json candidate_row_sha256 must be a non-empty, duplicate-free ordered list of row digests")
+
+    try:
+        validation_report = _load_strict_json(payloads[("rows", "report.json")].decode("utf-8"))
+    except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        fail(f"report.json is not usable: {exc}")
+    if not isinstance(validation_report, dict) or set(validation_report) != PUBLICATION_REPORT_KEYS:
+        fail("report.json has an unexpected key set")
+    if validation_report["format"] != "route-r-validation-report/v1":
+        fail("report.json format must be route-r-validation-report/v1")
+    if validation_report["batch"] != batch:
+        fail("report.json batch does not match the publication binding")
+    for key in ("rows_in", "rows_admitted", "schema_valid"):
+        if type(validation_report[key]) is not int or validation_report[key] < 0:
+            fail(f"report.json {key} is invalid")
+    if validation_report["rows_in"] < max(validation_report["rows_admitted"], validation_report["schema_valid"]):
+        fail("report.json rows_in is less than rows_admitted or schema_valid")
+    splits = validation_report["splits"]
+    if (not isinstance(splits, dict) or set(splits) != {"train", "dev"}
+            or any(type(v) is not int or v < 0 for v in splits.values())):
+        fail("report.json splits must contain exactly non-negative train and dev counts")
+    _require_hex_field(validation_report["accepted_jsonl_sha256"], _HEX64_PATTERN, "report.accepted_jsonl_sha256")
+    if validation_report["accepted_jsonl_sha256"] != resolution["accepted_jsonl_sha256"]:
+        fail("report.json accepted_jsonl_sha256 does not match the resolution")
+
+    try:
+        lines = [line for line in payloads[("rows", "accepted.jsonl")].decode("utf-8").splitlines() if line.strip()]
+    except UnicodeError as exc:
+        fail(f"accepted.jsonl is not UTF-8: {exc}")
+    if len(lines) != len(row_digests):
+        fail("accepted.jsonl row count does not match the profile's candidate_row_sha256")
+    parsed_rows: list[dict[str, Any]] = []
+    for line_number, line in enumerate(lines, start=1):
+        try:
+            parsed = _load_strict_json(line)
+        except (ValueError, json.JSONDecodeError) as exc:
+            fail(f"accepted.jsonl line {line_number} is not usable: {exc}")
+        if not isinstance(parsed, dict):
+            fail(f"accepted.jsonl line {line_number} is not an object")
+        group, split = parsed.get("source_group"), parsed.get("split")
+        if not isinstance(group, str) or not group.strip() or split not in ("train", "dev"):
+            fail(f"accepted.jsonl line {line_number} has an invalid source_group or split")
+        # route_r_row.canonical_bytes: whole row, compact sorted UTF-8, no LF.
+        canonical = json.dumps(parsed, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        if hashlib.sha256(canonical).hexdigest() != row_digests[line_number - 1]:
+            fail(f"accepted.jsonl line {line_number} does not match the ordered candidate_row_sha256")
+        parsed_rows.append(parsed)
+
+    if len(parsed_rows) != validation_report["rows_admitted"] or len(parsed_rows) != validation_report["schema_valid"]:
+        fail("accepted row count does not match report.json rows_admitted and schema_valid")
+
+    groups_by_split: dict[str, set[str]] = {"train": set(), "dev": set()}
+    for parsed in parsed_rows:
+        group, split = parsed["source_group"], parsed["split"]
+        expected_split = groups_and_splits.get(group)
+        if expected_split is None:
+            fail(f"accepted row source_group {group!r} is not in the profile's source_groups_and_splits")
+        if expected_split != split:
+            fail(f"accepted row source_group {group!r} split {split!r} does not match the profile's {expected_split!r}")
+        groups_by_split[split].add(group)
+
+    if set(groups_and_splits) - (groups_by_split["train"] | groups_by_split["dev"]):
+        fail("not every profile source_group appears among the accepted rows")
+    for split in ("train", "dev"):
+        if len(groups_by_split[split]) != splits[split]:
+            fail(f"unique source_group count for split {split!r} does not match report.json splits")
+
+    return {"batch": batch, "profile_sha256": resolution["profile_sha256"], "root_sha256": root_sha256}, parsed_rows
+
+
+def verify_publication_binding(
+    binding_path: Path, rows_dir: Path, code_dir: Path, eval_dir: Path,
+) -> dict[str, Any]:
+    """Verify the publication without exposing row content in its receipt."""
+    publication, _ = _read_publication_rows(binding_path, rows_dir, code_dir, eval_dir)
+    return publication
+
+
+def canonical_row_id(input_block: dict[str, Any], target_block: dict[str, Any]) -> str:
+    """Producer's pure canonical identity algorithm, without an unstaged import."""
+    canonical = json.dumps({"input": input_block, "target": target_block},
+                           sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def _single_token_ids(encoded: Any) -> list[int]:
+    if isinstance(encoded, dict):
+        encoded = encoded["input_ids"]
+    if hasattr(encoded, "tolist"):
+        encoded = encoded.tolist()
+    if isinstance(encoded, list) and len(encoded) == 1 and isinstance(encoded[0], list):
+        encoded = encoded[0]
+    if not isinstance(encoded, list) or not encoded or any(type(token) is not int for token in encoded):
+        raise ValueError("expected one nonempty tokenized prompt")
+    return encoded
+
+
+def input_prompt_ids(tokenizer: Any, input_block: dict[str, Any], *, template=None) -> list[int]:
+    # Match predict_dev's exact input-only renderer and generation call. Compare
+    # its default tokenization with explicit untruncated tokens before generation.
+    messages = (template if template is not None else _prompt_template()).render_messages(input_block)
+    kwargs = dict(tokenize=True, add_generation_prompt=True, enable_thinking=False, return_tensors="pt")
+    actual = _single_token_ids(tokenizer.apply_chat_template(messages, **kwargs))
+    untruncated = _single_token_ids(tokenizer.apply_chat_template(messages, truncation=False, **kwargs))
+    if actual != untruncated:
+        raise ValueError("generation tokenizer truncates or changes the input prompt")
+    return untruncated
+
+
+def preflight_epoch_dev(dev_rows: list[dict[str, Any]], tokenizer: Any, context_limit: int) -> None:
+    if type(context_limit) is not int or context_limit <= SEQ:
+        raise ValueError("epoch mode requires an explicit context limit greater than max_new_tokens")
+    for row in dev_rows:
+        prompt = input_prompt_ids(tokenizer, row["input"])
+        full = _single_token_ids(tokenizer.apply_chat_template(messages_for(row), tokenize=True,
+            add_generation_prompt=False, enable_thinking=False, truncation=False))
+        if len(full) > SEQ:
+            raise ValueError(f"dev prompt plus reference exceeds SEQ={SEQ}")
+        if len(prompt) + SEQ > context_limit:
+            raise ValueError("dev prompt plus max_new_tokens exceeds epoch context limit")
+
+
+def load_epoch_rows(
+    binding_path: Path, rows_dir: Path, code_dir: Path, eval_dir: Path,
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Consume the admitted producer schema; legacy loaders remain unchanged."""
+    publication, accepted = _read_publication_rows(binding_path, rows_dir, code_dir, eval_dir)
+    splits: dict[str, list[dict[str, Any]]] = {"train": [], "dev": []}
+    for line_number, row in enumerate(accepted, 1):
+        _require_accepted_row(row, line_number)
+        _validate_dev_row(row, row["split"])
+        if row["row_id"] != canonical_row_id(row["input"], row["target"]):
+            raise ValueError(f"accepted row {line_number} has a noncanonical row_id")
+        splits[row["split"]].append(row)
+    return publication, splits["train"], splits["dev"]
+
 
 def train(
-    rows: list[dict[str, Any]],
-    dev_rows: list[dict[str, Any]],
+    rows: list[dict[str, Any]] | None,
+    dev_rows: list[dict[str, Any]] | None,
     base: str,
     revision: str,
     steps: int | None,
@@ -1505,14 +2457,23 @@ def train(
     trusted_digest_root_path: Path | None = None,
     epochs: int | None = None,
     use_gradient_checkpointing: str | bool = "unsloth",
+    epoch_context_limit: int | None = None,
+    publication_binding_path: Path | None = None,
+    publication_rows_dir: Path | None = None,
+    publication_code_dir: Path | None = None,
+    publication_eval_dir: Path | None = None,
 ) -> dict[str, Any]:
     """QLoRA on admitted rows, with synchronous bound dev gates in epoch mode."""
     started = time.time()
-    run_dir = create_run_directory(report_path) if epochs is not None else None
+    supplied_rows, supplied_dev_rows = rows, dev_rows
+    if epochs is not None:
+        rows, dev_rows = [], []
+    run_dir = None
     checkpoints: list[dict[str, Any]] = []
     digest_verification, callback, trainer, peak, result = None, None, None, None, None
     memory_tracking_initialized = False
     resolved, mask_coverage = revision, 0.0
+    publication: dict[str, Any] | None = None
 
     def retained_report(*, state: str, selected: Any = None, completed: bool = False) -> dict[str, Any]:
         cadence = None if callback is None else {
@@ -1530,6 +2491,7 @@ def train(
             loss=None if state == "failed" or result is None else round(result.training_loss, 4),
             wall_seconds=time.time() - started, winner=winner, resolved_commit=resolved,
             digest_verification=digest_verification, epochs=epochs, checkpoints=checkpoints,
+            publication=publication,
             final_adapter=None, export_ready=False, output_dir=str(run_dir) if run_dir is not None else None,
             trainer_epoch=actual_trainer_epoch(getattr(trainer, "state", None)),
             checkpoint_artifacts_ready=completed, dev_cadence=cadence,
@@ -1541,27 +2503,51 @@ def train(
                 "numerator": callback.best_epoch_end_primary.numerator, "denominator": callback.best_epoch_end_primary.denominator},
             completed_epoch_ids=None if callback is None else sorted(callback.epoch_ends_done),
         )
+        if epochs is not None:
+            report["epoch_context_limit"] = epoch_context_limit
         write_report(report_path, report)
         return report
 
     try:
         if epochs is not None:
+            if publication_binding_path is None:
+                raise ValueError("epoch mode requires a publication binding")
+            if publication_rows_dir is None or publication_code_dir is None or publication_eval_dir is None:
+                raise ValueError("epoch mode requires the publication rows, code and eval directories")
+            # Authenticate the staged publication binding before anything else in
+            # epoch mode: no model, tokenizer, GPU or callback resource is touched
+            # above this line.
+            publication, rows, dev_rows = load_epoch_rows(
+                publication_binding_path, publication_rows_dir, publication_code_dir, publication_eval_dir)
+            # Direct callers cannot substitute rows after authenticating a
+            # different publication. Train only the decoded admitted bytes.
+            if ((supplied_rows is not None and supplied_rows != rows)
+                    or (supplied_dev_rows is not None and supplied_dev_rows != dev_rows)):
+                raise ValueError("epoch caller rows differ from the admitted publication")
             if type(epochs) is not int or not 1 <= epochs <= EPOCH_MODE_MAX:
                 raise ValueError("invalid requested epochs")
-            if not is_winner_pin(base, revision):
-                raise ValueError("epoch mode requires the explicit winner pin")
+            if not is_allowed_epoch_pin(base, revision):
+                raise ValueError("epoch mode requires an explicit supported student pin")
+            if type(epoch_context_limit) is not int or epoch_context_limit <= SEQ:
+                raise ValueError("epoch mode requires an explicit context limit greater than max_new_tokens")
             # Validate the cohort before any model or GPU operation. The approved
             # digest verification below reads local files, never loads a model.
             for row in rows:
                 _validate_dev_row(row, "train")
             for row in dev_rows:
                 _validate_dev_row(row, "dev")
+            run_dir = create_run_directory(report_path)
             # Batch size is fixed at one. With <= 8 rows the first optimizer
             # update is already epoch end, so no interior midpoint can exist.
             if len(rows) <= TRAIN_GRAD_ACCUM:
                 raise ValueError("epoch mode needs more than 8 training rows for an interior first-epoch update")
+        snapshot_paths: list[Path] = []
         digest_verification = digest_verification_before_load(
-            base, revision, expected_digests_path, trusted_digest_root_path)
+            base, revision, expected_digests_path, trusted_digest_root_path, resolved=snapshot_paths,
+            receipt_path=report_path.with_suffix(".verified-read.json"))
+        # Keep the report's resolved commit separate from snapshot discovery,
+        # including when authentication or model loading fails before resolution.
+        snapshot = snapshot_paths[0] if snapshot_paths else local_snapshot_dir(base, revision)
         callbacks = []
         if epochs is not None:
             if not isinstance(digest_verification, dict):
@@ -1573,18 +2559,14 @@ def train(
             })
             callback = DevEvaluationCallback(None, run_dir, checkpoints, context,
                 max_epochs=EPOCH_MODE_MAX, requested_epochs=epochs,
-                use_gradient_checkpointing=use_gradient_checkpointing)
+                use_gradient_checkpointing=use_gradient_checkpointing, base_repo=base)
             callbacks.append(callback)
         set_seed(SEED)
         torch.cuda.reset_peak_memory_stats()
         memory_tracking_initialized = True
-        load_kwargs: dict[str, Any] = {}
-        if digest_verification is not None:
-            load_kwargs["local_files_only"] = True
-        model, tokenizer = FastLanguageModel.from_pretrained(
-            base, revision=revision, max_seq_length=SEQ, load_in_4bit=True,
-            use_exact_model_name=True, **load_kwargs)
-        resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision)
+        model, tokenizer = load_verified_model(snapshot, digest_verification,
+            max_seq_length=epoch_context_limit if epochs is not None else SEQ)
+        resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision, snapshot)
         if callback is not None and callback.identity["base_revision"] != resolved:
             raise ValueError("loaded model differs from frozen dev identity")
         model = FastLanguageModel.get_peft_model(
@@ -1597,8 +2579,11 @@ def train(
 
         def tokenize(messages: list[dict[str, str]], add_generation_prompt: bool) -> list[int]:
             return list(tokenizer.apply_chat_template(messages, tokenize=True,
-                add_generation_prompt=add_generation_prompt, enable_thinking=False))
+                add_generation_prompt=add_generation_prompt, enable_thinking=False,
+                **({"truncation": False} if epochs is not None else {})))
 
+        if epochs is not None:
+            preflight_epoch_dev(dev_rows, tokenizer, epoch_context_limit)
         encoded = encode_rows(rows, tokenize)
         lengths = token_lengths(encoded)
         overlength = [length for length in lengths if length > SEQ]
@@ -1615,6 +2600,8 @@ def train(
         peak = torch.cuda.max_memory_reserved() / 2**30
         if epochs is not None:
             require_vram(peak, winner=winner)
+            if not math.isfinite(peak) or peak < 0 or not probe_memory_pass(peak):
+                fail(f"epoch peak reserved VRAM must be finite, non-negative and strictly below {WINNER_VRAM_GIB:.1f} GiB")
             # Refuse absent callback termination; do not synthesize completion
             # from a Trainer result or from files alone.
             selected = callback.completed_selection()
@@ -1629,7 +2616,7 @@ def train(
         require_vram(peak, winner=winner)
         return report
     except BaseException as exc:
-        if epochs is not None:
+        if epochs is not None and run_dir is not None:
             if memory_tracking_initialized:
                 try:
                     sampled_peak = torch.cuda.max_memory_reserved() / 2**30
@@ -1646,6 +2633,165 @@ def train(
         raise
 
 
+def context_probe_input(record: dict[str, Any], *, template) -> dict[str, Any]:
+    """Accept bare inputs or the constructor's exact input-only envelope shape.
+
+    This checks shape for rendering, not source custody or constructor admission.
+    The original file digest remains the Director's batch-binding evidence.
+    """
+    if "protocol" in record:
+        keys = {"protocol", "disposition", "source_group", "kep_number", "selection_rank", "source_ref",
+                "source_sha256", "source_git_blob", "policy_sha256", "qualified_selection_sha256",
+                "source_captured_at", "generated_at", "input", "title_span", "objective_span", "context_spans"}
+        if (set(record) != keys or record["protocol"] != "kep-input/v1"
+                or record["disposition"] != "construction_only"):
+            raise ValueError("context probe requires the exact kep-input/v1 construction-only envelope")
+        record = record["input"]
+        if not isinstance(record, dict) or set(record) != {"objective", "repository", "title", "context"}:
+            raise ValueError("context probe constructor input shape is invalid")
+    if not isinstance(record, dict):
+        raise ValueError("context probe input must be an object")
+    template.input_contract(record)  # Reject targets and all other extra fields.
+    if any(not isinstance(record[key], str) or not record[key].strip() for key in ("objective", "repository", "title")):
+        raise ValueError("context probe input fields must be nonempty strings")
+    if "context" in record and template.context_shape_errors(record["context"]):
+        raise ValueError("context probe input context shape is invalid")
+    template.render_messages(record)  # Validate rendering before any model load.
+    return record
+
+
+# Route-specific safety ceilings, not corpus qualification. The v3 constructor
+# budgets 2,500 content characters per input and requires at least 200 inputs;
+# these limits leave envelope/UTF-8/JSON escaping headroom without unbounded lists.
+CONTEXT_INPUT_MAX_BYTES = 16 * 1024 * 1024
+CONTEXT_INPUT_MAX_RECORDS = 1024
+CONTEXT_INPUT_MAX_LINE_BYTES = 64 * 1024
+
+
+def _read_context_probe_inputs(path: Path, template) -> tuple[list[dict[str, Any]], str]:
+    inputs = []
+    total = 0
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            # Each read is bounded before allocation, including a missing newline.
+            line = handle.readline(min(CONTEXT_INPUT_MAX_LINE_BYTES, CONTEXT_INPUT_MAX_BYTES - total) + 1)
+            if not line:
+                break
+            total += len(line)
+            if total > CONTEXT_INPUT_MAX_BYTES:
+                raise ValueError("context input byte limit exceeded")
+            if len(line) > CONTEXT_INPUT_MAX_LINE_BYTES:
+                raise ValueError("context input record byte limit exceeded")
+            digest.update(line)  # Original bytes, including whitespace and CRLF.
+            text = line.decode("utf-8")
+            if not text.strip():
+                continue  # Existing JSONL blank-line handling; bytes still hashed.
+            if len(inputs) >= CONTEXT_INPUT_MAX_RECORDS:
+                raise ValueError("context input record count limit exceeded")
+            item = _load_strict_json(text)
+            if not isinstance(item, dict):
+                raise ValueError("context probe needs JSONL input objects")
+            inputs.append(context_probe_input(item, template=template))
+    if not inputs:
+        raise ValueError("context probe needs nonempty JSONL input records")
+    return inputs, digest.hexdigest()
+
+
+def run_context_probe(inputs_path: Path, base: str, revision: str, report_path: Path, *,
+                      context_limit: int, expected_digests_path: Path | None = None,
+                      trusted_digest_root_path: Path | None = None) -> dict[str, Any]:
+    """One real input, one forced full generation; output is discarded, never graded."""
+    report = {"format": "adapter-context-probe/v1", "base": base, "revision": revision,
+              "inputs_sha256": None, "input_count": None,
+              "requested_context_limit": context_limit, "max_new_tokens": SEQ,
+              "template_sha256": None, "seed": SEED, "thinking": False,
+              "generation_executed": False, "context_pass": False, "qualified": False,
+              "truncation": None, "total_positions": None, "peak_reserved_gib": None}
+    loaded = False
+    try:
+        if type(context_limit) is not int or context_limit <= SEQ:
+            raise ValueError("context probe requires an explicit load context limit greater than max_new_tokens")
+        template_path = Path(__file__).with_name("prompt_template.py")
+        # The admitted renderer is 8,462 bytes. Bound even a substituted source
+        # before hashing; execute only this verified buffer, never a cached module.
+        with template_path.open("rb") as handle:
+            template_bytes = handle.read(64 * 1024 + 1)
+        template = _verified_source_module(template_bytes, template_path, ADMITTED_TEMPLATE_SHA256,
+                                           "context_prompt_template", "context probe template digest mismatch")
+        report["template_sha256"] = hashlib.sha256(template_bytes).hexdigest()
+        inputs, input_sha256 = _read_context_probe_inputs(inputs_path, template)
+        report.update(inputs_sha256=input_sha256, input_count=len(inputs))
+        resolved: list[Path] = []
+        verification = digest_verification_before_load(base, revision, expected_digests_path, trusted_digest_root_path,
+                                                       resolved=resolved,
+                                                       receipt_path=report_path.with_suffix(".verified-read.json"))
+        snapshot = resolved[0] if resolved else local_snapshot_dir(base, revision)  # the one resolution, before any model effect
+        set_seed(SEED)
+        model, tokenizer = load_verified_model(snapshot, verification, max_seq_length=context_limit)
+        loaded = True
+        report["resolved_commit"] = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision, snapshot)
+        report["digest_verification"] = verification
+        for key, value in (("tokenizer_model_max_length", getattr(tokenizer, "model_max_length", None)),
+                           ("model_max_seq_length", getattr(model, "max_seq_length", None)),
+                           ("config_max_position_embeddings", getattr(model.config, "max_position_embeddings", None))):
+            report[key] = value if type(value) is int else None
+        # Keep just the longest prompt; nothing generated becomes a target or an evaluation input.
+        lengths, longest = [], []
+        for position, item in enumerate(inputs, 1):
+            tokens = input_prompt_ids(tokenizer, item, template=template)
+            lengths.append(len(tokens))
+            if len(tokens) > len(longest):
+                longest = tokens
+                report["record_position"] = position
+        ordered = sorted(lengths)
+        middle = len(ordered) // 2
+        median = ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
+        report.update(prompt_min=min(lengths), prompt_median=median, prompt_max=len(longest),
+                      required_positions=len(longest) + SEQ)
+        if len(longest) + SEQ > context_limit:
+            raise ValueError("longest input plus max_new_tokens exceeds requested probe context")
+        input_ids = torch.tensor([longest], dtype=torch.long, device=model.device)
+        attention_mask = torch.ones_like(input_ids)
+        torch.cuda.reset_peak_memory_stats()
+        FastLanguageModel.for_inference(model)
+        try:
+            report["generation_executed"] = True
+            with torch.inference_mode():
+                generated = model.generate(input_ids=input_ids, attention_mask=attention_mask,
+                    do_sample=False, min_new_tokens=SEQ, max_new_tokens=SEQ, return_dict_in_generate=False)
+            output = _single_token_ids(generated)
+            report["total_positions"] = len(output)
+            report["new_tokens"] = len(output) - len(longest)
+            report["truncation"] = output[:len(longest)] != longest
+            del output, generated
+        finally:
+            FastLanguageModel.for_training(model, use_gradient_checkpointing="unsloth")
+        report["peak_reserved_gib"] = torch.cuda.max_memory_reserved() / 2**30
+        report["context_pass"] = (report["truncation"] is False and report["new_tokens"] == SEQ
+                                  and report["total_positions"] == report["required_positions"]
+                                  and report["peak_reserved_gib"] < 11)
+        if not report["context_pass"]:
+            raise ValueError("context generation did not reach the full untruncated prompt+2048 below 11 GiB")
+        write_report(report_path, report)
+        return report
+    except BaseException as exc:
+        report["context_pass"] = False
+        report["error_type"] = type(exc).__name__
+        if loaded:
+            try:
+                report["peak_reserved_gib"] = torch.cuda.max_memory_reserved() / 2**30
+            except BaseException:
+                pass
+        try:
+            write_report(report_path, report)
+        except BaseException as report_exc:
+            # Retain the original refusal even if the report destination itself
+            # is unwritable. No input text or exception message enters telemetry.
+            exc.add_note("context probe failure report could not be persisted: " + type(report_exc).__name__)
+        raise
+
+
 def run_probe(
     rows: list[dict[str, Any]],
     base: str,
@@ -1658,22 +2804,15 @@ def run_probe(
     trusted_digest_root_path: Path | None = None,
 ) -> dict[str, Any]:
     """D-M1-F feasibility probe: measure row lengths, VRAM and a three-epoch time estimate."""
+    resolved: list[Path] = []
     digest_verification = digest_verification_before_load(
-        base, revision, expected_digests_path, trusted_digest_root_path,
+        base, revision, expected_digests_path, trusted_digest_root_path, resolved=resolved,
+        receipt_path=report_path.with_suffix(".verified-read.json"),
     )
+    snapshot = resolved[0] if resolved else local_snapshot_dir(base, revision)  # the one resolution, before any model effect
     set_seed(SEED)
-    load_kwargs: dict[str, Any] = {}
-    if digest_verification is not None:
-        load_kwargs["local_files_only"] = True
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        base,
-        revision=revision,
-        max_seq_length=probe_seq_len,
-        load_in_4bit=True,
-        use_exact_model_name=True,
-        **load_kwargs,
-    )
-    resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision)
+    model, tokenizer = load_verified_model(snapshot, digest_verification, max_seq_length=probe_seq_len)
+    resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision, snapshot)
     model = FastLanguageModel.get_peft_model(
         model,
         r=16,
@@ -1811,15 +2950,22 @@ def main(argv: list[str] | None = None) -> None:
                         help="Smoke/dry-run length in optimizer steps; exactly one of --steps or --epochs.")
     parser.add_argument("--epochs", type=int, default=None,
                         help="Epoch mode: N epochs (1-6) with per-epoch adapter leaves; no default.")
+    parser.add_argument("--epoch-context-limit", type=int, default=None,
+                        help="Measured total positions for the unchanged constructed batch; epoch mode requires it.")
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--winner", action="store_true")
     parser.add_argument("--check-only", action="store_true", help="Validate rows and exit. No GPU and no report.")
     parser.add_argument("--probe", action="store_true", help="D-M1-F feasibility probe; writes metrics only.")
+    parser.add_argument("--probe-context-inputs", type=Path, default=None, help="Separate short input-only context probe JSONL.")
+    parser.add_argument("--probe-context-limit", type=int, default=None, help="Explicit context probe load request; not a qualification claim.")
     parser.add_argument("--probe-rows-total", type=int, default=None)
     parser.add_argument("--probe-seq-len", type=int, default=SEQ)
     parser.add_argument("--expected-digests", type=Path, default=None)
     parser.add_argument("--trusted-digest-root", type=Path, default=None,
                         help="Approved root file; its SHA-256 is pinned in the trainer.")
+    parser.add_argument("--publication-binding", type=Path, default=None,
+                        help="Epoch mode only: staged publication binding authenticating rows, "
+                             "trainer, predictor, scorer and renderer before GPU training proceeds.")
     args = parser.parse_args(argv)
     explicit_pin = args.base is not None and args.revision is not None
     args.base = args.base if args.base is not None else os.environ.get("ADAPTER_BASE", SMOKE_BASE)
@@ -1837,10 +2983,20 @@ def main(argv: list[str] | None = None) -> None:
             fail(f"--epochs must be {EPOCH_MODE_MIN} to {EPOCH_MODE_MAX}")
         if args.probe:
             fail("--epochs cannot be combined with --probe")
-        if not explicit_pin or not is_winner_pin(args.base, args.revision):
-            fail(f"epoch mode requires explicit --base {WINNER_BASE} --revision {WINNER_REVISION}")
-    elif not args.probe and not args.check_only and args.steps is None:
-        fail("a training run needs exactly one of --steps or --epochs")
+        if not explicit_pin or not is_allowed_epoch_pin(args.base, args.revision):
+            fail(f"epoch mode requires explicit --base and --revision for {WINNER_BASE}@{WINNER_REVISION} "
+                 f"or {FALLBACK_BASE}@{FALLBACK_REVISION} or {STUDENT_BASE}@{STUDENT_REVISION}")
+        if args.publication_binding is None:
+            fail("--publication-binding is required in epoch mode")
+        if args.epoch_context_limit is None or args.epoch_context_limit <= SEQ:
+            fail("--epoch-context-limit must be explicit and greater than max_new_tokens")
+    else:
+        if args.epoch_context_limit is not None:
+            fail("--epoch-context-limit is only valid in epoch mode")
+        if args.publication_binding is not None:
+            fail("--publication-binding is only valid in epoch mode")
+        if not args.probe and not args.check_only and args.steps is None:
+            fail("a training run needs exactly one of --steps or --epochs")
     if args.probe_rows_total is not None and args.probe_rows_total < 1:
         fail("probe-rows-total must be positive")
     if args.probe_seq_len < 1:
@@ -1852,15 +3008,36 @@ def main(argv: list[str] | None = None) -> None:
     if args.probe and not is_allowed_probe_pin(args.base, args.revision):
         fail(
             f"D-M1-F probe is pinned to {WINNER_BASE}@{WINNER_REVISION}, "
-            f"{FALLBACK_BASE}@{FALLBACK_REVISION}, or {SMOKE_BASE}@{SMOKE_REVISION}"
+            f"{FALLBACK_BASE}@{FALLBACK_REVISION}, {STUDENT_BASE}@{STUDENT_REVISION}, or {SMOKE_BASE}@{SMOKE_REVISION}"
         )
     if args.winner and (args.base != WINNER_BASE or args.revision != WINNER_REVISION):
         fail(f"winner probe is pinned to {WINNER_BASE}@{WINNER_REVISION}")
+    if args.probe_context_inputs is not None or args.probe_context_limit is not None:
+        if (not args.probe or args.probe_context_inputs is None or args.probe_context_limit is None
+                or args.probe_context_limit <= SEQ):
+            fail("context probe requires --probe, --probe-context-inputs and explicit --probe-context-limit > 2048")
+        report = run_context_probe(args.probe_context_inputs, args.base, args.revision, args.report,
+            context_limit=args.probe_context_limit, expected_digests_path=args.expected_digests,
+            trusted_digest_root_path=args.trusted_digest_root)
+        print(json.dumps(report, indent=2))
+        return
     try:
-        rows = load_training_rows(args.rows)
-        dev_rows = load_dev_rows(args.rows) if args.epochs is not None else []
-    except BaseException as exc:
         if args.epochs is not None:
+            if args.rows.name != "accepted.jsonl":
+                fail("epoch mode requires the admitted accepted.jsonl")
+            # The normal epoch path loads once inside train(), before CUDA or
+            # model access. Check-only uses the same authenticated loader.
+            rows, dev_rows = None, None
+            if args.check_only:
+                _, rows, dev_rows = load_epoch_rows(
+                    args.publication_binding, args.rows.parent,
+                    Path(__file__).resolve().parent, Path(__file__).resolve().parent.parent / "eval")
+                if not rows:
+                    fail(f"no train rows in {args.rows}")
+        else:
+            rows, dev_rows = load_training_rows(args.rows), []
+    except BaseException as exc:
+        if args.epochs is not None and not args.check_only:
             run_dir = create_run_directory(args.report)
             _initial_failure_state(run_dir, "input_" + type(exc).__name__)
             report = build_report(run=args.report.stem, base=args.base, revision=args.revision,
@@ -1899,6 +3076,11 @@ def main(argv: list[str] | None = None) -> None:
             expected_digests_path=args.expected_digests,
             trusted_digest_root_path=args.trusted_digest_root,
             epochs=args.epochs,
+            epoch_context_limit=args.epoch_context_limit,
+            publication_binding_path=args.publication_binding,
+            publication_rows_dir=args.rows.parent,
+            publication_code_dir=Path(__file__).resolve().parent,
+            publication_eval_dir=Path(__file__).resolve().parent.parent / "eval",
         )
     print(json.dumps(report, indent=2))
 

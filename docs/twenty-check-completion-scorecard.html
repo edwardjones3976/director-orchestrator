@@ -990,8 +990,11 @@ is no actual cost. Without either secret nothing it signs verifies, and the
 report says which secrets were available, and its <code>approval_resume</code> command receipts (SHA-256 of
 the command ID, command and resulting projection digests, recorded time). In
 <code>owner-local-evidence-v1</code> mode it also returns the pinned adoption's
-repository, pull request, author, reviewers, reviewed source and adoption
-digest. A task is terminal here when its terminal classification is set,
+repository, pull request, author, independent-review and security receipt
+actors, reviewed source and adoption digest (these activation evidence roles do
+not prescribe two engineering reviewers; schema fields such as
+<code>independent_reviewer</code> and <code>security_reviewer</code> remain unchanged). A task is
+terminal here when its terminal classification is set,
 unless it is <code>OWNER_DECISION_REQUIRED</code> with a pending approval request (the
 predicate Slack delivery enqueues approvals by): that hold is resumable, so
 its open assignments, effects and unbound batch count as in flight. An
