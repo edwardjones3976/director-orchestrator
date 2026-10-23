@@ -1339,6 +1339,7 @@ class StandingGrantExerciseTests(unittest.TestCase):
 
         ledger = audit_ledger(self.directory)
         readers = []
+        advanced_at = []
         real_advance = ledger._audit_anchor.compare_and_set
 
         def slow_advance(expected, updated, **kwargs):
@@ -1347,7 +1348,19 @@ class StandingGrantExerciseTests(unittest.TestCase):
             reader.execute("BEGIN")
             reader.execute("SELECT count(*) FROM delegated_decision_audit").fetchone()
             readers.append(reader)
-            time_module.sleep(0.7)
+            time_module.sleep(1.0)
+            advanced_at.append(time_module.monotonic())
+
+        # The busy wait each statement gets is read from SQLite's own trace,
+        # not from wall-clock time, which a loaded runner stretches: a fixed
+        # elapsed-time bound flaked on hosted Windows at 0.5 s of slack.
+        statements = []
+        real_connect = sqlite3.connect
+
+        def traced_connect(*args, **kwargs):
+            connection = real_connect(*args, **kwargs)
+            connection.set_trace_callback(statements.append)
+            return connection
 
         ledger._audit_anchor.compare_and_set = slow_advance
         now = datetime.now(timezone.utc)
@@ -1358,14 +1371,26 @@ class StandingGrantExerciseTests(unittest.TestCase):
             acting_agent="director-langgraph:DIR-LG-COMMIT", verdicts=(),
             gate_results=(GateResult("authorization", GateStatus.FAIL, now),), recorded_at=now)
         started = time_module.monotonic()
+        deadline = started + 2.0
         try:
-            with self.assertRaises(DelegationAuditAnchorUnavailable):
-                ledger.append_delegation_audit_record(record, deadline=started + 1.0)
+            with patch.object(sqlite3, "connect", traced_connect), \
+                    self.assertRaises(DelegationAuditAnchorUnavailable):
+                ledger.append_delegation_audit_record(record, deadline=deadline)
         finally:
             for reader in readers:
                 reader.rollback()
                 reader.close()
-        self.assertLess(time_module.monotonic() - started, 1.5)
+        waits = [int(match.group(1)) for statement in statements
+                 if (match := re.fullmatch(r"PRAGMA busy_timeout = (\d+)", statement))]
+        # One busy wait when the connection opened, one reset before commit.
+        self.assertEqual(len(waits), 2, waits)
+        self.assertEqual(len(advanced_at), 1)
+        # The commit waits at most what was left once the advance returned,
+        # never the wait set at open, which the advance has spent 1 s of.
+        self.assertLessEqual(waits[1], max(1, int((deadline - advanced_at[0]) * 1000)))
+        self.assertLessEqual(waits[1], waits[0] - 1000)
+        # Only a hang guard: the contract is pinned by the trace above.
+        self.assertLess(time_module.monotonic() - started, 30)
 
     def test_lock_busy_wait_and_anchor_advance_spend_the_same_deadline(self):
         """A contended or slow ledger refuses at the deadline and writes nothing."""
