@@ -29,6 +29,17 @@ DSN_VARIABLE = "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN"
 # Eight shards retain at most this much stdout each. Past the cap the rest is
 # discarded and the shard cannot pass.
 OUTPUT_LIMIT = 1 << 20
+# Fixed director-release refusal codes; a tail line consisting of exactly
+# one of these after a canonical ReleaseError class carries no private value.
+RELEASE_REFUSAL_CODES = (
+    "platform_check_failed",
+    "doctor_deadline_exhausted",
+    "untrusted_executable",
+    "command_output_exceeded",
+    "system_directory_unavailable",
+)
+_RELEASE_REFUSAL = re.compile(
+    r"((?:director_release_under_test\.)?ReleaseError): (" + "|".join(RELEASE_REFUSAL_CODES) + ")")
 _LIVE_PROCESSES = set()
 _LIVE_LOCK = threading.Lock()
 
@@ -286,7 +297,8 @@ def sanitized_tail(output):
         elif frame:
             lines.append(f"  File {frame[1]}, line {frame[2]}, in {frame[3]}")
         elif error:
-            lines.append(error[1] + ": [message redacted]")
+            refusal = _RELEASE_REFUSAL.fullmatch(line)
+            lines.append(f"{refusal[1]}: {refusal[2]}" if refusal else error[1] + ": [message redacted]")
         elif re.fullmatch(r"(?:Traceback \(most recent call last\):|[=\-]+|Ran \d+ tests? in [\d.]+s|(?:OK|FAILED)(?: \((?:(?:failures|errors|skipped|expected failures|unexpected successes)=\d+)(?:, (?:failures|errors|skipped|expected failures|unexpected successes)=\d+)*\))?|)", line):
             lines.append(line)
         else:

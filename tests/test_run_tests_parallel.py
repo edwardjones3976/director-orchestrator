@@ -344,6 +344,35 @@ class ParallelRunnerTests(unittest.TestCase):
         self.assertIn("AssertionError: [message redacted]", rendered)
         self.assertIn("FAILED (failures=1)", rendered)
 
+    def test_tail_retains_only_exact_fixed_release_refusal_codes(self):
+        codes = ("platform_check_failed", "doctor_deadline_exhausted", "untrusted_executable",
+                 "command_output_exceeded", "system_directory_unavailable")
+        self.assertEqual(codes, runner.RELEASE_REFUSAL_CODES)
+        for name in ("ReleaseError", "director_release_under_test.ReleaseError"):
+            for code in codes:
+                with self.subTest(name=name, code=code):
+                    self.assertEqual([f"{name}: {code}"], runner.sanitized_tail(f"{name}: {code}\n"))
+        redacted = {
+            "ReleaseError: unknown_refusal": "ReleaseError: [message redacted]",
+            "ReleaseError: platform_check_failed sk-private": "ReleaseError: [message redacted]",
+            "ReleaseError: sk-private platform_check_failed": "ReleaseError: [message redacted]",
+            "ReleaseError: platform_check_failed: /private/path": "ReleaseError: [message redacted]",
+            "ReleaseError: platform_check_failed ": "ReleaseError: [message redacted]",
+            "ReleaseError:platform_check_failed": "ReleaseError: [message redacted]",
+            "ReleaseError: PLATFORM_CHECK_FAILED": "ReleaseError: [message redacted]",
+            "ReleaseError": "ReleaseError: [message redacted]",
+            "RuntimeError: platform_check_failed": "RuntimeError: [message redacted]",
+            "AssertionError: private assertion value": "AssertionError: [message redacted]",
+            "director_release.ReleaseError: platform_check_failed": "director_release.ReleaseError: [message redacted]",
+            "other.director_release_under_test.ReleaseError: untrusted_executable":
+                "other.director_release_under_test.ReleaseError: [message redacted]",
+            " ReleaseError: platform_check_failed": "[output redacted]",
+            "releaseerror: platform_check_failed": "[output redacted]",
+        }
+        for line, expected in redacted.items():
+            with self.subTest(line=line):
+                self.assertEqual([expected], runner.sanitized_tail(line + "\n"))
+
     def test_stopping_a_registered_shard_returns_before_its_timeout(self):
         self.module(
             "test_child",

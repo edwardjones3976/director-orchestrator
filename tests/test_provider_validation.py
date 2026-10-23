@@ -1008,7 +1008,7 @@ class PostgresValidationTests(unittest.TestCase):
                 (admission["reservation"],)).fetchone()[0]
         self.assertNotEqual("succeeded",row[0]);self.assertIsNone(row[1]);self.assertEqual(0,succeeded)
 
-    def _responses_service_fixture(self,*,transport_ceiling=60):
+    def _responses_service_fixture(self,*,transport_ceiling=60,packet_ceiling=2):
         """Real store and service; only the provider transport is synthetic.
 
         `transport_ceiling` bounds `maximum_timeout_seconds`. It defaults to a
@@ -1017,12 +1017,15 @@ class PostgresValidationTests(unittest.TestCase):
         The admission contention case needs it equal to the packet ceiling
         instead: admission itself runs before that packet is even known, so
         it can only ever be bounded by the transport ceiling.
+        `packet_ceiling` is the work packet's `timeout_seconds`, bound before
+        canonicalization and digest pinning. The 2s default is the contract
+        the contention, cleanup and drift cases verify.
         """
         import time as time_module
         from types import SimpleNamespace
         from director_orchestrator.openai_responses_validation import OpenAIResponsesValidationRoute
         work=work_packet()
-        work["limits"]["timeout_seconds"]=2
+        work["limits"]["timeout_seconds"]=packet_ceiling
         packet=canonical_json_bytes(work)
         transport=SimpleNamespace(model="gpt-fixture-responses",
             api_url="https://api.openai.com/v1/responses",_api_key="sk-contention-fixture",
@@ -1442,7 +1445,11 @@ class PostgresValidationTests(unittest.TestCase):
         transport call and a verifiable evidence digest. This is the baseline
         the claim/fence/settle contention cases above are refused against.
         """
-        fixture=self._responses_service_fixture()
+        # A functional baseline, not a deadline test: CI 39977962976 exhausted
+        # the 2s packet after send, fence and rehash but before settlement.
+        # 30s is bounded fixture headroom, not a measured performance guarantee;
+        # the 2s contract stays covered by the contention cases.
+        fixture=self._responses_service_fixture(packet_ceiling=30)
         result=fixture["service"].run(ValidationRequest(
             generation=fixture["generation"],provider="openai"),OWNER)
         self.assertTrue(result.get("evidence_digest"))
