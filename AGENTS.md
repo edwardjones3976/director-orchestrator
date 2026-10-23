@@ -178,7 +178,7 @@ Owner protocol decision, 2026-09-08 UTC. The owner's instruction, verbatim:
 
 > If they approve it, they should merge it as well.
 
-**Merge execution:** MERGE_AUTHORITY = owner-merge-law-2026-09-26, reconciled by WO-G48 under explicit owner delegation. The eligible non-contributing accepting reviewer carries the merge into protected or non-protected branches only after every deterministic gate passes. No separate deployment grant is required for merge execution; no protection bypass or other action class is authorized. Governing reference: `docs/human-out-of-the-loop-operation.html#standing-owner-authority-for-pull-request-merge-execution`.
+**One `ACCEPT` is not merge authority** by itself. **Merge execution:** MERGE_AUTHORITY = owner-merge-law-2026-09-26, reconciled by WO-G48 under explicit owner delegation. The eligible non-contributing accepting reviewer carries the merge into protected or non-protected branches only after every deterministic gate passes. No separate deployment grant is required for merge execution; no protection bypass or other action class is authorized. Governing reference: `docs/human-out-of-the-loop-operation.html#standing-owner-authority-for-pull-request-merge-execution`.
 
 **Superseded for merge execution only by WO-G48 Matter 4; retained as historical instruction.** Governing reference: `docs/human-out-of-the-loop-operation.html#standing-owner-authority-for-pull-request-merge-execution` (`owner-merge-law-2026-09-26`). Previously — **Current runtime enforcement. One `ACCEPT` is not merge authority.** A single exact-SHA `ACCEPT` obliges the
 approver to carry the candidate towards a terminal result rather than hand it
