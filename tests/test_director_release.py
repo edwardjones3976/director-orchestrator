@@ -1782,11 +1782,14 @@ class ReleasePreparationTests(unittest.TestCase):
         for value in (self.compose, self.sibling_compose):
             path = self.root / (value["name"] + ".json")
             path.write_bytes(release.encoded(value))
+            pins = [{"path": str(path), "sha256": release.sha(path.read_bytes())}]
+            models = release.compose_input_check(pins, self.spec["runtime_env"])
             result = subprocess.run(["docker", "compose", "--project-name", value["name"], "--env-file",
                 self.spec["runtime_env"]["path"], "-f", str(path), "config", "--format", "json"],
                 cwd=self.root, env=release.child_environment(), capture_output=True, timeout=180)
             self.assertEqual(result.returncode, 0, "configuration-only Compose producer failed")
-            graphs.append(json.loads(result.stdout))
+            release.compose_input_check(pins, self.spec["runtime_env"])
+            graphs.append(release.preserve_explicit_bind_false(json.loads(result.stdout), models))
             self.assertRegex(resolved_deployment_digest(graphs[-1], self.image), r"^[0-9a-f]{64}$")
         release.isolated_sibling(*graphs, 18080)
         graphs[1]["services"]["orchestrator"]["ports"][0]["published"] = "8080"
@@ -3168,6 +3171,81 @@ except m['ReleaseError']: pass
             with self.subTest(entry=entry), self.assertRaisesRegex(release.ReleaseError, "compose_env_file_unbound"):
                 release.Release(self.descriptor)
             self.assertEqual(self.calls, [])
+
+    def test_bind_false_omission_is_restored_from_same_pinned_input(self):
+        sibling = self.sibling()
+        original = copy.deepcopy(self.sibling_compose)
+        sibling["compose_files"] = [self.pin("compose.yml", release.encoded(original))]
+        self.spec["rehearsal"]["descriptor"] = self.pin("sibling.json", release.encoded(sibling))
+        self.save()
+        tool = release.Release(self.root / "sibling.json")
+        for empty_bind in (False, True):
+            with self.subTest(empty_bind=empty_bind):
+                self.sibling_compose = copy.deepcopy(original)
+                mount = self.sibling_compose["services"]["orchestrator"]["volumes"][0]
+                mount.pop("bind")
+                if empty_bind:
+                    mount["bind"] = {}
+                graph = tool.compose_document(tool.runtime)
+                self.assertEqual(graph, original)
+                release.stock_mounts(graph)
+                # The artifact consumed by later checks retains runtime false.
+                self.assertIs(json.loads(release.encoded(graph))["services"]["orchestrator"]["volumes"][0]
+                              ["bind"]["create_host_path"], False)
+
+    def test_bind_false_omission_without_authoritative_proof_is_refused(self):
+        self.sibling()
+        original = copy.deepcopy(self.sibling_compose)
+        for value in (None, True, 0, "false"):
+            with self.subTest(value=value):
+                model = copy.deepcopy(original)
+                mount = model["services"]["orchestrator"]["volumes"][0]
+                mount["bind"] = {} if value is None else {"create_host_path": value}
+                graph = copy.deepcopy(original)
+                graph["services"]["orchestrator"]["volumes"][0].pop("bind")
+                release.preserve_explicit_bind_false(graph, [model])
+                with self.assertRaisesRegex(release.ReleaseError, "sibling_mount_unsupported"):
+                    release.stock_mounts(graph)
+
+    def test_bind_false_explicit_invalid_and_extra_keys_are_refused(self):
+        self.sibling()
+        original = copy.deepcopy(self.sibling_compose)
+        release.stock_mounts(original)  # Keep explicit-false acceptance.
+        for bind in ({"create_host_path": True}, {"create_host_path": 0},
+                     {"create_host_path": "false"}, {"create_host_path": None},
+                     {"create_host_path": False, "propagation": "rprivate"},
+                     {"propagation": "rprivate"}, None, False, []):
+            with self.subTest(bind=bind):
+                graph = copy.deepcopy(original)
+                graph["services"]["orchestrator"]["volumes"][0]["bind"] = bind
+                release.preserve_explicit_bind_false(graph, [original])
+                with self.assertRaisesRegex(release.ReleaseError, "sibling_mount_unsupported"):
+                    release.stock_mounts(graph)
+
+    def test_bind_false_ambiguous_input_cannot_prove_omission(self):
+        self.sibling()
+        original = copy.deepcopy(self.sibling_compose)
+        models = []
+        models.append([original, {"services": {}}])
+        for defect in ("interpolated", "short", "duplicate", "extra"):
+            model = copy.deepcopy(original)
+            mounts = model["services"]["orchestrator"]["volumes"]
+            if defect == "interpolated":
+                mounts[0]["target"] = "${TARGET}"
+            elif defect == "short":
+                mounts.append("${SOURCE}:${TARGET}")
+            elif defect == "duplicate":
+                mounts.append(copy.deepcopy(mounts[0]))
+            else:
+                mounts[0]["bind"]["propagation"] = "rprivate"
+            models.append([model])
+        for inputs in models:
+            with self.subTest(inputs=inputs):
+                graph = copy.deepcopy(original)
+                graph["services"]["orchestrator"]["volumes"][0].pop("bind")
+                release.preserve_explicit_bind_false(graph, inputs)
+                with self.assertRaisesRegex(release.ReleaseError, "sibling_mount_unsupported"):
+                    release.stock_mounts(graph)
 
     def test_stock_compose_source_renders_bound_runtime_and_future_modes_without_daemon(self):
         docker = shutil.which("docker")
