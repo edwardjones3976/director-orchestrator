@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Construction-only KEP inputs, rule v4</title>
+<style>
+body{font:17px system-ui;line-height:1.6;max-width:1050px;margin:40px auto;padding:0 24px;color:#192333}
+h1,h2{line-height:1.25}h2{margin-top:2em;border-bottom:1px solid #ccd4dd;padding-bottom:.35em}
+pre{padding:20px;background:#eef2f6;overflow:auto;border-radius:8px}code{font-size:.9em;overflow-wrap:anywhere}
+table{border-collapse:collapse;width:100%}th,td{text-align:left;vertical-align:top;padding:.6em;border:1px solid #ccd4dd}a{color:#145ba1}
+</style>
+</head>
+<body><main>
+<h1>Construction-only KEP inputs, rule v4</h1>
+<h2>Authority and scope</h2>
+<p>WO-C1 froze the A2 constraints selector; WO-C2 authorizes this implementation and an offline supply count over the full pinned Kubernetes enhancements archive. The earlier 204-group population is a regression fixture, not the new selection universe. Its expected pre-token funnel is 204 → 83 lexical → 75 whole/source-bound → 73 allocation-valid. Neither that expectation nor an offline count establishes training admission.</p>
+<p>The four target fields and shared input contract remain unchanged. The constructor emits target-free <code>kep-input/v1</code> records with disposition <code>construction_only</code>. It performs no model, provider, GPU, network, grading, training, or held-out access. Trust root v2r9 and its two-lead approval remain external prerequisites; this implementation does not edit or approve any root.</p>
+<p>The source of selector behaviour is <code>v4a2_funnel.py</code>, SHA-256 <code>538b22adb847484b331d9e7073c0dd9b8691fd43efe6d1f1d166f54cc2a7d718</code>, ported into <a href="eval/kep_constraints_v4.py">kep_constraints_v4.py</a>. The port removes the analysis script's filesystem and reporting entry point, adds source-span results for construction, and identifies refusal roles. Its lexical expressions, scoped units, tier precedence and allocation behaviour are retained.</p>
+
+<h2>Frozen selection contract</h2>
+<p>Rule v4 removes the whole-section <code>Risks and Mitigations → Notes/Constraints/Caveats</code> alias. <code>Graduation Criteria → Alpha Graduation Criteria</code> remains available under the existing canonical-before-alias, duplicate-refuses rules. Source headings are never renamed.</p>
+<table>
+<thead><tr><th scope="col">Stage</th><th scope="col">Contract</th></tr></thead>
+<tbody>
+<tr><th scope="row">Tier 1</th><td>Search genuine Notes/Constraints/Caveats units. Any lexical candidate reserves this tier, even if every candidate subsequently fails whole-unit or length checks.</td></tr>
+<tr><th scope="row">Tier 2</th><td>Only when tier 1 has no lexical candidate, search units in Risks and Mitigations and the leads of uniquely named Proposal and Design Details headings, ordered by source position. A Proposal/Design Details lead ends at the first following heading, including a subheading.</td></tr>
+<tr><th scope="row">Lexical</th><td>The item matches the frozen <code>REQ</code> expression. Neither item nor attached scope matches <code>RISK</code> or <code>PROSPECTIVE</code>. An item ending in a question mark is excluded. This is a lexical selection rule, not a claim of semantic truth.</td></tr>
+<tr><th scope="row">Whole/source-bound</th><td>Retain the whole paragraph or list item with its complete subtree within A2's content blocks, plus each ancestor item's own lines and any governing lead-in. Emit original Unicode source slices. Refuse comment-tainted units, overlapping scope, and units outside the inclusive 30–600 character limit; never trim them to fit.</td></tr>
+<tr><th scope="row">Excluded content</th><td>Exact template lines, comments, fenced code, table rows beginning with a pipe, checkbox lines, headings and blank lines delimit A2 content blocks. A preceding block ending in a colon can supply governing scope. Scope never crosses a subheading. Future, hypothetical and advisory markers are rejected for every subject.</td></tr>
+<tr><th scope="row">Allocation</th><td>Reserve the objective and all four mandatory role minima first in a shared 2,100-character pool. Fill support roles in their existing order. Summary and Motivation each retain an independent 200-character allowance with no transfer; total maximum is 2,500 characters. Count exact emitted Unicode code points, including retained line endings. Missing genuine mandatory source, overlap, or accounting mismatch refuses the group.</td></tr>
+</tbody>
+</table>
+<p>A constraints unit is atomic. Its source heading is emitted once before that heading's first selected unit. Already emitted enclosing spans are not repeated; partially overlapping units are skipped whole. A nonfitting next allocation unit stops that role, with no clipping or skip-ahead for fit. The other roles use the unchanged v3 paragraph allocator. The original source order determines the final context span order.</p>
+<p>The exact case-insensitive <code>REQ</code>, <code>RISK</code> and <code>PROSPECTIVE</code> expressions are maintained in the selector module. They include prerequisites, negation and numeric bounds such as “at most”, “at least”, “limited to” and “up to” followed by a digit. Changing an expression changes this frozen rule and requires a new decision.</p>
+<p>Token filtering remains in the existing separate offline renderer step: rendered input prompt at most 1,400 tokens; over-limit prompts are refused, never retrimmed. The counter reports <code>tokens: NOT_MEASURED</code>. V4 does not carry the superseded v3 minimum of 200 usable inputs. It grants no replacement training threshold or acceptance verdict.</p>
+
+<h2>Compatibility and publication</h2>
+<p><a href="eval/prepare_kep_inputs.py">prepare_kep_inputs.py</a> retains v2 and v3. Omitting <code>--rule</code> keeps policy-driven selection. Explicit <code>--rule v3</code> requires a v3 policy and preserves v3 construction bytes for the same pinned evidence and clock. The regression suite pins a synthetic complete v3 <code>inputs.jsonl</code> SHA-256 to <code>989de65b9c97a80e0942024057fce98bf9ce6dec12fdea8d6d453eab3826a3e5</code> and compares implicit and explicit v3 output.</p>
+<p>Publication with <code>--rule v4</code> requires the existing archive, tree, census, license, policy, policy hash and new output directory arguments. The policy must exactly equal <code>v4_policy(frozen_at)</code> in the constructor, including the A2 source pin, template pin, allocation and token contract. The actual policy file's SHA-256 and an authentic pre-construction freeze timestamp are still required. The helper describes the contract; calling it is not approval. An explicit rule/policy mismatch refuses before source construction.</p>
+<p>Archive, tree, license, census and per-source Git blob checks, metadata identity/status qualification, bounded reads, secret-marker screening, source-span validation, chronology and no-clobber Windows publication remain in force. Inputs retain the original namespace round-robin selection rank. SHA-256 ranks reported by the counter are separate ranks and do not change historical construction ordering. See the <a href="kep-input-construction-v2.html">existing construction and publication contract</a> for shared guarantees.</p>
+
+<h2>Offline full-archive count</h2>
+<p>On the authorized Windows host with Python 3.14 and existing test dependencies, run from the assigned worktree:</p>
+<pre><code>$kepArchive = 'C:\llm\reports\codex-m2-delegation-20260930\kep-route-prestage-20261002'
+python -B projects/homemade-llm/eval/prepare_kep_inputs.py --rule v4 --count-only `
+  --archive "$kepArchive\enhancements-pinned.tar.gz" `
+  --tree "$kepArchive\tree.json" `
+  --census "$kepArchive\metadata-census.json" `
+  --license "$kepArchive\LICENSE"</code></pre>
+<p>Planning estimate: 1–5 minutes on a local CPU and SSD; this is not a measured runtime. The command traverses the full pinned census, authenticates every metadata entry, and analyses every eligible positive unique group. It does not read <code>inputs-204.jsonl</code> or limit selection to the old extraction's successful groups. Archive commit: <code>f7be055669b365e9b4ab3905bda6ef385e0c84ca</code>; archive SHA-256: <code>da037ba8c8e68aa7033d256beff5da7cf3605b83678d46b0f6c403947c574618</code>.</p>
+<p><code>--count-only</code> accepts only v4 and rejects policy, policy hash, output directory and dry-run arguments. It uses an in-memory rule snapshot, creates no output artifact and disables import bytecode writes when invoked from the CLI. It does not fabricate a frozen publication policy or bypass evidence pins. Zero kept groups is a successful count, not successful construction.</p>
+<p>Stdout is one JSON object with protocol <code>kep-input-counts/v4</code>. <code>stage_counts</code> reports metadata candidates, eligible groups, analysed groups, lexical, whole/source-bound, allocation-valid, usable inputs and token status. <code>allocation_valid</code> is the A2 pre-token B stage; <code>usable_inputs</code> additionally excludes any source rejected by subsequent secret-marker screening. Each <code>kept_groups</code> entry contains <code>group_id</code>, the SHA-256 of its UTF-8 group ID, and its zero-based rank after sorting by that hash then group ID.</p>
+<p>Every refused census group is printed separately to stderr as one JSON line with <code>group_id</code>, <code>role</code> and a fixed <code>reason</code>. Source parsing uses role <code>source</code>, eligibility uses <code>metadata</code>, missing evidence names the affected role, and shared budget/overlap failures use <code>allocation</code>. A rejected run may also print a batch-level refusal object. No source excerpts are printed. Normal v4 publication and dry-run use the same per-group refusal stream and retain decisions in the manifest.</p>
+
+<h2>Verification and handoff</h2>
+<pre><code>python --version
+python -m pytest projects/homemade-llm/eval -q
+python -m pytest projects/homemade-llm/eval/test_prepare_kep_inputs.py -q -k pinned_204_funnel</code></pre>
+<p>The full evaluation suite covers the original v2/v3 tests and the new A2 synthetic controls, exact 30/600 character boundaries, scope retention and de-duplication, tier precedence, mandatory-source refusal, v3 output hash, v4 policy validation, source-span publication, counts-only no-write behaviour, hash ranking and machine-readable refusals. The pinned 204 regression validates both the population hash and every selected source hash against the pinned archive before asserting the 204/83/75/73 funnel. If those local fixtures are absent, that test reports a skip and the dispatcher must run it on the corpus host; a skipped assertion is not evidence of those counts.</p>
+<p>Independent Cursor review must bind the actual candidate head. Passing tests and pre-token counts do not establish token acceptance, v2r9 approval, training readiness, merge authority or deployment.</p>
+</main></body>
+</html>

@@ -1186,7 +1186,12 @@ if ($args -contains '-m' -and $args[$args.IndexOf('-m') + 1] -eq 'director_orche
                     if name == "XAI_API_KEY" and expected is None:
                         # An unlisted credential is left for the Python pin to drop.
                         expected = parent[name]
-                    self.assertEqual(observed.get(name) or None, expected, name)
+                    actual = observed.get(name) or None
+                    if name == "DIRECTOR_HOST_PROVIDER_WORKSPACE":
+                        # Compare the same workspace through either filesystem spelling.
+                        self.assertEqual(Path(actual).resolve(strict=True), Path(expected).resolve(strict=True), name)
+                    else:
+                        self.assertEqual(actual, expected, name)
                 self.assertEqual(json.loads(restored.read_text(encoding="utf-8-sig")), parent)
 
     def test_preflight_rejects_enabled_validation_without_required_profile_fields(self):

@@ -13,6 +13,9 @@ import re
 import sys
 import tarfile
 
+if "--count-only" in sys.argv:
+    sys.dont_write_bytecode = True
+
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "train"))
@@ -281,6 +284,22 @@ def validate_v3_policy(rule):
     for key, value in fixed.items():
         if not _typed_equal(rule.get(key), value):
             raise Refusal("INVALID_POLICY")
+
+
+def v4_policy(frozen_at):
+    """The construction contract; approval of a trust root remains external."""
+    from kep_constraints_v4 import SOURCE_SHA256
+    return {
+        "protocol": "kep-input-selection/v4", "authority": "WO-C1/WO-C2",
+        "repository": REPOSITORY, "commit": COMMIT,
+        "statuses": ["implemented", "implementable"], "creation_date_filter": None,
+        "order": ORDER, "frozen_at": frozen_at, "required_sections": list(SUPPORT_SECTIONS),
+        "section_aliases": {"Alpha Graduation Criteria": ["Graduation Criteria"]},
+        "alias_precedence": V3_ALIAS_PRECEDENCE, "template": V3_TEMPLATE,
+        "trim": V3_TRIM, "constraints_selector": {"rule": "A2", "source_sha256": SOURCE_SHA256},
+        "postconstruction_token_gate": {key: value for key, value in V3_TOKEN_GATE.items()
+                                        if key != "minimum_usable_inputs"},
+    }
 
 
 def _typed_equal(got, want):
@@ -872,26 +891,40 @@ def validate_record(record, text):
         raise Refusal("SECRET_PATTERN")
 
 
-def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, dry_run=False,
-            clock=utc_now, _pins=None):
+def prepare(*, archive, tree, census, license_file, policy=None, policy_sha256=None, out=None, dry_run=False,
+            clock=utc_now, _pins=None, rule_version=None, count_only=False):
     """_pins injects only synthetic fixture identities; the CLI uses frozen PINS."""
     pins = PINS if _pins is None else _pins
-    out = Path(out).absolute()
-    guard_path(out, "PROTECTED_OUTPUT_PATH")
-    if any(parent.is_symlink() or parent.is_junction() for parent in (out, *out.parents)):
-        raise Refusal("PROTECTED_OUTPUT_PATH")
-    if not dry_run and (out.exists() or out.is_symlink()):
-        raise Refusal("OUTPUT_EXISTS")
+    if count_only:
+        if rule_version != "v4" or any(value is not None for value in (out, policy, policy_sha256)) or dry_run:
+            raise Refusal("INVALID_COUNT_ONLY_ARGUMENTS")
+    else:
+        if any(value is None for value in (out, policy, policy_sha256)):
+            raise Refusal("MISSING_CONSTRUCTION_ARGUMENTS")
+        out = Path(out).absolute()
+        guard_path(out, "PROTECTED_OUTPUT_PATH")
+        if any(parent.is_symlink() or parent.is_junction() for parent in (out, *out.parents)):
+            raise Refusal("PROTECTED_OUTPUT_PATH")
+        if not dry_run and (out.exists() or out.is_symlink()):
+            raise Refusal("OUTPUT_EXISTS")
     raw_archive = pinned_file(archive, pins["archive"], MAX_ARCHIVE)
     raw_tree = pinned_file(tree, pins["tree"])
     raw_census = pinned_file(census, pins["census"])
     pinned_file(license_file, pins["license"])
-    raw_policy = pinned_file(policy, policy_sha256, 65536)
+    # A count-only snapshot is not a frozen publication policy or approval receipt.
+    raw_policy = json_bytes(v4_policy(clock())) if count_only else pinned_file(policy, policy_sha256, 65536)
+    if count_only:
+        policy_sha256 = digest(raw_policy)
     rule = strict_json(raw_policy)
     if not isinstance(rule, dict):
         raise Refusal("INVALID_POLICY")
     protocol = rule.get("protocol")
-    if protocol == "kep-input-selection/v3":
+    if rule_version is not None and (rule_version not in ("v2", "v3", "v4") or protocol != "kep-input-selection/" + rule_version):
+        raise Refusal("RULE_POLICY_MISMATCH")
+    if protocol == "kep-input-selection/v4":
+        if not _typed_equal(rule, v4_policy(rule.get("frozen_at"))):
+            raise Refusal("INVALID_POLICY")
+    elif protocol == "kep-input-selection/v3":
         # v3 is additive only; the v2 branch below is untouched and a v2
         # policy is validated exactly as it always was.
         validate_v3_policy(rule)
@@ -902,7 +935,7 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
     frozen_at = rule.get("frozen_at")
     utc(frozen_at)
     started_at = next_clock(clock, frozen_at)
-    if utc(started_at) <= utc(frozen_at):
+    if not count_only and utc(started_at) <= utc(frozen_at):
         raise Refusal("INVALID_CHRONOLOGY")
     metadata, upstream = strict_json(raw_census), strict_json(raw_tree)
     if not isinstance(metadata, dict) or metadata.get("repo") != REPOSITORY or metadata.get("commit") != COMMIT or metadata.get("archive_sha256") != pins["archive"] or not isinstance(metadata.get("items"), list):
@@ -969,6 +1002,7 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
         decision["selection_rank"] = rank
     order_hash = digest(json_bytes([{key: decision[key] for key in ("path", "sig", "kep_number", "selection_rank")} for _, decision in ordered]))
     prepared, source_total = [], 0
+    v4_stages = Counter()
     stage_before = stage_after = stage_paragraph = 0  # v3 funnel counts only; unused and unreported for v2.
     template_lines = frozenset()
     prefix = "enhancements-" + COMMIT + "/"
@@ -1006,7 +1040,7 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
         archive_license, _ = read_member("LICENSE")
         if digest(archive_license) != pins["license"]:
             raise Refusal("LICENSE_MISMATCH")
-        if protocol == "kep-input-selection/v3":
+        if protocol in ("kep-input-selection/v3", "kep-input-selection/v4"):
             raw_template, template_blob = read_member(rule["template"]["path"])
             if digest(raw_template) != rule["template"]["sha256"] or template_blob != rule["template"]["git_blob"]:
                 raise Refusal("TEMPLATE_PIN_MISMATCH")
@@ -1022,6 +1056,8 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
                 raise Refusal("CENSUS_METADATA_MISMATCH")
         for entry, decision in ordered:
             try:
+                if protocol == "kep-input-selection/v4":
+                    decision["role"] = "source"
                 path = str(PurePosixPath(entry["path"]).parent / "README.md")
                 raw, blob = read_member(path)
                 source_total += len(raw)
@@ -1030,7 +1066,22 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
                 text = raw.decode("utf-8")
                 captured = next_clock(clock, last_time)
                 last_time = captured
-                if protocol == "kep-input-selection/v3":
+                if protocol == "kep-input-selection/v4":
+                    from kep_constraints_v4 import analyse
+                    analysis = analyse(text, template_lines)
+                    v4_stages[analysis["stage"]] += 1
+                    decision["stage"] = analysis["stage"]
+                    decision["section_qualified"] = analysis["stage"] == "B"
+                    if analysis["stage"] != "B":
+                        decision["role"] = analysis["role"]
+                        raise Refusal(analysis["reason"])
+                    title_span, objective_span, spans = (analysis[key] for key in ("title_span", "objective_span", "context_spans"))
+                    source_sha = digest(raw)
+                    item = {"objective": text[objective_span["start"]:objective_span["end"]],
+                            "title": text[title_span["start"]:title_span["end"]], "repository": REPOSITORY,
+                            "context": [{"kind": "assignment_packet", "source_ref": path, "source_sha256": source_sha,
+                                         "text": text[span["start"]:span["end"]]} for span in spans]}
+                elif protocol == "kep-input-selection/v3":
                     # -- v3: alias-aware selection, then template-line removal,
                     # then a paragraph-budget trim. The v2 branch below (the
                     # `else`) is the original, untouched code. --
@@ -1156,6 +1207,25 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
                 decision["reason"] = str(exc)
     excluded_symlink_paths = sorted(name[len(prefix):] for name in excluded_links)[:MAX_EXCLUDED_PATHS]
     decisions.sort(key=lambda item: item["path"])
+    v4_report = {}
+    if protocol == "kep-input-selection/v4":
+        v4_report = {
+            "stage_counts": {"metadata_candidates": len(decisions), "eligible_groups": len(ordered),
+                             "analysed_groups": sum(v4_stages.values()),
+                             "lexical": sum(v4_stages[s] for s in ("L_ONLY", "W_ONLY", "B")),
+                             "whole_source_bound": v4_stages["W_ONLY"] + v4_stages["B"],
+                             "allocation_valid": v4_stages["B"], "usable_inputs": len(prepared),
+                             "tokens": "NOT_MEASURED"},
+            "refusals": [{"group_id": f"licensed/{REPOSITORY}/kep-{d['kep_number']}",
+                          "role": d.get("role", "metadata"), "reason": d["reason"]}
+                         for d in decisions if d["reason"]],
+        }
+        if count_only:
+            kept = sorted((digest(f"licensed/{REPOSITORY}/kep-{s['decision']['kep_number']}".encode("utf-8")),
+                           f"licensed/{REPOSITORY}/kep-{s['decision']['kep_number']}") for s in prepared)
+            return {"protocol": "kep-input-counts/v4", "count_only": True, **v4_report,
+                    "kept_groups": [{"group_id": group, "sha256": sha, "sha256_rank": rank}
+                                    for rank, (sha, group) in enumerate(kept)]}
     qualification = {"protocol": "kep-input-qualification/v2", "policy_sha256": policy_sha256, "order_sha256": order_hash,
                      "qualified_at": next_clock(clock, last_time), "census": decisions, "excluded_symlink_members": len(excluded_links),
                      "excluded_symlink_member_paths": excluded_symlink_paths}
@@ -1183,6 +1253,9 @@ def prepare(*, archive, tree, census, license_file, policy, policy_sha256, out, 
         stage_counts = {"status_candidates": summary["status_candidates"], "qualified_before_template_removal": stage_before,
                          "qualified_after_template_removal": stage_after, "paragraph_qualified": stage_paragraph,
                          "usable_inputs": summary["usable_inputs"]}
+    elif protocol == "kep-input-selection/v4":
+        stage_counts = v4_report["stage_counts"]
+        summary["refusals"] = v4_report["refusals"]
     if not records:
         # v3 refusals carry the same qualification funnel as successful results (#463); v2 summaries are unchanged.
         raise Refusal("NO_USABLE_INPUTS", summary if stage_counts is None else dict(summary, stage_counts=stage_counts))
@@ -1213,20 +1286,28 @@ def main(argv=None):
         def error(self, _message):
             self.exit(2, '{"refused": "USAGE_ERROR"}\n')
     parser = Parser(description=__doc__)
-    for name in ("archive", "tree", "census", "license", "policy", "out"):
+    for name in ("archive", "tree", "census", "license"):
         parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--policy-sha256", required=True)
+    for name in ("policy", "out"):
+        parser.add_argument("--" + name, type=Path)
+    parser.add_argument("--policy-sha256")
+    parser.add_argument("--rule", dest="rule_version", choices=("v2", "v3", "v4"))
+    parser.add_argument("--count-only", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = vars(parser.parse_args(argv))
     args["license_file"] = args.pop("license")
     try:
         result = prepare(**args)
     except Refusal as exc:
+        for refusal in (exc.summary or {}).get("refusals", []):
+            print(json.dumps(refusal, sort_keys=True), file=sys.stderr)
         print(json.dumps({"refused": str(exc), **({"summary": exc.summary} if exc.summary is not None else {})}), file=sys.stderr)
         return 1
     except (OSError, ValueError, KeyError, TypeError, AttributeError, tarfile.TarError):
         print(json.dumps({"refused": "INVALID_CONSTRUCTION_EVIDENCE"}), file=sys.stderr)
         return 1
+    for refusal in result.pop("refusals", []):
+        print(json.dumps(refusal, sort_keys=True), file=sys.stderr)
     print(json.dumps(result, sort_keys=True))
     return 0
 

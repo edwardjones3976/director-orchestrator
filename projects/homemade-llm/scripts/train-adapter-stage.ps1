@@ -30,9 +30,9 @@ $StageDirBindingName = @{ Train = 'train'; Eval = 'eval'; Input = 'rows' }
 
 # ---- Small shared primitives --------------------------------------------
 function Assert-ApprovedEpochImage([string]$Image) {
-    # The bootstrap is only trustworthy inside this existing approved image.
+    # Both the bootstrap and verified loader require this approved image.
     if ($Image -cne 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739') {
-        Write-Error 'epoch mode requires the exact approved training image'
+        Write-Error 'verified loading requires the exact approved training image'
     }
 }
 
