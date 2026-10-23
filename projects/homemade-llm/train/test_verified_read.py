@@ -490,6 +490,90 @@ class VerifiedReadTests(unittest.TestCase):
         self.assertIn("unverified smoke loading is disabled", result.stdout)
 
 
+class VerifiedReadDeadlineTests(unittest.TestCase):
+    def setUp(self):
+        self.data = b"verified tiny fixture"
+        self.path = Path("synthetic.safetensors")
+        self.spec = entry(self.path.name, self.data)
+        self.evidence = trainer.VerifiedSnapshot(None, [self.spec])
+
+    def read(self, path, size, attempt):
+        self.assertEqual((path, size), (self.path, len(self.data)))
+        attempt.update(size=size, bytes_read=size, identity=[1, 2, size, 3, 4], method="fixture")
+        return self.data
+
+    def test_two_124_second_matching_reads_use_shared_budget(self):
+        fake_signal = types.SimpleNamespace(SIGALRM=14, ITIMER_REAL=0,
+            signal=mock.Mock(return_value="previous"), setitimer=mock.Mock(return_value=(7, 2)))
+        with mock.patch.object(trainer, "signal", fake_signal), \
+             mock.patch.object(trainer.time, "monotonic", side_effect=[0, 123.922, 123.922, 200, 323.922, 323.922]), \
+             mock.patch.object(trainer, "_read_file_once", side_effect=self.read) as read:
+            result = trainer.verified_file_bytes(self.path, self.spec, self.evidence)
+        self.assertEqual(result, self.data)
+        self.assertEqual(read.call_count, 2)
+        attempts = self.evidence.receipt["attempts"]
+        self.assertEqual([attempt["attempt"] for attempt in attempts], [1, 2])
+        for attempt in attempts:
+            self.assertEqual(attempt["timeout_seconds"], 180)
+            self.assertAlmostEqual(attempt["seconds"], 123.922)
+            self.assertEqual(attempt["digest"], self.spec["sha256"])
+            self.assertIsNone(attempt["error"])
+        self.assertEqual(fake_signal.setitimer.call_args_list,
+                         [mock.call(0, 180), mock.call(0, 7, 2)] * 2)
+        self.assertEqual(fake_signal.signal.call_args_list[1], mock.call(14, "previous"))
+        self.assertEqual(fake_signal.signal.call_args_list[3], mock.call(14, "previous"))
+
+    def test_monotonic_fallback_refuses_boundary_without_next_read(self):
+        for elapsed in (180, 180.001):
+            with self.subTest(elapsed=elapsed), tempfile.TemporaryDirectory() as tmp:
+                evidence = trainer.VerifiedSnapshot(Path(tmp, "receipt.json"), [self.spec])
+                with mock.patch.object(trainer, "signal", types.SimpleNamespace()), \
+                     mock.patch.object(trainer.time, "monotonic", side_effect=[0, elapsed, elapsed]), \
+                     mock.patch.object(trainer, "_read_file_once", side_effect=self.read) as read:
+                    with self.assertRaisesRegex(SystemExit, "verified read exceeded 180 seconds"):
+                        trainer.verified_file_bytes(self.path, self.spec, evidence)
+                read.assert_called_once()
+                receipt = json.loads(evidence.receipt_path.read_bytes())
+                self.assertEqual(receipt["status"], "refused")
+                self.assertEqual(len(receipt["attempts"]), 1)
+                attempt = receipt["attempts"][0]
+                self.assertEqual(attempt["timeout_seconds"], 180)
+                self.assertEqual(attempt["seconds"], elapsed)
+                self.assertEqual(attempt["digest"], self.spec["sha256"])
+                self.assertIn("TimeoutError", attempt["error"])
+
+    def test_signal_expiry_retains_attempt_and_restores_timer_and_handler(self):
+        fake_signal = types.SimpleNamespace(SIGALRM=14, ITIMER_REAL=0,
+            signal=mock.Mock(return_value="previous"), setitimer=mock.Mock(return_value=(7, 2)))
+        def expire(*args):
+            self.read(*args)
+            handler = fake_signal.signal.call_args_list[0].args[1]
+            handler(14, None)
+        with mock.patch.object(trainer, "signal", fake_signal), \
+             mock.patch.object(trainer.time, "monotonic", side_effect=[0, 180]), \
+             mock.patch.object(trainer, "_read_file_once", side_effect=expire) as read:
+            with self.assertRaisesRegex(SystemExit, "verified read exceeded 180 seconds"):
+                trainer.verified_file_bytes(self.path, self.spec, self.evidence)
+        read.assert_called_once()
+        self.assertEqual(self.evidence.receipt["status"], "refused")
+        self.assertEqual(len(self.evidence.receipt["attempts"]), 1)
+        attempt = self.evidence.receipt["attempts"][0]
+        self.assertEqual((attempt["timeout_seconds"], attempt["seconds"]), (180, 180))
+        self.assertEqual(attempt["error"], "TimeoutError: verified read exceeded 180 seconds")
+        self.assertEqual(fake_signal.setitimer.call_args_list, [mock.call(0, 180), mock.call(0, 7, 2)])
+        self.assertEqual(fake_signal.signal.call_args_list[-1], mock.call(14, "previous"))
+
+    def test_explicit_helper_duration_controls_message_and_restoration(self):
+        fake_signal = types.SimpleNamespace(SIGALRM=14, ITIMER_REAL=0,
+            signal=mock.Mock(return_value="previous"), setitimer=mock.Mock(return_value=(7, 2)))
+        with mock.patch.object(trainer, "signal", fake_signal):
+            with self.assertRaisesRegex(TimeoutError, "verified read exceeded 0.5 seconds"):
+                with trainer._read_deadline(0.5):
+                    fake_signal.signal.call_args_list[0].args[1](14, None)
+        self.assertEqual(fake_signal.setitimer.call_args_list, [mock.call(0, 0.5), mock.call(0, 7, 2)])
+        self.assertEqual(fake_signal.signal.call_args_list[-1], mock.call(14, "previous"))
+
+
 class PaddingAllowanceTests(unittest.TestCase):
     class Tensor:
         """Small bf16 byte fixture exercising the production byte comparator."""
