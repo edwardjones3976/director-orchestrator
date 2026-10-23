@@ -734,25 +734,40 @@ def input_padding_allowance(model, name, actual, target, config, verified):
         files = ("config.json", "tokenizer_config.json", "generation_config.json", "tokenizer.json")
         payloads = {path: verified.checked_bytes(path) for path in files}
         configs = {path: json.loads(data) for path, data in payloads.items()}
-        if configs["config.json"] != config:
+        model_config = configs["config.json"]
+        if model_config != config or model_config.get("tie_word_embeddings") is not False:
             return None
         tokens = configs["tokenizer_config.json"]
         ids = configs["generation_config.json"]
         added = configs["tokenizer.json"]["added_tokens"]
-        if not isinstance(added, list) or len(target.shape) != 2:
+        vocab_size = model_config["vocab_size"]
+        if (not isinstance(added, list) or len(target.shape) != 2
+                or type(vocab_size) is not int or vocab_size != target.shape[0]):
             return None
-        for kind in ("pad", "eos"):
-            token, token_id = tokens[kind + "_token"], ids[kind + "_token_id"]
+        by_id, by_content = {}, {}
+        for item in added:
+            token_id, token = item["id"], item["content"]
             if (not isinstance(token, str) or not token or type(token_id) is not int
-                    or not 0 <= token_id < target.shape[0]):
+                    or not 0 <= token_id < vocab_size or token_id in by_id or token in by_content):
                 return None
-            matches = [item for item in added if item["id"] == token_id or item["content"] == token]
-            if (len(matches) != 1 or type(matches[0]["id"]) is not int
-                    or matches[0]["id"] != token_id or matches[0]["content"] != token):
+            by_id[token_id], by_content[token] = token, token_id
+        for kind in ("pad", "eos"):
+            token, token_id = tokens[kind + "_token"], model_config[kind + "_token_id"]
+            if (type(token_id) is not int or not isinstance(token, str)
+                    or token_id not in by_id or by_id[token_id] != token):
                 return None
-        pad_id = ids["pad_token_id"]
+        pad_id, primary_eos = model_config["pad_token_id"], model_config["eos_token_id"]
+        generation_eos = ids["eos_token_id"]
+        if type(generation_eos) is int:
+            generation_eos = [generation_eos]
+        if (type(ids["pad_token_id"]) is not int or ids["pad_token_id"] != pad_id
+                or not isinstance(generation_eos, list) or not generation_eos
+                or any(type(token_id) is not int or token_id not in by_id for token_id in generation_eos)
+                or len(set(generation_eos)) != len(generation_eos)
+                or primary_eos not in generation_eos or pad_id in generation_eos):
+            return None
         if (type(embedding.padding_idx) is not int or embedding.padding_idx != pad_id
-                or pad_id == ids["eos_token_id"]):
+                or pad_id == primary_eos):
             return None
         # Direct Python callers must also prove the loaded module's source identity.
         source_path = Path(sys.modules["unsloth.models.llama"].__file__)
@@ -762,6 +777,7 @@ def input_padding_allowance(model, name, actual, target, config, verified):
     except (AttributeError, KeyError, TypeError, ValueError, OSError):
         return None
     return {"tensor": name, "token_id": pad_id, "token": tokens["pad_token"],
+            "primary_eos_token_id": primary_eos, "generation_eos_token_ids": generation_eos,
             "configuration_sha256": {path: hashlib.sha256(data).hexdigest() for path, data in payloads.items()},
             "source_reference_image": "unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739",
             "source": {"file": "unsloth/models/llama.py", "lines": "3004-3025",
@@ -824,6 +840,8 @@ def verify_loaded_model(model, reference, *, dtype, config, verified=None):
             candidate = input_padding_allowance(model, name, actual[name], target, config, verified)
             if candidate is None:
                 raise
+            verified.receipt["input_embedding_pad_row_candidate"] = dict(candidate, status="eligible_proposed")
+            verified.persist()
             # Clone after the existing dtype conversion; never change either source weight.
             padded = target.clone()
             padded[candidate["token_id"]].zero_()
