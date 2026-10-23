@@ -344,6 +344,87 @@ class ParallelRunnerTests(unittest.TestCase):
         self.assertIn("AssertionError: [message redacted]", rendered)
         self.assertIn("FAILED (failures=1)", rendered)
 
+    def test_tail_retains_only_exact_fixed_release_refusal_codes(self):
+        codes = ("platform_check_failed", "doctor_deadline_exhausted", "untrusted_executable",
+                 "command_output_exceeded", "system_directory_unavailable")
+        self.assertEqual(codes, runner.RELEASE_REFUSAL_CODES)
+        for name in ("ReleaseError", "director_release_under_test.ReleaseError"):
+            for code in codes:
+                with self.subTest(name=name, code=code):
+                    self.assertEqual([f"{name}: {code}"], runner.sanitized_tail(f"{name}: {code}\n"))
+        redacted = {
+            "ReleaseError: unknown_refusal": "ReleaseError: [message redacted]",
+            "ReleaseError: platform_check_failed sk-private": "ReleaseError: [message redacted]",
+            "ReleaseError: sk-private platform_check_failed": "ReleaseError: [message redacted]",
+            "ReleaseError: platform_check_failed: /private/path": "ReleaseError: [message redacted]",
+            "ReleaseError: platform_check_failed ": "ReleaseError: [message redacted]",
+            "ReleaseError:platform_check_failed": "ReleaseError: [message redacted]",
+            "ReleaseError: PLATFORM_CHECK_FAILED": "ReleaseError: [message redacted]",
+            "ReleaseError": "ReleaseError: [message redacted]",
+            "RuntimeError: platform_check_failed": "RuntimeError: [message redacted]",
+            "AssertionError: private assertion value": "AssertionError: [message redacted]",
+            "director_release.ReleaseError: platform_check_failed": "director_release.ReleaseError: [message redacted]",
+            "other.director_release_under_test.ReleaseError: untrusted_executable":
+                "other.director_release_under_test.ReleaseError: [message redacted]",
+            " ReleaseError: platform_check_failed": "[output redacted]",
+            "releaseerror: platform_check_failed": "[output redacted]",
+        }
+        for line, expected in redacted.items():
+            with self.subTest(line=line):
+                self.assertEqual([expected], runner.sanitized_tail(line + "\n"))
+
+    def test_tail_retains_only_exact_bounded_windiag_notes(self):
+        node = "WINDIAG node_timeout alive=1 code=-1 spawn_ms=12 wait_ms=10000 drain_ms=2 out=0 err=0"
+        exited = "WINDIAG node_timeout alive=0 code=4294967295 spawn_ms=3600000 wait_ms=0 drain_ms=0 out=1073741824 err=7"
+        cleanup = "WINDIAG tmp_cleanup root=1 entry=other winerror=5 errno=13"
+        entry = "WINDIAG tmp_cleanup root=0 entry=git.exe winerror=-1 errno=65535"
+        output = (
+            "ERROR: test_status (test_deployment_contracts.DeploymentContractTests.test_status)\n"
+            "Traceback (most recent call last):\n"
+            '  File "C:\\private\\subprocess.py", line 1630, in _communicate\n'
+            "    raise TimeoutExpired(self.args, orig_timeout)\n"
+            "subprocess.TimeoutExpired: Command '['node', '-e', 'sk-private']' timed out after 10 seconds\n"
+            + node + "\n"
+            "PermissionError: [WinError 5] Access is denied: 'C:\\\\private\\\\tmpabc'\n"
+            + cleanup + "\n" + exited + "\n" + entry + "\n")
+        tail = runner.sanitized_tail(output)
+        self.assertEqual(tail[-6:], ["[output redacted]", node, "PermissionError: [message redacted]",
+                                     cleanup, exited, entry])
+        self.assertNotIn("private", "\n".join(tail))
+        redacted = (
+            node + " sk-private",
+            "sk-private " + node,
+            node + "\t",
+            " " + node,
+            "subprocess.TimeoutExpired: " + node,
+            cleanup + " path=C:\\private\\tmpabc",
+            node.replace("alive=1", "alive=2"),
+            node.replace("alive=1 code=-1", "alive=1 code=0"),
+            node.replace("spawn_ms=12", "spawn_ms=012"),
+            node.replace("spawn_ms=12", "spawn_ms=+12"),
+            node.replace("spawn_ms=12", "spawn_ms=-1"),
+            node.replace("spawn_ms=12", "spawn_ms=\u0661\u0662"),
+            node.replace("spawn_ms=12", "spawn_ms=3600001"),
+            node.replace("out=0", "out=1073741825"),
+            node.replace("err=0 ", "err=0").replace(" drain_ms=2", ""),
+            node.replace("spawn_ms=12 wait_ms=10000", "wait_ms=10000 spawn_ms=12"),
+            node.replace("node_timeout", "NODE_TIMEOUT"),
+            exited.replace("code=4294967295", "code=4294967296"),
+            cleanup.replace("entry=other", "entry=GIT.EXE"),
+            cleanup.replace("entry=other", "entry=sk-private.txt"),
+            cleanup.replace("entry=other", "entry=C:\\private\\git.exe"),
+            cleanup.replace("winerror=5", "winerror=4294967296"),
+            cleanup.replace("errno=13", "errno=65536"),
+            cleanup.replace("errno=13", "errno=-2"),
+            cleanup.replace("root=1", "root=true"),
+        )
+        for line in redacted:
+            with self.subTest(line=line):
+                self.assertEqual(["[output redacted]"], runner.sanitized_tail(line + "\n"))
+        # A note cannot smuggle a second line: each physical line is judged alone.
+        self.assertEqual([node, "[output redacted]"], runner.sanitized_tail(node + "\nsk-private output\n"))
+        self.assertEqual([cleanup, "[output redacted]"], runner.sanitized_tail(cleanup + "\r/private/path\n"))
+
     def test_stopping_a_registered_shard_returns_before_its_timeout(self):
         self.module(
             "test_child",

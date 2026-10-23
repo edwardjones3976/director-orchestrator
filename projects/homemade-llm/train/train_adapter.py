@@ -27,6 +27,7 @@ import os
 import re
 import signal
 import stat
+import sys
 import tempfile
 import time
 from contextlib import contextmanager
@@ -63,6 +64,7 @@ STUDENT_REVISION = "62efd7f9d748e394734a7adae2adf96e13a2abc8"
 TRUSTED_DIGEST_ROOT_SHA256 = "37ff31d7e9c11502d6795c93028ba8a617c6d427f2d6b830381f50d9157348af"
 # Draft bytes; the wrapper requires the final v4 filename after owner approval.
 TRUSTED_DIGEST_ROOT_V4_SHA256 = "6795b16f0ccfb2ae48b358784b979f92a4f19fb1ef09262fbbd31339dbd79e87"
+VERIFIED_READ_TIMEOUT_SECONDS = 180
 PROBE_STEPS = 20
 WINNER_VRAM_GIB = 11.0
 CARD_VRAM_GIB = 12.0
@@ -384,13 +386,13 @@ class VerifiedSnapshot(dict):
 
 
 @contextmanager
-def _read_deadline(seconds=120):
+def _read_deadline(seconds=VERIFIED_READ_TIMEOUT_SECONDS):
     # Linux trainer reads must be interruptible; never return an overdue buffer.
     if not hasattr(signal, "setitimer"):
         yield  # Host-only fixture checks also check elapsed time below.
         return
     def expired(*_args):
-        raise TimeoutError("verified read exceeded 120 seconds")
+        raise TimeoutError(f"verified read exceeded {seconds} seconds")
     previous = signal.signal(signal.SIGALRM, expired)
     timer = signal.setitimer(signal.ITIMER_REAL, seconds)
     try:
@@ -479,10 +481,11 @@ def verified_file_bytes(path, entry, evidence, *, reads=3):
         start = time.monotonic()
         attempt = {"file": str(path), "attempt": number, "digest": None, "size": None,
                    "bytes_read": 0, "seconds": None, "error": None, "method": None,
+                   "timeout_seconds": VERIFIED_READ_TIMEOUT_SECONDS,
                    "expected_size": entry.get("size"),
                    "size_authority": "trusted" if entry.get("size") is not None else "observed only"}
         try:
-            with _read_deadline():
+            with _read_deadline(VERIFIED_READ_TIMEOUT_SECONDS):
                 data = _read_file_once(path, entry.get("size"), attempt)
                 attempt["digest"] = hashlib.sha256(data).hexdigest()
                 if len(data) != (entry["size"] if entry.get("size") is not None else attempt["size"]):
@@ -490,8 +493,8 @@ def verified_file_bytes(path, entry, evidence, *, reads=3):
                 if identity is not None and identity != attempt.get("identity"):
                     raise ValueError("input changed between reads")
                 identity = attempt.get("identity")
-                if time.monotonic() - start >= 120:
-                    raise TimeoutError("verified read exceeded 120 seconds")
+                if time.monotonic() - start >= VERIFIED_READ_TIMEOUT_SECONDS:
+                    raise TimeoutError(f"verified read exceeded {VERIFIED_READ_TIMEOUT_SECONDS} seconds")
                 good = attempt["digest"] == entry["sha256"]
                 if good and consecutive and previous != data:
                     raise ValueError("authenticated bytes changed between reads")
@@ -713,7 +716,75 @@ def compare_quant_state(name, actual, expected):
         fail(f"unexpected nested quantization state: {name}")
 
 
-def verify_loaded_model(model, reference, *, dtype, config):
+def input_padding_allowance(model, name, actual, target, config, verified):
+    """WO-G86: recognize only the verified, untied input embedding's padding row."""
+    if verified is None or config.get("tie_word_embeddings") is not False:
+        return None
+    try:
+        embedding = model.get_input_embeddings()
+        if not isinstance(embedding, torch.nn.Embedding):
+            return None
+        names = {key + ".weight" for key, module in model.named_modules() if module is embedding}
+        if name not in names or actual.data_ptr() != embedding.weight.data_ptr():
+            return None
+        head = model.lm_head.weight
+        if (embedding.weight.data_ptr() == head.data_ptr()
+                or embedding.weight.untyped_storage().data_ptr() == head.untyped_storage().data_ptr()):
+            return None
+        files = ("config.json", "tokenizer_config.json", "generation_config.json", "tokenizer.json")
+        payloads = {path: verified.checked_bytes(path) for path in files}
+        configs = {path: json.loads(data) for path, data in payloads.items()}
+        model_config = configs["config.json"]
+        if model_config != config or model_config.get("tie_word_embeddings") is not False:
+            return None
+        tokens = configs["tokenizer_config.json"]
+        ids = configs["generation_config.json"]
+        added = configs["tokenizer.json"]["added_tokens"]
+        vocab_size = model_config["vocab_size"]
+        if (not isinstance(added, list) or len(target.shape) != 2
+                or type(vocab_size) is not int or vocab_size != target.shape[0]):
+            return None
+        by_id, by_content = {}, {}
+        for item in added:
+            token_id, token = item["id"], item["content"]
+            if (not isinstance(token, str) or not token or type(token_id) is not int
+                    or not 0 <= token_id < vocab_size or token_id in by_id or token in by_content):
+                return None
+            by_id[token_id], by_content[token] = token, token_id
+        for kind in ("pad", "eos"):
+            token, token_id = tokens[kind + "_token"], model_config[kind + "_token_id"]
+            if (type(token_id) is not int or not isinstance(token, str)
+                    or token_id not in by_id or by_id[token_id] != token):
+                return None
+        pad_id, primary_eos = model_config["pad_token_id"], model_config["eos_token_id"]
+        generation_eos = ids["eos_token_id"]
+        if type(generation_eos) is int:
+            generation_eos = [generation_eos]
+        if (type(ids["pad_token_id"]) is not int or ids["pad_token_id"] != pad_id
+                or not isinstance(generation_eos, list) or not generation_eos
+                or any(type(token_id) is not int or token_id not in by_id for token_id in generation_eos)
+                or len(set(generation_eos)) != len(generation_eos)
+                or primary_eos not in generation_eos or pad_id in generation_eos):
+            return None
+        if (type(embedding.padding_idx) is not int or embedding.padding_idx != pad_id
+                or pad_id == primary_eos):
+            return None
+        # Direct Python callers must also prove the loaded module's source identity.
+        source_path = Path(sys.modules["unsloth.models.llama"].__file__)
+        source_sha256 = _sha256_file(source_path)
+        if source_sha256 != "e09924b71078efabcd5173002620baa72cf9a09f1d974af4bad5516f5508e225":
+            return None
+    except (AttributeError, KeyError, TypeError, ValueError, OSError):
+        return None
+    return {"tensor": name, "token_id": pad_id, "token": tokens["pad_token"],
+            "primary_eos_token_id": primary_eos, "generation_eos_token_ids": generation_eos,
+            "configuration_sha256": {path: hashlib.sha256(data).hexdigest() for path, data in payloads.items()},
+            "source_reference_image": "unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739",
+            "source": {"file": "unsloth/models/llama.py", "lines": "3004-3025",
+                       "sha256": source_sha256, "verification": "loaded module source file SHA-256"}}
+
+
+def verify_loaded_model(model, reference, *, dtype, config, verified=None):
     from bitsandbytes.nn import Linear4bit
     from bitsandbytes.functional import QuantState
     actual = model.state_dict()
@@ -754,16 +825,35 @@ def verify_loaded_model(model, reference, *, dtype, config):
     if set(actual) != set(expected):
         fail("loaded tensor names differ from the verified checkpoint")
     casts = []
+    allowance = None
     for name, value in expected.items():
         target = value
         if name not in quantized and not any(name.startswith(k + ".") for k in quantized):
             if value.is_floating_point() and value.dtype != dtype:
                 target = value.to(dtype=dtype)
                 casts.append({"name": name, "from": str(value.dtype), "to": str(dtype)})
-        compare_tensor(name, actual[name], target)
-    return {"tensors": len(actual), "linear4bit": len(quantized), "casts": casts,
+        try:
+            compare_tensor(name, actual[name], target)
+        except SystemExit as exc:
+            if str(exc) != f"loaded tensor payload differs: {name}":
+                raise
+            candidate = input_padding_allowance(model, name, actual[name], target, config, verified)
+            if candidate is None:
+                raise
+            verified.receipt["input_embedding_pad_row_candidate"] = dict(candidate, status="eligible_proposed")
+            verified.persist()
+            # Clone after the existing dtype conversion; never change either source weight.
+            padded = target.clone()
+            padded[candidate["token_id"]].zero_()
+            compare_tensor(name, actual[name], padded)
+            allowance = candidate
+    result = {"tensors": len(actual), "linear4bit": len(quantized), "casts": casts,
             "gpu_destinations": sorted({str(t.device) for t in actual.values() if t.device.type == "cuda"}),
             "comparison": "exact payload/shape/dtype; decoded quantization state"}
+    if allowance is not None:
+        result["input_embedding_pad_row_allowance"] = allowance
+        result["comparison"] += "; input-embedding pad row zeroed by loader (allowance)"
+    return result
 
 
 def tokenizer_json_matches(actual, expected):
@@ -861,7 +951,7 @@ def load_verified_model(snapshot, verification, *, max_seq_length):
             # Re-derive after loading to detect reference/buffer mutation as well.
             reference = reference_state_dict(verification)
             verification["loaded_verification"] = verify_loaded_model(
-                model, reference, dtype=dtype, config=config)
+                model, reference, dtype=dtype, config=config, verified=verification)
         verification.receipt.update(status="verified", loader="sealed-memfd pathname fallback",
                                     post_load=verification["loaded_verification"])
         verification.persist()
