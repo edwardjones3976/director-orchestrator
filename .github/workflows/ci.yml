@@ -356,6 +356,15 @@ jobs:
           PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -v '^/mnt/' | paste -sd: -)"
           export PATH
           python scripts/ci_scope.py run
+      - name: Print compose-render diagnostic (self-hosted)
+        if: always() && runner.environment == 'self-hosted'
+        shell: python
+        run: |
+          from pathlib import Path
+          import os
+          path = Path(os.environ["RUNNER_TEMP"]) / "compose-render-diagnostic.txt"
+          if path.is_file():
+              print(path.read_text(encoding="utf-8"), end="")
       - run: python -m compileall -q src scripts tests
         if: (needs.scope.result != 'success' || needs.scope.outputs.mode != 'focused')
       - name: Validate canonical HTML documentation

@@ -26,7 +26,7 @@ def page(content: str = '') -> str:
 class HtmlDocumentationTests(unittest.TestCase):
     def setUp(self):
         folder = self.enterContext(tempfile.TemporaryDirectory())
-        self.root = Path(folder)
+        self.root = Path(folder).resolve()
         self.manifest = {'mapping': {'README.md': 'README.html', 'docs/guide.md': 'docs/guide.html'}}
         self.write('README.html', page('<a href="docs/guide.html#guide">Guide</a>'))
         self.write('docs/guide.html', page('<a href="../README.html#guide">Overview</a>'))
