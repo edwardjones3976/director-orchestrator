@@ -147,6 +147,10 @@ class AcceptanceUnresolved(ValueError):
     """A durable acceptance may have executed; it must never be created again."""
 
 
+class AcceptanceEnrollmentRequired(ValueError):
+    """Paid acceptance lacks the enrolled authority hooks required for admission."""
+
+
 class AcceptanceSubjectMismatch(ValueError):
     """Preserve the graph's exact-SHA refusal for a stale handler result."""
 
@@ -1927,6 +1931,10 @@ def _build_nodes(handlers: PrimaryHandlers, acceptance_store=None) -> dict[str, 
             result = durable_acceptance(handlers.openai_acceptance_revision, _context(state), acceptance_store)
             if not isinstance(result, AcceptanceResult):
                 raise TypeError("acceptance handler returned the wrong result type")
+        except AcceptanceEnrollmentRequired:
+            return _handler_failure(update,
+                classification=TerminalClassification.OWNER_DECISION_REQUIRED,
+                reason_code="acceptance_enrollment_required")
         except AcceptanceUnresolved:
             return _handler_failure(update,
                 classification=TerminalClassification.RECONCILIATION_REQUIRED,
@@ -2525,6 +2533,9 @@ class PrimaryWorkflowRuntime:
                 "active primary execution requires a factory-bound durable "
                 "control plane"
             )
+        if (self._requires_factory_bound_control_plane()
+                and acceptance_store is not None and acceptance_store is not claim_store):
+            raise ValueError("acceptance_store must be the canonical factory-bound claim_store")
         self._checkpointer = checkpointer
         self._handlers = handlers
         self._namespace = checkpoint_namespace

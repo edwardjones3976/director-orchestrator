@@ -1884,7 +1884,8 @@ class TrustedPaidAcceptanceHandler:
     def prepare_acceptance(self, context):
         evidence = self._evidence(context)
         if self.plan_resolver is None or self.authority_recheck is None:
-            raise ValueError("paid acceptance enrollment inactive; verified authority/bounds required")
+            from .langgraph_primary import AcceptanceEnrollmentRequired
+            raise AcceptanceEnrollmentRequired("paid acceptance enrollment inactive; verified authority/bounds required")
         self.authority_recheck(context)
         from .primary_transports import AcceptanceRequestPlan, ACCEPTANCE_RESPONSE_SCHEMA, acceptance_request_body
         from .langgraph_primary import _canonical_digest

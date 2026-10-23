@@ -6414,6 +6414,71 @@ class TrustedPaidAcceptanceTests(unittest.TestCase):
                 configuration_digest=lambda: digest("fixture-transport-config")),
             plan_resolver=lambda _: self.plan, authority_recheck=lambda _: None)
 
+    def test_default_factory_live_graph_missing_hooks_requires_owner(self):
+        from tests.test_primary_live import DefaultLiveServicesTests
+        from tests.test_langgraph_primary import _handlers, _runtime, _request
+        from director_orchestrator.langgraph_primary import (
+            AcceptanceUnresolved, TerminalClassification, ProviderSubgraphResult, ProviderDisposition)
+        from director_orchestrator.antigravity_team import PrimaryProviderBudgetAuthority
+        from director_orchestrator.antigravity_team_routing import PrimaryProviderBudgetRouting
+        from unittest.mock import Mock
+        fixture = DefaultLiveServicesTests()
+        fixture.setUp()
+        live = fixture._services()
+        self.result["artifacts"].append({"kind": "git_commit", "location": "fixture@" + self.context.candidate_sha,
+                                         "digest": digest("candidate")})
+        self.outcome.result_packet_digest = document_digest(self.result)
+        self.binding.expected_context_digest = self.outcome.result_packet_digest
+        routing = PrimaryProviderBudgetRouting(
+            authority=PrimaryProviderBudgetAuthority(object(), primary_schema="test_budget_v1"), pool=object())
+        providers = ("openai", "claude", "cursor")
+        capabilities = {provider: SimpleNamespace(transport_kind="test") for provider in providers}
+        transport = Mock()
+        with patch("director_orchestrator.primary_default.discover_local_primary_command_transports", return_value=({}, capabilities)), \
+             patch("director_orchestrator.primary_default.build_graph_native_packet_adapters", return_value={p: object() for p in providers}), \
+             patch("director_orchestrator.primary_default.build_primary_packet_result_resolver", return_value=lambda _: self.binding), \
+             patch("director_orchestrator.primary_default.build_primary_committee_resolver", return_value=lambda _: None), \
+             patch("director_orchestrator.antigravity_team_routing.configured_provider_budget_routing", return_value=routing):
+            dependencies = build_automatic_primary_live_dependencies(
+                replace(Settings(), langgraph_primary_antigravity_team_enabled=False),
+                SimpleNamespace(claim_store=self.journal), None, acceptance_transport=transport)
+        live._acceptance_handler = dependencies.acceptance_handler
+        forwarded = live.handlers().openai_acceptance_revision
+        self.assertIs(forwarded, dependencies.acceptance_handler)
+        def provider(context):
+            return ProviderSubgraphResult(provider_attempt_digest=context.provider_attempt_digest,
+                idempotency_key_digest=context.idempotency_key_digest,
+                authority_snapshot_digest=context.authority_snapshot_digest, producer_id=context.scheduled_producer_id,
+                disposition=ProviderDisposition.COMPLETED, result_digest=self.outcome.result_packet_digest,
+                candidate_sha=self.context.candidate_sha)
+        request = _request(self.context.task_id, authority_snapshot_digest=self.context.authority_snapshot_digest)
+        # Valid evidence must reach the typed missing-hook refusal for either absent hook.
+        for missing in ("both", "plan", "authority"):
+            forwarded.plan_resolver = None if missing in {"both", "plan"} else lambda _: self.plan
+            forwarded.authority_recheck = None if missing in {"both", "authority"} else lambda _: None
+            runtime = _runtime(_handlers(provider_subgraph=provider, openai_acceptance_revision=forwarded),
+                               acceptance_store=self.journal)
+            outcome = runtime.start(request)
+            self.assertEqual(outcome.terminal_classification, TerminalClassification.OWNER_DECISION_REQUIRED)
+            self.assertEqual(outcome.reason_code, "acceptance_enrollment_required")
+        transport.execute.assert_not_called()
+        with self.journal.acceptance_transaction() as sql:
+            for table in ("acceptance_operation", "acceptance_budget", "acceptance_http"):
+                self.assertEqual(sql.execute("SELECT COUNT(*) FROM " + table).fetchone()[0], 0)
+        # Other authority errors keep their distinct classifications.
+        forwarded.plan_resolver = lambda _: self.plan
+        for error, classification, reason in (
+            (RuntimeError("unexpected"), TerminalClassification.FAILED, "acceptance_handler_error"),
+            (AcceptanceUnresolved("ambiguous"), TerminalClassification.RECONCILIATION_REQUIRED, "acceptance_unresolved"),
+        ):
+            def recheck(_context, error=error):
+                raise error
+            forwarded.authority_recheck = recheck
+            runtime = _runtime(_handlers(provider_subgraph=provider, openai_acceptance_revision=forwarded),
+                               acceptance_store=self.journal)
+            outcome = runtime.start(request)
+            self.assertEqual((outcome.terminal_classification, outcome.reason_code), (classification, reason))
+
     def test_admission_request_digest_matches_actual_sent_body(self):
         import httpx
         from director_orchestrator.primary_transports import OpenAIAcceptanceTransport

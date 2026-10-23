@@ -1337,6 +1337,26 @@ class PrimaryWorkflowTests(unittest.TestCase):
         self.assertEqual(counters.get("ci_security_completion", 0), 0)
         self.assertEqual(counters.get("effect_execution_readback", 0), 0)
 
+    def test_production_acceptance_journal_is_canonical_store(self):
+        from unittest.mock import patch
+        from director_orchestrator.langgraph_postgres import PostgresConditionalClaimStore
+        canonical = object.__new__(PostgresConditionalClaimStore)
+        separate = object.__new__(PostgresConditionalClaimStore)
+        with tempfile.TemporaryDirectory() as directory:
+            sqlite = SqliteAcceptanceJournal(os.path.join(directory, "override.sqlite3"))
+            with patch.object(PrimaryWorkflowRuntime, "_is_durable_control_plane", return_value=True), \
+                 patch("director_orchestrator.langgraph_primary.build_primary_graph") as build:
+                for override in (sqlite, separate):
+                    with self.subTest(override=type(override).__name__), self.assertRaisesRegex(ValueError, "canonical"):
+                        PrimaryWorkflowRuntime(InMemorySaver(), _handlers(), claim_store=canonical,
+                                               acceptance_store=override)
+                build.assert_not_called()
+                PrimaryWorkflowRuntime(InMemorySaver(), _handlers(), claim_store=canonical)
+                self.assertIs(build.call_args.kwargs["acceptance_store"], canonical)
+                PrimaryWorkflowRuntime(InMemorySaver(), _handlers(), claim_store=canonical,
+                                       acceptance_store=canonical)
+                self.assertIs(build.call_args.kwargs["acceptance_store"], canonical)
+
     def test_acceptance_create_disconnect_requires_reconciliation_without_second_create(self):
         import httpx
         import time
@@ -1887,12 +1907,13 @@ class PrimaryWorkflowTests(unittest.TestCase):
             return defaults.effect_execution_readback(context)
 
         owner_token = "owner-durable"
-        control_plane = _DurableControlPlane(owner_token, events)
         acceptance_directory = tempfile.TemporaryDirectory(prefix="acceptance-ordering-")
         self.addCleanup(acceptance_directory.cleanup)
-        acceptance_store = SqliteAcceptanceJournal(
-            os.path.join(acceptance_directory.name, "acceptance.sqlite3")
-        )
+        class CanonicalTestStore(_DurableControlPlane, SqliteAcceptanceJournal):
+            pass
+        control_plane = CanonicalTestStore(owner_token, events)
+        SqliteAcceptanceJournal.__init__(control_plane,
+            os.path.join(acceptance_directory.name, "acceptance.sqlite3"))
         runtime = _DurableTestRuntime(
             InMemorySaver(),
             _handlers(
@@ -1901,7 +1922,7 @@ class PrimaryWorkflowTests(unittest.TestCase):
                 effect_execution_readback=effect,
             ),
             claim_store=control_plane,
-            acceptance_store=acceptance_store,
+            acceptance_store=control_plane,
             owner_token=owner_token,
         )
         request = _request(

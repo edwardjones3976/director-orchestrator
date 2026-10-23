@@ -1557,7 +1557,7 @@ class AcceptanceTransportTests(unittest.TestCase):
         response.update(updates)
         return response
 
-    def _execute(self, responses=None, *, failure=None, **kwargs):
+    def _execute(self, responses=None, *, failure=None, recheck=None, **kwargs):
         from director_orchestrator.primary_transports import OpenAIAcceptanceTransport
         queue = list(responses or [self._completed()])
         def respond(request):
@@ -1577,7 +1577,7 @@ class AcceptanceTransportTests(unittest.TestCase):
             transport=httpx.MockTransport(respond), trust_env=False, follow_redirects=False))
         return transport.execute(plan=self.plan, evidence=self.evidence, context=self.context,
             journal=self.journal, key=self.key, owner=self.row["owner"],
-            recheck=lambda: self.rechecks.append(True), **kwargs)
+            recheck=recheck or (lambda: self.rechecks.append(True)), **kwargs)
 
     def test_count_create_and_bounded_retrieve_record_id_and_no_hidden_retry(self):
         result = self._execute([{"id": "resp-fixture", "status": "queued"}, self._completed()])
@@ -1592,6 +1592,66 @@ class AcceptanceTransportTests(unittest.TestCase):
         self.assertTrue(body["background"])
         self.assertEqual(body["max_output_tokens"], 8000)
         self.assertGreaterEqual(len(self.rechecks), 4)
+
+    def test_post_charge_checks_cover_every_request_kind(self):
+        from unittest.mock import patch
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved, _canonical_digest
+        original_http = self.journal.acceptance_http
+        for kind in ("input_tokens", "create", "retrieve", "cancel"):
+            for failure in ("deadline", "valid_until", "revoked"):
+                with self.subTest(kind=kind, failure=failure):
+                    self.key = _canonical_digest({"kind": kind, "failure": failure})
+                    _, self.row = self.journal.acceptance_claim(self.key, {}, **replace(
+                        self.plan, scope=kind + failure).reservation())
+                    if kind in {"retrieve", "cancel"}:
+                        original_http(self.key, self.row["owner"], "create")
+                        self.journal.acceptance_response_id(self.key, self.row["owner"], "resp-fixture")
+                    clock = [0.0]
+                    wall = [self.plan.valid_until - 100]
+                    charged = []
+                    def charge(key, owner, request_kind):
+                        original_http(key, owner, request_kind)
+                        charged.append(request_kind)
+                        if request_kind == kind:
+                            if failure == "deadline":
+                                clock[0] = self.plan.timeout_seconds + 1
+                            elif failure == "valid_until":
+                                wall[0] = self.plan.valid_until + 1
+                    def recheck():
+                        if charged and charged[-1] == kind and failure == "revoked":
+                            raise ValueError("authority revoked")
+                    self.requests = []
+                    options = ({"response_id": "resp-fixture", "cancel": kind == "cancel"}
+                               if kind in {"retrieve", "cancel"} else {})
+                    with patch.object(self.journal, "acceptance_http", side_effect=charge), \
+                         patch("director_orchestrator.primary_transports.monotonic", side_effect=lambda: clock[0]), \
+                         patch("time.time", side_effect=lambda: wall[0]):
+                        expected = AcceptanceUnresolved if failure == "deadline" else ValueError
+                        with self.assertRaises(expected):
+                            self._execute(recheck=recheck, **options)
+                    expected_http = 1 if kind == "create" else 0
+                    self.assertEqual(len(self.requests), expected_http)
+                    row = self.journal.acceptance_read(self.key)
+                    self.assertEqual(row["used_requests"], 2 if kind != "input_tokens" else 1)
+                    self.assertEqual(row["reserved_cents"], 155)
+                    won, _ = self.journal.acceptance_claim(self.key, {}, **replace(
+                        self.plan, scope=kind + failure).reservation())
+                    self.assertFalse(won)
+                    with self.journal.acceptance_transaction() as sql:
+                        creates = sql.execute("SELECT COUNT(*) FROM acceptance_http WHERE operation_key=? AND kind='create'", (self.key,)).fetchone()[0]
+                    self.assertEqual(creates, int(kind != "input_tokens"))
+
+    def test_post_charge_timeout_uses_fresh_remaining_budget(self):
+        from unittest.mock import patch
+        clock = [0.0]
+        original_http = self.journal.acceptance_http
+        def charge(*args):
+            original_http(*args)
+            clock[0] += 7
+        with patch.object(self.journal, "acceptance_http", side_effect=charge), \
+             patch("director_orchestrator.primary_transports.monotonic", side_effect=lambda: clock[0]):
+            self._execute()
+        self.assertEqual([request.extensions["timeout"]["read"] for request in self.requests], [53, 46])
 
     def test_disconnect_charges_one_request_and_does_not_retry(self):
         from director_orchestrator.langgraph_primary import AcceptanceUnresolved

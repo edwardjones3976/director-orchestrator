@@ -212,6 +212,11 @@ class OpenAIAcceptanceTransport:
                 if remaining <= 0:
                     raise AcceptanceUnresolved("acceptance deadline exhausted")
                 journal.acceptance_http(key, owner, kind)
+                recheck()
+                plan.reservation()
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise AcceptanceUnresolved("acceptance deadline exhausted after durable charge")
                 try:
                     with client.stream(method, "https://api.openai.com/v1/responses" + suffix,
                             headers=headers, json=body, timeout=remaining) as response:
