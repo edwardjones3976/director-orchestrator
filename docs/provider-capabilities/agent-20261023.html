@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cursor agent route — capability note (2026-10-23)</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, sans-serif; line-height: 1.5; max-width: 48rem; margin: 1.5rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.35rem; }
+    h2 { font-size: 1.1rem; margin-top: 1.5rem; }
+    code, kbd { font-size: 0.92em; }
+    .meta { font-size: 0.9rem; opacity: 0.85; }
+  </style>
+</head>
+<body>
+<!-- [[Auto (Cursor Agent) | UNKNOWN | 2026-10-23 | 15:12 UTC | BEGIN]] -->
+<header>
+  <h1>Cursor native agent — scoped Git route (director_git)</h1>
+  <p class="meta">Standalone route note for WO-FRM-20261023-CAP01. Offline-readable; evidence of commit, draft PR, and ACK comment is recorded on the bound pull request, not in this file.</p>
+</header>
+
+<main>
+  <section aria-labelledby="route">
+    <h2 id="route">Actual route</h2>
+    <p>This qualification exercises the <strong>Cursor</strong> administrator lane (#3) under a Foreman-issued work order. The agent performs bounded repository work only through the <code>director_git</code> worker tools: status and file read, allowed-path write with SHA256 check, commit, draft pull request publish, and PR comment. No native shell, alternate MCP, browser, permission edits, self-review, merge, or deployment are in scope for this route.</p>
+    <p>Assignment runs on branch <code>codex/cap-agent-20261023</code> with <code>allowed_paths</code> limiting writes to this document unless the order is revised.</p>
+  </section>
+
+  <section aria-labelledby="task">
+    <h2 id="task">Scoped JSON task from the Director</h2>
+    <p>The Director (or acting Foreman) delivers a bounded task object: work-order identifiers, explicit steps, <code>allowed_paths</code>, and stop rules. The agent must call <code>worker_git_status</code> first, read each target path with <code>worker_git_read_file</code> (treating <code>ABSENT</code> as the expected hash for new files), then write only where authorized. A tool <strong>refusal</strong> is final: report it and do not substitute another channel or workaround. Ambiguous effect or unknown native model/session metadata is labeled <strong>UNKNOWN</strong> until reconciled from tool returns.</p>
+  </section>
+
+  <section aria-labelledby="publish">
+    <h2 id="publish">Draft-only GitHub publication</h2>
+    <p>Changes are committed with <code>worker_git_commit</code> on the listed paths only; repository hooks run normally with no bypass. Publication is <strong>draft PR only</strong> via <code>worker_git_publish_draft</code> against <code>main</code>. The implementing agent does not request merge, rerun CI, or perform review/ACCEPT on its own contribution.</p>
+  </section>
+
+  <section aria-labelledby="gates">
+    <h2 id="gates">Review, CI, and merge gates</h2>
+    <p>Independent review, exact-SHA evidence, security and policy gates, CI on the candidate, and merge by an eligible non-contributing reviewer remain mandatory after this note exists. This capability document describes route behavior only; it does not attest green CI, acceptance, or production deployment.</p>
+  </section>
+
+  <section aria-labelledby="identity">
+    <h2 id="identity">Authorship vs GitHub sender</h2>
+    <p><strong>Provider authorship:</strong> substantive HTML and implementation steps are produced by the Cursor agent session executing the work order (model identity <strong>UNKNOWN</strong> unless the native client exposes it; session metadata may be recorded separately by the Foreman).</p>
+    <p><strong>Shared account sender:</strong> commits and draft PRs may appear under the GitHub user <code>edwardjones3976</code> as the technical publication identity; that account is not a substitute for provider attribution or review eligibility rules.</p>
+  </section>
+
+  <section aria-labelledby="comms">
+    <h2 id="comms">Communication channels</h2>
+    <p><strong>GitHub:</strong> the bound draft PR and <code>worker_git_comment</code> ACK are verified receipts for this route.</p>
+    <p><strong>Slack:</strong> native Slack delivery is <em>not</em> verified as part of this qualification; do not treat Slack relay as evidence of Git or review state.</p>
+  </section>
+
+  <section aria-labelledby="errors">
+    <h2 id="errors">Errors and reconciliation</h2>
+    <p>On refusal, hash mismatch, or unknown tool outcome: stop, preserve evidence from returns, and reconcile with the Foreman before retrying. Do not repeat a successful effect or claim a completion stage without the corresponding tool receipt.</p>
+  </section>
+</main>
+
+<footer class="meta">
+  <p>Issue context: ISSUE-299 capability verification. Next Foreman readback checkpoint: 23 October 2026, 09:00 America/Los_Angeles (16:00 UTC).</p>
+</footer>
+<!-- [[Auto (Cursor Agent) | UNKNOWN | 2026-10-23 | 15:12 UTC | END]] -->
+</body>
+</html>
