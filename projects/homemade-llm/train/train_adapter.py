@@ -64,6 +64,7 @@ STUDENT_REVISION = "62efd7f9d748e394734a7adae2adf96e13a2abc8"
 TRUSTED_DIGEST_ROOT_SHA256 = "37ff31d7e9c11502d6795c93028ba8a617c6d427f2d6b830381f50d9157348af"
 # Draft bytes; the wrapper requires the final v4 filename after owner approval.
 TRUSTED_DIGEST_ROOT_V4_SHA256 = "6795b16f0ccfb2ae48b358784b979f92a4f19fb1ef09262fbbd31339dbd79e87"
+VERIFIED_READ_TIMEOUT_SECONDS = 180
 PROBE_STEPS = 20
 WINNER_VRAM_GIB = 11.0
 CARD_VRAM_GIB = 12.0
@@ -385,13 +386,13 @@ class VerifiedSnapshot(dict):
 
 
 @contextmanager
-def _read_deadline(seconds=120):
+def _read_deadline(seconds=VERIFIED_READ_TIMEOUT_SECONDS):
     # Linux trainer reads must be interruptible; never return an overdue buffer.
     if not hasattr(signal, "setitimer"):
         yield  # Host-only fixture checks also check elapsed time below.
         return
     def expired(*_args):
-        raise TimeoutError("verified read exceeded 120 seconds")
+        raise TimeoutError(f"verified read exceeded {seconds} seconds")
     previous = signal.signal(signal.SIGALRM, expired)
     timer = signal.setitimer(signal.ITIMER_REAL, seconds)
     try:
@@ -480,10 +481,11 @@ def verified_file_bytes(path, entry, evidence, *, reads=3):
         start = time.monotonic()
         attempt = {"file": str(path), "attempt": number, "digest": None, "size": None,
                    "bytes_read": 0, "seconds": None, "error": None, "method": None,
+                   "timeout_seconds": VERIFIED_READ_TIMEOUT_SECONDS,
                    "expected_size": entry.get("size"),
                    "size_authority": "trusted" if entry.get("size") is not None else "observed only"}
         try:
-            with _read_deadline():
+            with _read_deadline(VERIFIED_READ_TIMEOUT_SECONDS):
                 data = _read_file_once(path, entry.get("size"), attempt)
                 attempt["digest"] = hashlib.sha256(data).hexdigest()
                 if len(data) != (entry["size"] if entry.get("size") is not None else attempt["size"]):
@@ -491,8 +493,8 @@ def verified_file_bytes(path, entry, evidence, *, reads=3):
                 if identity is not None and identity != attempt.get("identity"):
                     raise ValueError("input changed between reads")
                 identity = attempt.get("identity")
-                if time.monotonic() - start >= 120:
-                    raise TimeoutError("verified read exceeded 120 seconds")
+                if time.monotonic() - start >= VERIFIED_READ_TIMEOUT_SECONDS:
+                    raise TimeoutError(f"verified read exceeded {VERIFIED_READ_TIMEOUT_SECONDS} seconds")
                 good = attempt["digest"] == entry["sha256"]
                 if good and consecutive and previous != data:
                     raise ValueError("authenticated bytes changed between reads")
