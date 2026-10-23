@@ -1392,6 +1392,40 @@ class PrimaryWorkflowTests(unittest.TestCase):
             self.assertEqual(sum(r.url.path == "/v1/responses" for r in calls), 1)
             self.assertEqual(len(calls), 2)
 
+    def test_acceptance_finish_database_failures_classified_unresolved(self):
+        import sqlite3
+        import psycopg
+        from unittest.mock import patch
+        for error in (sqlite3.OperationalError("exit uncertain"),
+                      psycopg.OperationalError("commit disconnected"),
+                      psycopg.errors.TransactionResolutionUnknown("commit unknown")):
+            for boundary in ("acceptance_response_id", "acceptance_finish"):
+                for committed in (False, True):
+                    with self.subTest(error=type(error), boundary=boundary, committed=committed), tempfile.TemporaryDirectory() as directory:
+                        journal = SqliteAcceptanceJournal(os.path.join(directory, "journal.sqlite3"))
+                        original = getattr(journal, boundary)
+                        calls = []
+                        def uncertain(*args):
+                            calls.append(args)
+                            if committed:
+                                original(*args)
+                            raise error
+                        class Handler:
+                            def prepare_acceptance(self, context):
+                                return {}, dict(requests=1, limit_requests=1)
+                            def execute_acceptance(self, context, store, key, owner):
+                                store.acceptance_http(key, owner, "create")
+                                store.acceptance_response_id(key, owner, "resp-fixture")
+                                return AcceptanceResult(_digest("paid"), context.candidate_sha, AcceptanceDecision.ACCEPT)
+                        with patch.object(journal, boundary, side_effect=uncertain):
+                            runtime = _runtime(_handlers(openai_acceptance_revision=Handler()), acceptance_store=journal)
+                            outcome = runtime.start(_request("DIR-DB-UNCERTAIN"))
+                        self.assertEqual(outcome.terminal_classification, TerminalClassification.RECONCILIATION_REQUIRED)
+                        self.assertEqual(outcome.reason_code, "acceptance_unresolved")
+                        self.assertEqual(len(calls), 1)
+                        with journal.acceptance_transaction() as sql:
+                            self.assertEqual(sql.execute("SELECT COUNT(*) FROM acceptance_http WHERE kind='create'").fetchone()[0], 1)
+
     def test_revision_and_visit_loops_are_bounded(self):
         counters: dict[str, int] = {}
 

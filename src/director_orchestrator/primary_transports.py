@@ -186,14 +186,15 @@ class OpenAIAcceptanceTransport:
 
     def execute(self, *, plan, evidence, context, journal, key, owner, recheck,
                 response_id=None, cancel=False):
-        from .langgraph_primary import AcceptanceResult, AcceptanceDecision, AcceptanceUnresolved, _canonical_digest
+        from .langgraph_primary import (AcceptanceResult, AcceptanceDecision, AcceptanceUnresolved,
+                                       _canonical_digest, _acceptance_journal_call)
         plan.reservation()
         if not self._api_key:
             raise ValueError("acceptance transport credentials unavailable")
         if _canonical_digest(ACCEPTANCE_RESPONSE_SCHEMA) != plan.schema_digest:
             raise ValueError("acceptance response schema drift")
         if response_id is not None:
-            row = journal.acceptance_read(key)
+            row = _acceptance_journal_call(journal.acceptance_read, key)
             if (row is None or row["owner"] != owner or row["response_id"] != response_id
                     or row["state"] != "RESPONSE_ID_RECORDED"):
                 raise AcceptanceUnresolved("known-ID reconciliation lacks durable binding")
@@ -211,7 +212,7 @@ class OpenAIAcceptanceTransport:
                 remaining = deadline - monotonic()
                 if remaining <= 0:
                     raise AcceptanceUnresolved("acceptance deadline exhausted")
-                journal.acceptance_http(key, owner, kind)
+                _acceptance_journal_call(journal.acceptance_http, key, owner, kind)
                 recheck()
                 plan.reservation()
                 remaining = deadline - monotonic()
@@ -226,7 +227,10 @@ class OpenAIAcceptanceTransport:
                             if monotonic() >= deadline or len(raw) + len(chunk) > 65536:
                                 raise AcceptanceUnresolved("acceptance response deadline/size exceeded")
                             raw.extend(chunk)
-                        value = json.loads(raw)
+                        try:
+                            value = json.loads(raw)
+                        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                            raise AcceptanceUnresolved("acceptance HTTP response envelope malformed") from exc
                         if not response.headers.get("x-request-id") or not isinstance(value, dict):
                             raise AcceptanceUnresolved("acceptance response lacks authenticated request receipt")
                         return value
@@ -244,7 +248,7 @@ class OpenAIAcceptanceTransport:
                 response_id = response.get("id")
                 # Durable ID precedes status/model/output validation, and is retained
                 # even when those checks fail. No retrieval of an unknown ID exists.
-                journal.acceptance_response_id(key, owner, response_id)
+                _acceptance_journal_call(journal.acceptance_response_id, key, owner, response_id)
             else:
                 response = request("cancel" if cancel else "retrieve", "POST" if cancel else "GET",
                                    "/" + response_id + ("/cancel" if cancel else ""))

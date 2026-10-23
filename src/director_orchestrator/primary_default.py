@@ -1864,8 +1864,9 @@ class TrustedPaidAcceptanceHandler:
         result = validate_packet("result", binding.outcome.result_packet)
         if (work["task_id"] != context.task_id or result["task_id"] != context.task_id
                 or binding.record.task_id != context.task_id
-                or result["provider"] != context.producer_id
-                or result["assignment_id"] != work["assignment_id"]
+                or result["provider"] != _assignment_provider_lane(binding.assignment)
+                or work["assignment_id"] != binding.assignment_id
+                or result["assignment_id"] != binding.assignment_id
                 or result["authority_snapshot_digest"] != context.authority_snapshot_digest
                 or work["authority_snapshot_digest"] != context.authority_snapshot_digest
                 or document_digest(result) != binding.outcome.result_packet_digest
@@ -1923,6 +1924,10 @@ class TrustedPaidAcceptanceHandler:
 
     def reconcile(self, context, *, cancel=False):
         """Explicit bounded known-ID reconciliation; never another create."""
+        from .langgraph_primary import _acceptance_journal_call
+        return _acceptance_journal_call(self._reconcile, context, cancel=cancel)
+
+    def _reconcile(self, context, *, cancel=False):
         from .langgraph_primary import acceptance_identity, AcceptanceUnresolved
         binding, _ = self.prepare_acceptance(context)
         key, identity = acceptance_identity(context, binding)

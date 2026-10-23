@@ -318,6 +318,19 @@ def acceptance_identity(context, binding):
     return key, binding
 
 
+def _acceptance_journal_call(operation, *args, **kwargs):
+    """Preserve ambiguous paid outcomes across transaction/exit/cleanup errors.
+
+    Catch the driver base classes, including unknown COMMIT resolution. Never
+    retry a transaction or release its durable reservation on this path.
+    """
+    from psycopg import Error as PostgresError
+    try:
+        return operation(*args, **kwargs)
+    except (sqlite3.Error, PostgresError) as exc:
+        raise AcceptanceUnresolved("acceptance journal outcome unresolved") from exc
+
+
 def durable_acceptance(handler, context, journal):
     """The shared boundary, including directly injected graph handlers."""
     durable = (isinstance(journal, SqliteAcceptanceJournal)
@@ -339,14 +352,14 @@ def durable_acceptance(handler, context, journal):
     if not won:
         return journal.acceptance_replay(row, context.candidate_sha)
     if hasattr(handler, "execute_acceptance"):
-        result = handler.execute_acceptance(context, journal, key, row["owner"])
+        result = _acceptance_journal_call(handler.execute_acceptance, context, journal, key, row["owner"])
     else:
         result = handler(context)
     if not isinstance(result, AcceptanceResult):
         raise TypeError("acceptance result type mismatch")
     if result.subject_sha != context.candidate_sha:
         raise AcceptanceSubjectMismatch("acceptance result subject mismatch")
-    journal.acceptance_finish(key, row["owner"], result)
+    _acceptance_journal_call(journal.acceptance_finish, key, row["owner"], result)
     return result
 
 

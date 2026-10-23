@@ -1579,6 +1579,63 @@ class AcceptanceTransportTests(unittest.TestCase):
             journal=self.journal, key=self.key, owner=self.row["owner"],
             recheck=recheck or (lambda: self.rechecks.append(True)), **kwargs)
 
+    def test_malformed_create_envelope_is_unresolved_with_cause(self):
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved
+        def malformed(request):
+            if not request.url.path.endswith("input_tokens"):
+                return httpx.Response(200, content=b'{"id":', headers={"x-request-id": "fixture"})
+        with self.assertRaises(AcceptanceUnresolved) as raised:
+            self._execute(failure=malformed)
+        self.assertIsInstance(raised.exception.__cause__, json.JSONDecodeError)
+        row = self.journal.acceptance_read(self.key)
+        self.assertEqual((row["used_requests"], row["reserved_cents"]), (2, 155))
+        with self.assertRaises(AcceptanceUnresolved):
+            self.journal.acceptance_http(self.key, self.row["owner"], "create")
+        self.assertEqual(len(self.requests), 2)
+
+    def test_malformed_retrieve_keeps_durable_id(self):
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved
+        def malformed(request):
+            if request.method == "GET":
+                return httpx.Response(200, content=b'{', headers={"x-request-id": "fixture"})
+        with self.assertRaises(AcceptanceUnresolved) as raised:
+            self._execute([{"id": "resp-fixture", "status": "queued"}], failure=malformed)
+        self.assertIsInstance(raised.exception.__cause__, json.JSONDecodeError)
+        row = self.journal.acceptance_read(self.key)
+        self.assertEqual((row["response_id"], row["used_requests"], row["reserved_cents"]),
+                         ("resp-fixture", 3, 155))
+        self.assertEqual(len(self.requests), 3)
+
+    def test_response_id_database_exit_failure_requires_reconciliation(self):
+        import sqlite3
+        import psycopg
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved, _canonical_digest
+        original = self.journal.acceptance_response_id
+        errors = (sqlite3.OperationalError("commit acknowledgement lost"),
+                  psycopg.OperationalError("connection lost"),
+                  psycopg.errors.TransactionResolutionUnknown("commit unknown"))
+        for index, error in enumerate(errors):
+            for committed in (False, True):
+                with self.subTest(error=type(error), committed=committed):
+                    self.key = _canonical_digest({"error": index, "committed": committed})
+                    _, self.row = self.journal.acceptance_claim(self.key, {}, **replace(
+                        self.plan, scope=f"db-{index}-{committed}").reservation())
+                    self.requests = []
+                    def uncertain(*args):
+                        if committed:
+                            original(*args)
+                        raise error
+                    with patch.object(self.journal, "acceptance_response_id", side_effect=uncertain):
+                        with self.assertRaises(AcceptanceUnresolved) as raised:
+                            self._execute()
+                    self.assertIs(raised.exception.__cause__, error)
+                    row = self.journal.acceptance_read(self.key)
+                    self.assertEqual(row["response_id"], "resp-fixture" if committed else None)
+                    self.assertEqual((row["reserved_cents"], row["used_requests"]), (155, 2))
+                    with self.assertRaises(AcceptanceUnresolved):
+                        self.journal.acceptance_http(self.key, self.row["owner"], "create")
+                    self.assertEqual(len(self.requests), 2)
+
     def test_count_create_and_bounded_retrieve_record_id_and_no_hidden_retry(self):
         result = self._execute([{"id": "resp-fixture", "status": "queued"}, self._completed()])
         self.assertEqual(result.decision.value, "accept")

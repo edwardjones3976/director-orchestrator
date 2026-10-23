@@ -6407,12 +6407,75 @@ class TrustedPaidAcceptanceTests(unittest.TestCase):
             return AcceptanceResult(digest("paid-completed"), self.context.candidate_sha, AcceptanceDecision.ACCEPT)
         self.outcome = SimpleNamespace(result_packet=self.result, result_packet_digest=document_digest(self.result))
         self.binding = SimpleNamespace(expected_context_digest=self.context.provider_result_digest,
-            work_packet=self.work, outcome=self.outcome, record=SimpleNamespace(task_id=self.context.task_id))
+            work_packet=self.work, outcome=self.outcome, record=SimpleNamespace(task_id=self.context.task_id),
+            assignment=SimpleNamespace(primary_provider_lane=self.result["provider"]),
+            assignment_id=self.work["assignment_id"])
         self.handler = TrustedPaidAcceptanceHandler(resolver=lambda _: self.binding,
             candidate_resolver=lambda *_: self.context.candidate_sha,
             journal=self.journal, transport=SimpleNamespace(execute=transport,
                 configuration_digest=lambda: digest("fixture-transport-config")),
             plan_resolver=lambda _: self.plan, authority_recheck=lambda _: None)
+
+    def test_review_lane_differs_from_producer_and_preserves_context(self):
+        from dataclasses import replace
+        context = replace(self.context, producer_id="openai")
+        self.assertNotEqual(context.producer_id, self.result["provider"])
+        self.assertEqual(self.handler(context).decision.value, "accept")
+        self.assertEqual(context.producer_id, "openai")
+
+    def test_substituted_review_lane_or_assignment_refused(self):
+        original_lane = self.result["provider"]
+        original_assignment = self.work["assignment_id"]
+        for lane, assignment_id in (("openai", original_assignment),
+                                    (original_lane, "substituted-assignment")):
+            with self.subTest(lane=lane, assignment_id=assignment_id):
+                self.binding.assignment.primary_provider_lane = lane
+                self.binding.assignment_id = assignment_id
+                with self.assertRaises(ValueError):
+                    self.handler(self.context)
+        self.assertEqual(self.calls, [])
+
+    def test_reconciliation_database_exit_failure_is_unresolved(self):
+        import sqlite3
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved
+        with patch.object(self.journal, "acceptance_read", side_effect=sqlite3.OperationalError("exit uncertain")):
+            with self.assertRaises(AcceptanceUnresolved) as raised:
+                self.handler.reconcile(self.context)
+        self.assertIsInstance(raised.exception.__cause__, sqlite3.Error)
+        self.assertEqual(self.calls, [])
+
+    def test_reconciliation_finish_failure_keeps_known_id_and_reservation(self):
+        import sqlite3
+        import psycopg
+        from director_orchestrator.langgraph_primary import (
+            AcceptanceUnresolved, SqliteAcceptanceJournal, acceptance_identity)
+        errors = (sqlite3.OperationalError("exit uncertain"),
+                  psycopg.OperationalError("commit disconnected"),
+                  psycopg.errors.TransactionResolutionUnknown("commit unknown"))
+        for index, error in enumerate(errors):
+            for committed in (False, True):
+                with self.subTest(error=type(error), committed=committed):
+                    journal = SqliteAcceptanceJournal(Path(self.directory.name) / f"reconcile-{index}-{committed}.sqlite3")
+                    self.handler.journal = journal
+                    binding, reservation = self.handler.prepare_acceptance(self.context)
+                    key, identity = acceptance_identity(self.context, binding)
+                    _, row = journal.acceptance_claim(key, identity, **reservation)
+                    journal.acceptance_http(key, row["owner"], "create")
+                    journal.acceptance_response_id(key, row["owner"], "resp-fixture")
+                    original = journal.acceptance_finish
+                    def uncertain(*args):
+                        if committed:
+                            original(*args)
+                        raise error
+                    self.calls.clear()
+                    with patch.object(journal, "acceptance_finish", side_effect=uncertain):
+                        with self.assertRaises(AcceptanceUnresolved) as raised:
+                            self.handler.reconcile(self.context)
+                    self.assertIs(raised.exception.__cause__, error)
+                    held = journal.acceptance_read(key)
+                    self.assertEqual((held["response_id"], held["reserved_cents"]), ("resp-fixture", 155))
+                    self.assertEqual(len(self.calls), 1)
+                    self.assertEqual(self.calls[0]["response_id"], "resp-fixture")
 
     def test_default_factory_live_graph_missing_hooks_requires_owner(self):
         from tests.test_primary_live import DefaultLiveServicesTests
