@@ -6380,6 +6380,322 @@ with TestClient(app) as client:
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:57 UTC | BEGIN]]
 # Request budgets are immutable, non-zero units derived from the validated plan.
 # [[OpenAI Codex | GPT-5.6 | 2026-09-01 | 09:57 UTC | END]]
+class TrustedPaidAcceptanceTests(unittest.TestCase):
+    def setUp(self):
+        gate = patch("director_orchestrator.primary_transports.ACCEPTANCE_ABSOLUTE_DEADLINE_ENFORCED", True)
+        gate.start()
+        self.addCleanup(gate.stop)
+        from copy import deepcopy
+        from types import SimpleNamespace
+        from tests.test_primary_live import DefaultLiveServicesTests
+        from director_orchestrator.langgraph_primary import SqliteAcceptanceJournal, AcceptanceResult, AcceptanceDecision
+        from director_orchestrator.primary_default import TrustedPaidAcceptanceHandler
+        from director_orchestrator.primary_transports import AcceptanceRequestPlan, ACCEPTANCE_RESPONSE_SCHEMA
+        from director_orchestrator.langgraph_primary import _canonical_digest
+        fixture = DefaultLiveServicesTests()
+        fixture.setUp()
+        self.context = fixture.context
+        self.work, self.result = deepcopy(fixture.work), deepcopy(fixture.result)
+        self.directory = tempfile.TemporaryDirectory(prefix="paid-acceptance-handler-")
+        self.addCleanup(self.directory.cleanup)
+        self.journal = SqliteAcceptanceJournal(str(Path(self.directory.name) / "journal.sqlite3"))
+        self.plan = AcceptanceRequestPlan(model="fixture-immutable-model", authority_digest=digest("authority"),
+            tariff_digest=digest("tariff"), schema_digest=_canonical_digest(ACCEPTANCE_RESPONSE_SCHEMA),
+            valid_until=int(time.time()) + 300, max_input=50000, max_output=8000,
+            max_cache_write=50000, input_rate="2", output_rate="10", cache_write_rate="2.5",
+            fee_bound="0", scope="fixture-acceptance-only")
+        self.calls = []
+        def transport(**kwargs):
+            self.calls.append(kwargs)
+            return AcceptanceResult(digest("paid-completed"), self.context.candidate_sha, AcceptanceDecision.ACCEPT)
+        self.outcome = SimpleNamespace(result_packet=self.result, result_packet_digest=document_digest(self.result))
+        self.binding = SimpleNamespace(expected_context_digest=self.context.provider_result_digest,
+            work_packet=self.work, outcome=self.outcome, record=SimpleNamespace(task_id=self.context.task_id),
+            assignment=SimpleNamespace(primary_provider_lane=self.result["provider"]),
+            assignment_id=self.work["assignment_id"])
+        self.handler = TrustedPaidAcceptanceHandler(resolver=lambda _: self.binding,
+            candidate_resolver=lambda *_: self.context.candidate_sha,
+            journal=self.journal, transport=SimpleNamespace(execute=transport,
+                configuration_digest=lambda: digest("fixture-transport-config")),
+            plan_resolver=lambda _: self.plan, authority_recheck=lambda _: None)
+
+    def test_review_lane_differs_from_producer_and_preserves_context(self):
+        from dataclasses import replace
+        context = replace(self.context, producer_id="openai")
+        self.assertNotEqual(context.producer_id, self.result["provider"])
+        self.assertEqual(self.handler(context).decision.value, "accept")
+        self.assertEqual(context.producer_id, "openai")
+
+    def test_substituted_review_lane_or_assignment_refused(self):
+        original_lane = self.result["provider"]
+        original_assignment = self.work["assignment_id"]
+        for lane, assignment_id in (("openai", original_assignment),
+                                    (original_lane, "substituted-assignment")):
+            with self.subTest(lane=lane, assignment_id=assignment_id):
+                self.binding.assignment.primary_provider_lane = lane
+                self.binding.assignment_id = assignment_id
+                with self.assertRaises(ValueError):
+                    self.handler(self.context)
+        self.assertEqual(self.calls, [])
+
+    def test_reconciliation_database_exit_failure_is_unresolved(self):
+        import sqlite3
+        from director_orchestrator.langgraph_primary import AcceptanceUnresolved
+        with patch.object(self.journal, "acceptance_read", side_effect=sqlite3.OperationalError("exit uncertain")):
+            with self.assertRaises(AcceptanceUnresolved) as raised:
+                self.handler.reconcile(self.context)
+        self.assertIsInstance(raised.exception.__cause__, sqlite3.Error)
+        self.assertEqual(self.calls, [])
+
+    def test_reconciliation_finish_failure_keeps_known_id_and_reservation(self):
+        import sqlite3
+        import psycopg
+        from director_orchestrator.langgraph_primary import (
+            AcceptanceUnresolved, SqliteAcceptanceJournal, acceptance_identity)
+        errors = (sqlite3.OperationalError("exit uncertain"),
+                  psycopg.OperationalError("commit disconnected"),
+                  psycopg.errors.TransactionResolutionUnknown("commit unknown"))
+        for index, error in enumerate(errors):
+            for committed in (False, True):
+                with self.subTest(error=type(error), committed=committed):
+                    journal = SqliteAcceptanceJournal(Path(self.directory.name) / f"reconcile-{index}-{committed}.sqlite3")
+                    self.handler.journal = journal
+                    binding, reservation = self.handler.prepare_acceptance(self.context)
+                    key, identity = acceptance_identity(self.context, binding)
+                    _, row = journal.acceptance_claim(key, identity, **reservation)
+                    journal.acceptance_http(key, row["owner"], "create")
+                    journal.acceptance_response_id(key, row["owner"], "resp-fixture")
+                    original = journal.acceptance_finish
+                    def uncertain(*args):
+                        if committed:
+                            original(*args)
+                        raise error
+                    self.calls.clear()
+                    with patch.object(journal, "acceptance_finish", side_effect=uncertain):
+                        with self.assertRaises(AcceptanceUnresolved) as raised:
+                            self.handler.reconcile(self.context)
+                    self.assertIs(raised.exception.__cause__, error)
+                    held = journal.acceptance_read(key)
+                    self.assertEqual((held["response_id"], held["reserved_cents"]), ("resp-fixture", 155))
+                    self.assertEqual(len(self.calls), 1)
+                    self.assertEqual(self.calls[0]["response_id"], "resp-fixture")
+
+    @patch("director_orchestrator.primary_transports.ACCEPTANCE_ABSOLUTE_DEADLINE_ENFORCED", False)
+    def test_default_factory_live_graph_closed_gate_with_both_hooks_requires_owner(self):
+        self._default_factory_live_graph_requires_owner(gate_closed=True)
+
+    def test_default_factory_live_graph_missing_hooks_requires_owner(self):
+        self._default_factory_live_graph_requires_owner(gate_closed=False)
+
+    def _default_factory_live_graph_requires_owner(self, *, gate_closed):
+        from tests.test_primary_live import DefaultLiveServicesTests
+        from tests.test_langgraph_primary import _handlers, _runtime, _request
+        from director_orchestrator.langgraph_primary import (
+            AcceptanceUnresolved, TerminalClassification, ProviderSubgraphResult, ProviderDisposition,
+            AcceptanceResult, AcceptanceDecision)
+        from director_orchestrator.antigravity_team import PrimaryProviderBudgetAuthority
+        from director_orchestrator.antigravity_team_routing import PrimaryProviderBudgetRouting
+        from unittest.mock import Mock
+        fixture = DefaultLiveServicesTests()
+        fixture.setUp()
+        live = fixture._services()
+        self.result["artifacts"].append({"kind": "git_commit", "location": "fixture@" + self.context.candidate_sha,
+                                         "digest": digest("candidate")})
+        self.outcome.result_packet_digest = document_digest(self.result)
+        self.binding.expected_context_digest = self.outcome.result_packet_digest
+        routing = PrimaryProviderBudgetRouting(
+            authority=PrimaryProviderBudgetAuthority(object(), primary_schema="test_budget_v1"), pool=object())
+        providers = ("openai", "claude", "cursor")
+        capabilities = {provider: SimpleNamespace(transport_kind="test") for provider in providers}
+        transport = Mock()
+        transport.configuration_digest.return_value = digest("factory-acceptance-transport")
+        transport.execute.return_value = AcceptanceResult(
+            digest("factory-acceptance-result"), self.context.candidate_sha, AcceptanceDecision.ACCEPT)
+        with patch("director_orchestrator.primary_default.discover_local_primary_command_transports", return_value=({}, capabilities)), \
+             patch("director_orchestrator.primary_default.build_graph_native_packet_adapters", return_value={p: object() for p in providers}), \
+             patch("director_orchestrator.primary_default.build_primary_packet_result_resolver", return_value=lambda _: self.binding), \
+             patch("director_orchestrator.primary_default.build_primary_committee_resolver", return_value=lambda _: None), \
+             patch("director_orchestrator.antigravity_team_routing.configured_provider_budget_routing", return_value=routing):
+            dependencies = build_automatic_primary_live_dependencies(
+                replace(Settings(), langgraph_primary_antigravity_team_enabled=False),
+                SimpleNamespace(claim_store=self.journal), None, acceptance_transport=transport)
+        live._acceptance_handler = dependencies.acceptance_handler
+        forwarded = live.handlers().openai_acceptance_revision
+        self.assertIs(forwarded, dependencies.acceptance_handler)
+        def provider(context):
+            return ProviderSubgraphResult(provider_attempt_digest=context.provider_attempt_digest,
+                idempotency_key_digest=context.idempotency_key_digest,
+                authority_snapshot_digest=context.authority_snapshot_digest, producer_id=context.scheduled_producer_id,
+                disposition=ProviderDisposition.COMPLETED, result_digest=self.outcome.result_packet_digest,
+                candidate_sha=self.context.candidate_sha)
+        request = _request(self.context.task_id, authority_snapshot_digest=self.context.authority_snapshot_digest)
+        # Valid evidence must reach the typed missing-hook refusal for either absent hook.
+        for missing in (("neither",) if gate_closed else ("both", "plan", "authority")):
+            forwarded.plan_resolver = None if missing in {"both", "plan"} else lambda _: self.plan
+            forwarded.authority_recheck = None if missing in {"both", "authority"} else lambda _: None
+            runtime = _runtime(_handlers(provider_subgraph=provider, openai_acceptance_revision=forwarded),
+                               acceptance_store=self.journal)
+            outcome = runtime.start(request)
+            self.assertEqual(outcome.terminal_classification, TerminalClassification.OWNER_DECISION_REQUIRED)
+            self.assertEqual(outcome.reason_code, "acceptance_enrollment_required")
+        transport.execute.assert_not_called()
+        with self.journal.acceptance_transaction() as sql:
+            for table in ("acceptance_operation", "acceptance_budget", "acceptance_http"):
+                self.assertEqual(sql.execute("SELECT COUNT(*) FROM " + table).fetchone()[0], 0)
+        if gate_closed:
+            return
+        # Other authority errors keep their distinct classifications.
+        forwarded.plan_resolver = lambda _: self.plan
+        for error, classification, reason in (
+            (RuntimeError("unexpected"), TerminalClassification.FAILED, "acceptance_handler_error"),
+            (AcceptanceUnresolved("ambiguous"), TerminalClassification.RECONCILIATION_REQUIRED, "acceptance_unresolved"),
+        ):
+            def recheck(_context, error=error):
+                raise error
+            forwarded.authority_recheck = recheck
+            runtime = _runtime(_handlers(provider_subgraph=provider, openai_acceptance_revision=forwarded),
+                               acceptance_store=self.journal)
+            outcome = runtime.start(request)
+            self.assertEqual((outcome.terminal_classification, outcome.reason_code), (classification, reason))
+
+    @patch("director_orchestrator.primary_transports.ACCEPTANCE_ABSOLUTE_DEADLINE_ENFORCED", False)
+    def test_closed_gate_precedes_evidence_and_hooks(self):
+        from director_orchestrator.langgraph_primary import AcceptanceEnrollmentRequired
+        from unittest.mock import Mock
+        self.handler.resolver = Mock(side_effect=AssertionError("must not prepare"))
+        self.handler.plan_resolver = Mock(side_effect=AssertionError("must not resolve"))
+        self.handler.authority_recheck = Mock(side_effect=AssertionError("must not recheck"))
+        with self.assertRaisesRegex(AcceptanceEnrollmentRequired, r"R4, #501"):
+            self.handler.prepare_acceptance(self.context)
+        for hook in (self.handler.resolver, self.handler.plan_resolver, self.handler.authority_recheck):
+            hook.assert_not_called()
+        self.assertEqual(self.calls, [])
+
+    def test_closed_gate_known_id_reconciliation_retrieves_and_finishes(self):
+        import httpx
+        from director_orchestrator.primary_transports import OpenAIAcceptanceTransport
+        from director_orchestrator.langgraph_primary import acceptance_identity, _canonical_digest
+        requests = []
+        def respond(request):
+            requests.append(request)
+            self.assertEqual((request.method, request.url.path), ("GET", "/v1/responses/resp-fixture"))
+            return httpx.Response(200, json={"id": "resp-fixture", "model": self.plan.model,
+                "status": "completed", "usage": {"input_tokens": 10, "output_tokens": 16},
+                "output": [{"type": "message", "content": [{"type": "output_text",
+                    "text": json.dumps({"task_id": self.context.task_id,
+                        "candidate_sha": self.context.candidate_sha, "revision": self.context.revision_count,
+                        "evidence_digest": _canonical_digest(binding["evidence"]), "decision": "accept"})}]}]},
+                headers={"x-request-id": "fixture"})
+        self.handler.transport = OpenAIAcceptanceTransport("fake-key", client_factory=lambda: httpx.Client(
+            transport=httpx.MockTransport(respond), trust_env=False))
+        binding, reservation = self.handler.prepare_acceptance(self.context)
+        key, identity = acceptance_identity(self.context, binding)
+        _, row = self.journal.acceptance_claim(key, identity, **reservation)
+        self.journal.acceptance_http(key, row["owner"], "create")
+        self.journal.acceptance_response_id(key, row["owner"], "resp-fixture")
+        with patch("director_orchestrator.primary_transports.ACCEPTANCE_ABSOLUTE_DEADLINE_ENFORCED", False):
+            result = self.handler.reconcile(self.context)
+        self.assertEqual(result.decision.value, "accept")
+        self.assertEqual(len(requests), 1)
+        held = self.journal.acceptance_read(key)
+        self.assertEqual(held["state"], "COMPLETED")
+        self.assertEqual(held["reserved_cents"], row["reserved_cents"])
+
+    def test_closed_gate_reconciliation_refuses_unknown_and_mismatched_ids(self):
+        from director_orchestrator.langgraph_primary import acceptance_identity, AcceptanceUnresolved
+        binding, reservation = self.handler.prepare_acceptance(self.context)
+        key, identity = acceptance_identity(self.context, binding)
+        _, row = self.journal.acceptance_claim(key, identity, **reservation)
+        with patch("director_orchestrator.primary_transports.ACCEPTANCE_ABSOLUTE_DEADLINE_ENFORCED", False):
+            with self.assertRaisesRegex(AcceptanceUnresolved, "unknown response ID"):
+                self.handler.reconcile(self.context)
+            self.journal.acceptance_http(key, row["owner"], "create")
+            self.journal.acceptance_response_id(key, row["owner"], "resp-fixture")
+            self.context = replace(self.context, revision_count=self.context.revision_count + 1)
+            with self.assertRaisesRegex(AcceptanceUnresolved, "missing or stale"):
+                self.handler.reconcile(self.context)
+        self.assertEqual(self.calls, [])
+        held = self.journal.acceptance_read(key)
+        self.assertEqual((held["state"], held["reserved_cents"]),
+                         ("RESPONSE_ID_RECORDED", row["reserved_cents"]))
+
+    def test_admission_request_digest_matches_actual_sent_body(self):
+        import httpx
+        from director_orchestrator.primary_transports import OpenAIAcceptanceTransport
+        from director_orchestrator.langgraph_primary import _canonical_digest
+        binding, _ = self.handler.prepare_acceptance(self.context)
+        def respond(request):
+            body = json.loads(request.content)
+            if request.url.path.endswith("input_tokens"):
+                return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10},
+                    headers={"x-request-id": "fixture"})
+            self.assertEqual(_canonical_digest(body), binding["request_digest"])
+            subject = json.loads(body["instructions"].split("\n", 1)[0].removeprefix("TRUSTED SUBJECT: "))
+            return httpx.Response(200, json={"id": "resp-fixture", "model": body["model"],
+                "status": "completed", "usage": {"input_tokens": 10, "output_tokens": 16},
+                "output": [{"type": "message", "content": [{"type": "output_text",
+                    "text": json.dumps({**subject, "decision": "accept"})}]}]},
+                headers={"x-request-id": "fixture"})
+        self.handler.transport = OpenAIAcceptanceTransport("fake-key", client_factory=lambda: httpx.Client(
+            transport=httpx.MockTransport(respond), trust_env=False))
+        binding, _ = self.handler.prepare_acceptance(self.context)
+        self.assertEqual(self.handler(self.context).decision.value, "accept")
+
+    def test_invalid_output_plan_has_no_claim_reservation_or_http(self):
+        for value in (1, 15):
+            self.plan = replace(self.plan, max_output=value)
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.handler(self.context)
+        self.assertEqual(self.calls, [])
+        with self.journal.acceptance_transaction() as sql:
+            for table in ("acceptance_operation", "acceptance_budget", "acceptance_http"):
+                self.assertEqual(sql.execute("SELECT COUNT(*) FROM " + table).fetchone()[0], 0)
+
+    def test_valid_handler_commits_then_replays_without_transport(self):
+        first = self.handler(self.context)
+        self.assertEqual(self.handler(self.context), first)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_missing_enrollment_or_in_process_store_refuses_without_transport(self):
+        from director_orchestrator.langgraph_primary import InProcessConditionalClaimStore
+        self.handler.plan_resolver = None
+        with self.assertRaises(ValueError):
+            self.handler(self.context)
+        self.handler.journal = InProcessConditionalClaimStore()
+        with self.assertRaises(ValueError):
+            self.handler(self.context)
+        self.assertEqual(self.calls, [])
+
+    def test_bad_evidence_refuses_before_transport(self):
+        from copy import deepcopy
+        original = deepcopy(self.result)
+        mutations = (
+            lambda packet: packet.update(status="FAILED"),
+            lambda packet: packet.update(provider="openai"),
+            lambda packet: packet.update(task_id="wrong-task"),
+            lambda packet: packet["acceptance"].append(deepcopy(packet["acceptance"][0])),
+            lambda packet: packet["acceptance"][0].update(status="FAIL"),
+            lambda packet: packet.update(risks=["unresolved risk"]),
+            lambda packet: packet.update(blockers=["blocked"]),
+            lambda packet: packet.update(requested_decisions=["owner required"]),
+        )
+        for mutate in mutations:
+            self.result.clear()
+            self.result.update(deepcopy(original))
+            mutate(self.result)
+            self.outcome.result_packet_digest = document_digest(self.result)
+            with self.subTest(packet=self.result), self.assertRaises(ValueError):
+                self.handler(self.context)
+        self.assertEqual(self.calls, [])
+
+    def test_completed_replay_rechecks_evidence_and_current_authority(self):
+        self.handler(self.context)
+        self.binding.expected_context_digest = digest("stale-context")
+        with self.assertRaises(ValueError):
+            self.handler(self.context)
+        self.assertEqual(len(self.calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
 
