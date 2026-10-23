@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codex scoped coding route — 23 October 2026</title>
+<style>body{font:1rem/1.6 system-ui,sans-serif;max-width: fiftyrem;max-width:52rem;margin:2rem auto;padding:0 1rem;color:#18212b;background:#fff}h1,h2{line-height:1.25}code{overflow-wrap:anywhere}a{color:#124e96}</style>
+</head>
+<body>
+<!-- [[OpenAI Codex | UNKNOWN | 2026-10-23 | 15:47 UTC | BEGIN]] -->
+<main>
+<h1>Codex scoped coding route</h1>
+<p>This standalone offline-readable note records the bounded implementation route for <strong>WO-FRM-20261023-CAP01</strong>, ISSUE-299. The accountable native author is OpenAI Codex, route <code>codex</code>. Native model and responsible session identifiers are <strong>UNKNOWN</strong>: neither has been exposed by the native client. A launcher executable does not establish model identity.</p>
+<h2>Assign a bounded task</h2>
+<p>The Director supplies a JSON task with an explicit work order, objective, permitted actions, stop conditions and <code>allowed_paths</code>. This assignment permits exactly <code>docs/provider-capabilities/codex-20261023.html</code>. The worker uses only the supplied <code>director_git</code> tools, starting with repository status and a file read. A write uses the returned SHA256 as its expected hash; a new file uses the returned <code>ABSENT</code> value. This binds the edit to observed file state.</p>
+<h2>Implementation and draft publication</h2>
+<p>The route supports a scoped file write, a commit naming exactly the allowed path, draft GitHub publication against <code>main</code>, and a comment on the returned bound pull request. Normal commit hooks must run without bypass. A requested operation is not proof of completion: only its returned receipt establishes the observed result. The commit, tree, draft PR and acknowledgment evidence belong in the later PR comment, because this file cannot contain its own final commit SHA.</p>
+<h2>Identity and communication</h2>
+<p>OpenAI Codex authors this implementation. The shared GitHub sender <code>edwardjones3976</code> is a transport/account identity, not proof that the human owner authored or approved the work. The comment tool's actual returned sender and comment URL must be read back. GitHub publication and comments provide GitHub communication evidence only; native Slack communication is unverified by this qualification.</p>
+<h2>Stop and reconcile</h2>
+<p>A refusal is final for this work order. An error, UNKNOWN outcome or ambiguous effect requires stopping and reporting the returned evidence and uncertainty to the Foreman. Do not retry a potentially successful effect, change permissions, switch tools or providers, or infer success from silence. Reconciliation requires a separate authorized next step.</p>
+<h2>Independent gates and current evidence</h2>
+<p>The initial status receipt reports a clean branch, with head and base <code>0a63c91eacc701e8d7183db7cd5b1c74482c6359</code>; the file read reports <code>ABSENT</code>. No commit, hook outcome, draft PR, acknowledgment or CI outcome is claimed here before its receipt. This note is an implementation contribution, not source review, ACCEPT or owner approval.</p>
+<p>Independent review must bind to the actual candidate revisions and truthful producer identity. Applicable CI, security, budget and deterministic approval gates remain required. Draft publication grants no merge or deployment authority. This author cannot independently approve its own contribution or merge it; this work order authorizes neither merge nor deployment.</p>
+<p>The requested Foreman readback checkpoint is <time datetime="2026-10-23T16:00:00Z">23 October 2026, 09:00 America/Los_Angeles / 16:00 UTC</time>. The later acknowledgment records actual completed actions and remaining unknowns.</p>
+</main>
+<!-- [[OpenAI Codex | UNKNOWN | 2026-10-23 | 15:47 UTC | END]] -->
+</body>
+</html>
