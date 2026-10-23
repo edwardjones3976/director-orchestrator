@@ -5572,8 +5572,29 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         served = {key: value for key, value in
                   store.read_primary_qualification_evidence(record.task_id, byte_limit=exact).items()
                   if key != "projection"}
-        self.assertGreater(served["bounds"]["elapsed_seconds"], 0.0)
+        import math
+        from itertools import count
+        self.assertIsInstance(served["bounds"]["elapsed_seconds"], float)
+        self.assertTrue(math.isfinite(served["bounds"]["elapsed_seconds"]))
+        self.assertGreaterEqual(served["bounds"]["elapsed_seconds"], 0.0)
         self.assertLessEqual(served_size(served), exact)
+        for step in (0.0, 0.000001):
+            with self.subTest(clock_step=step):
+                ticks = count(time.monotonic(), step)
+                # Replace the module binding, not the process-wide time.monotonic.
+                with patch.object(langgraph_postgres, "time", SimpleNamespace(monotonic=lambda: next(ticks))):
+                    timed = {key: value for key, value in
+                             store.read_primary_qualification_evidence(record.task_id, byte_limit=exact).items()
+                             if key != "projection"}
+                elapsed = timed["bounds"]["elapsed_seconds"]
+                zero_size = served_size({**timed, "bounds": {**timed["bounds"], "elapsed_seconds": 0.0}})
+                if step:
+                    self.assertGreater(elapsed, 0.0)
+                    self.assertGreater(served_size(timed), zero_size)
+                else:
+                    self.assertEqual(elapsed, 0.0)
+                    self.assertEqual(served_size(timed), zero_size)
+                self.assertLessEqual(served_size(timed), exact)
         # A projection whose content no longer matches its stored digest (the version guard allows it) is refused.
         with self.handle.pool.connection() as connection:
             connection.execute(
