@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Foreman PowerShell read runner · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a></nav></header>
+<main id="content">
+<h1>Foreman PowerShell read runner</h1>
+<p>The <code>scripts.foreman_mcp.powershell_readonly</code> stdio MCP exposes four tools: status, read one file, list one directory, and search one file for literal text. It runs a fixed PowerShell script with <code>-NoProfile</code> and <code>-NonInteractive</code>. Callers cannot submit a command string. Every path must exist within one of the absolute, semicolon-separated directories in <code>FOREMAN_READ_ROOTS</code>. Unconfigured roots refuse file operations.</p>
+<p>The runner limits file reads to 512 KB, directory listings to 200 entries, search matches to 100, and captured output to 1 MB. It refuses common credential files and the excluded LLM project. It has no write, network, provider dispatch, or shell execution tool. Point its roots only at reviewed Director-Orchestrator worktrees; do not include unrelated projects or an entire user profile.</p>
+<p>Local validation: <code>py -3.12 -m unittest tests.test_foreman_powershell_mcp -q</code>. The test reads <a href="foreman-repair-work-orders.html">the repair procedure</a>, lists its own module directory, searches a candidate source file, and refuses a path outside the configured worktree. This utility grants no repair, provider, review, or merge authority.</p>
+</main>
+<footer class="site-footer">Local read access only.</footer>
+</body>
+</html>
