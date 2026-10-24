@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import types
 import unittest
 from pathlib import Path
@@ -2801,6 +2802,63 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
             root = Path(tmp)
             with self.assertRaises(SystemExit):
                 train_adapter.verify_expected_digests(root, [{"path": "nope.bin", "sha256": "a" * 64, "size": 1}])
+
+    @unittest.skipUnless(os.name == "nt", "Windows creation/change-time semantics")
+    def test_windows_verified_read_keeps_change_time_not_path_creation_time(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "synthetic.bin")
+            path.write_bytes(b"stable")
+            # Changing only mtime also advances the NTFS metadata-change time.
+            time.sleep(0.02)
+            os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+            with path.open("rb") as stream:
+                expected = os.fstat(stream.fileno())
+            self.assertNotEqual(expected.st_ctime_ns, path.stat().st_ctime_ns)
+            attempt = {"bytes_read": 0}
+            self.assertEqual(train_adapter._read_file_once(path, 6, attempt), b"stable")
+            self.assertEqual(attempt["identity"][-1], expected.st_ctime_ns)
+
+    @unittest.skipUnless(os.name == "nt", "Windows handle-to-path binding")
+    def test_windows_verified_read_rejects_handle_and_path_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "synthetic.bin")
+            path.write_bytes(b"stable")
+            with path.open("rb") as stream:
+                real = os.fstat(stream.fileno())
+            fields = ("st_mode", "st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+            original = {field: getattr(real, field) for field in fields}
+            for position in (1, 2):
+                for field in fields[1:]:
+                    with self.subTest(position=position, field=field):
+                        stats = [types.SimpleNamespace(**original) for _ in range(3)]
+                        setattr(stats[position], field, original[field] + 1)
+                        with mock.patch.object(train_adapter.os, "fstat", side_effect=stats):
+                            with self.assertRaisesRegex(ValueError, "input changed while reading"):
+                                train_adapter._read_file_once(path, 6, {"bytes_read": 0})
+
+    @unittest.skipUnless(os.name == "nt", "Windows reopened-path handle cleanup")
+    def test_windows_verified_read_closes_handles_on_path_query_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "synthetic.bin")
+            path.write_bytes(b"stable")
+            real_open, real_fstat = os.open, os.fstat
+            opened = []
+            def tracked_open(*args):
+                descriptor = real_open(*args)
+                opened.append(descriptor)
+                return descriptor
+            def checked_fstat(descriptor):
+                if len(opened) == 2 and descriptor == opened[1]:
+                    raise OSError("synthetic path query failure")
+                return real_fstat(descriptor)
+            with mock.patch.object(train_adapter.os, "open", side_effect=tracked_open), \
+                 mock.patch.object(train_adapter.os, "fstat", side_effect=checked_fstat):
+                with self.assertRaisesRegex(OSError, "synthetic path query failure"):
+                    train_adapter._read_file_once(path, 6, {"bytes_read": 0})
+            self.assertEqual(len(opened), 2)
+            for descriptor in opened:
+                with self.assertRaises(OSError):
+                    real_fstat(descriptor)
 
     def test_verify_expected_digests_size_mismatch(self):
         with tempfile.TemporaryDirectory() as tmp:

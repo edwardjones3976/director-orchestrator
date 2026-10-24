@@ -461,7 +461,16 @@ def _read_file_once(path, expected_size, attempt):
                     break
         after = os.fstat(fd)
         signature = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
-        if signature(before) != signature(after) or signature(after) != signature(path.stat()):
+        if os.name == "nt":
+            # Windows path stat uses creation time; fstat uses metadata-change time.
+            path_fd = os.open(path, os.O_RDONLY)
+            try:
+                current = os.fstat(path_fd)
+            finally:
+                os.close(path_fd)
+        else:
+            current = path.stat()
+        if signature(before) != signature(after) or signature(after) != signature(current):
             raise ValueError("input changed while reading")
         attempt["identity"] = list(signature(after))
         if attempt["bytes_read"] != read_size:
