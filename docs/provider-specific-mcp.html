@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Provider-specific MCP adapters · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a></nav></header>
+<main id="content">
+<h1>Provider-specific MCP adapters</h1>
+<p>The nine provider lanes each have a separate local stdio server. Each names
+one provider and offers its own status and bounded action tool. Grok Bot is an
+additional, separate desktop contact documented in
+<a href="grok-bot-chat-dispatch.html">Grok Bot chat dispatch</a>; it never
+masquerades as the xAI model API. No generic provider argument or fallback
+router is accepted.</p>
+<table><caption>Provider MCP contacts</caption><thead><tr><th>Lane</th><th>Module</th><th>Bounded action</th><th>Transport</th></tr></thead><tbody>
+<tr><td>OpenAI</td><td><code>openai</code></td><td><code>openai_ask</code></td><td>Responses API, no tools</td></tr>
+<tr><td>Claude</td><td><code>claude</code></td><td><code>claude_ask</code></td><td>Claude Code CLI, restricted with tools and MCP disabled</td></tr>
+<tr><td>Cursor</td><td><code>cursor</code></td><td><code>cursor_ask</code></td><td>Cursor Agent CLI, read-only ask mode in an empty workspace</td></tr>
+<tr><td>Grok</td><td><code>xai</code></td><td><code>xai_ask</code></td><td>xAI Responses API, no tools</td></tr>
+<tr><td>Antigravity</td><td><code>antigravity</code></td><td><code>antigravity_get_interaction</code></td><td>Gemini Interactions API, existing run observation only</td></tr>
+<tr><td>Perplexity</td><td><code>perplexity</code></td><td><code>perplexity_search_public</code></td><td>Search API, public query only</td></tr>
+<tr><td>Firecrawl</td><td><code>firecrawl</code></td><td><code>firecrawl_search_public</code></td><td>Search API, public query only</td></tr>
+<tr><td>GitHub Copilot</td><td><code>copilot</code></td><td><code>copilot_ask</code></td><td>Copilot CLI, read available in an empty workspace</td></tr>
+<tr><td>Z.ai</td><td><code>zai</code></td><td><code>zai_ask</code></td><td>Z.ai Anthropic-compatible API, no tools</td></tr>
+</tbody></table>
+<p>Antigravity agent creation remains in the Director's grant and budget flow;
+its MCP tool can observe a previously authorized interaction. GitHub Copilot
+is the model CLI lane. The separate GitHub MCP below is a repository service.</p>
+<h2>Administrator contacts</h2>
+<p>The three project administrators also have separate MCP wrappers named
+<code>admin-openai</code>, <code>admin-claude</code>, and
+<code>admin-cursor</code>. Each exposes its own status and consult tool and
+delegates to the matching provider transport above. These wrappers carry no
+new assignment, approval, merge, or publishing authority; the project charter
+and deterministic Director gates remain in force. They never send a prompt to
+another administrator as a fallback.</p>
+<p>Three group wrappers offer named contact tools without a target selector:
+<code>admin</code> contains OpenAI, Claude, and Cursor administrator consult
+contacts; <code>providers</code> contains all nine AI provider lanes plus the
+separate Grok Bot desktop contact; <code>workers</code> contains the six
+non-admin provider lanes plus Grok Bot. Each group reports contact readiness
+and forwards a call to the exact underlying adapter. The original credential,
+activation, spending, and desktop-input gates still apply. Group registration
+does not grant Director authority.</p>
+<p>The separate <code>Researchers</code> wrapper exposes only Perplexity and
+Firecrawl public search tools and a readiness status tool. It returns the
+underlying source results to the invoking human or AI client as JSON text and
+structured MCP content, including the query and provider identity. It does
+not brief another provider, create an assignment, or assert a research verdict.
+Its searches retain the original provider switches, credential checks, and
+daily attempt caps.</p>
+<p>Perplexity has a separate <a href="https://github.com/perplexityai/modelcontextprotocol">official MCP server</a>
+at <code>https://api.perplexity.ai/mcp</code>. Register it as its own MCP entry
+with <code>PERPLEXITY_API_KEY</code> supplied through the host environment. Its
+tools remain Perplexity research calls; they do not route to Grok or Z.ai.</p>
+<p>GitHub likewise has an <a href="https://github.com/github/github-mcp-server">official MCP server</a>
+at <code>https://api.githubcopilot.com/mcp/</code>. A separate
+<code>github</code> host entry can read <code>GITHUB_PAT_TOKEN</code> from the
+environment. Registration alone does not authenticate or authorize repository
+writes; Director's GitHub workflow and review gates still apply.</p>
+<p>These are advisory model calls. They create no Director work packet, production
+credit, review verdict, assignment, or external effect. Use the Director's
+existing admission, budget, review and merge paths for project work. MCP host
+registration alone grants no provider authority.</p>
+<h2>Readiness and spending</h2>
+<p>Status calls are free and report booleans only. Action calls refuse by
+default. Both <code>DIRECTOR_MCP_PAID_CALLS_ENABLED=true</code> and the
+matching provider switch (for example <code>XAI_MCP_ENABLED=true</code> or
+<code>CLAUDE_MCP_ENABLED=true</code>) must be present in the server process.
+Antigravity's read-only lookup requires <code>ANTIGRAVITY_MCP_READ_ENABLED</code>
+and an exact interaction ID in <code>ANTIGRAVITY_MCP_ALLOWED_INTERACTION_IDS</code>
+(comma-separated); a global switch alone grants no interaction access. Grok reads <code>XAI_API_KEY</code> and
+Z.ai reads <code>ZAI_API_KEY</code> or its current-user Windows DPAPI store at
+call time. The Z.ai key can be imported from standard input with
+<code>py -3.12 -m provider_mcp.secret_store import-stdin</code> while
+<code>PYTHONPATH</code> points at the installed adapter directory. Never pass
+the key on the command line or in chat. Z.ai additionally requires the
+owner's production activation record digest in <code>ZAI_PRODUCTION_ACTIVATION</code>.
+The old Z.ai trial ended on 29 September 2026 and is not an available route.
+Never put a credential value in an MCP registration command or tracked file.</p>
+<p>Action input is capped at 24 KB. API model requests disable tools and bound
+output to 4000 tokens. Native CLIs run in empty temporary workspaces and
+return bounded output. Cursor additionally requires a CLI version with workspace
+read controls and <code>sandbox.readBoundary=workspace</code> in its global
+<code>cli-config.json</code>; Ask mode and an empty workspace alone do not confine
+file reads. Receipts are written under
+<code>~/.codex/provider-mcp-receipts/&lt;provider&gt;/</code> outside worktrees.
+Calls are capped at 40 xAI or 20 Z.ai attempts per UTC day. A repeated input
+digest refuses instead of silently retrying an ambiguous previous attempt.
+These limits apply only to this advisory interface; Director's own budgets and
+ledger remain authoritative for project execution.</p>
+<h2>Local registration</h2>
+<p>From the repository root, run each module with Python 3.12. Set
+<code>PYTHONPATH</code> in each host entry to the absolute repository root,
+using the host's environment configuration. Register all nine modules as
+separate MCP servers:</p>
+<pre><code>py -3.12 -m scripts.provider_mcp.openai
+py -3.12 -m scripts.provider_mcp.claude
+py -3.12 -m scripts.provider_mcp.cursor
+py -3.12 -m scripts.provider_mcp.xai
+py -3.12 -m scripts.provider_mcp.antigravity
+py -3.12 -m scripts.provider_mcp.perplexity
+py -3.12 -m scripts.provider_mcp.firecrawl
+py -3.12 -m scripts.provider_mcp.copilot
+py -3.12 -m scripts.provider_mcp.zai</code></pre>
+<p>Administrator wrappers are separate modules:</p>
+<pre><code>py -3.12 -m scripts.provider_mcp.admin_openai
+py -3.12 -m scripts.provider_mcp.admin_claude
+py -3.12 -m scripts.provider_mcp.admin_cursor</code></pre>
+<p>The group entries run <code>py -3.12 -m scripts.provider_mcp.admin</code>,
+<code>py -3.12 -m scripts.provider_mcp.providers</code>, and
+<code>py -3.12 -m scripts.provider_mcp.workers</code>. Set
+<code>GROK_BOT_MCP_SCRIPT</code> to the absolute path of the separately
+installed <code>grok_bot_mcp.py</code> adapter in the <code>providers</code>
+and <code>workers</code> host entries. If the desktop adapter is unavailable,
+its status reports unconfigured and its tools refuse.</p>
+<p>The research-only entry runs
+<code>py -3.12 -m scripts.provider_mcp.researchers</code> and may be registered
+as <code>Researchers</code>. Its two actions accept only a public
+<code>query</code> of at most 500 characters and return results only to the
+calling MCP host.</p>
+<p>For Codex, the official Perplexity remote registration is:</p>
+<pre><code>codex mcp add perplexity --url https://api.perplexity.ai/mcp --bearer-token-env-var PERPLEXITY_API_KEY
+codex mcp add github --url https://api.githubcopilot.com/mcp/ --bearer-token-env-var GITHUB_PAT_TOKEN</code></pre>
+<p>Do not enable paid-call switches merely to test the MCP handshake. Verify
+<code>initialize</code>, <code>tools/list</code>, and the status tools first.
+Run <code>py -3.12 -m unittest tests.test_provider_mcp -v</code> to verify
+protocol separation and default refusals without network calls.</p>
+</main>
+<footer class="site-footer">Dedicated provider adapters · Advisory tools only</footer>
+</body>
+</html>

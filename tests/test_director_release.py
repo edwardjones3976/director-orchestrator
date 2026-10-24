@@ -308,6 +308,69 @@ def print_compose_render_diagnostic_for_ci():
         print(path.read_text(encoding="utf-8"), end="")
 
 
+# Closed entry tokens and bounds of the WINDIAG tmp_cleanup grammar in
+# scripts/run-tests-parallel.py.
+_TMP_CLEANUP_ENTRIES = ("git.exe", "candidate-executed")
+_WINDIAG_CODE_MAX = 0xFFFFFFFF
+_WINDIAG_ERRNO_MAX = 0xFFFF
+
+
+def _tmp_cleanup_note(root, error):
+    """One fixed scalar line; the failing filename or path is never published."""
+    is_root, entry = 0, "other"
+    try:
+        filename = os.fspath(error.filename) if isinstance(error.filename, (str, os.PathLike)) else None
+        if isinstance(filename, str):
+            path = os.path.normcase(os.path.abspath(filename))
+            base = os.path.normcase(os.path.abspath(root))
+            is_root = int(path == base)
+            name = os.path.basename(path)
+            if os.path.dirname(path) == base and name in _TMP_CLEANUP_ENTRIES:
+                entry = name
+    except (TypeError, ValueError, OSError):
+        is_root, entry = 0, "other"
+
+    def bounded(value, maximum):
+        return value if type(value) is int and 0 <= value <= maximum else -1
+
+    return (f"WINDIAG tmp_cleanup root={is_root} entry={entry} "
+            f"winerror={bounded(getattr(error, 'winerror', None), _WINDIAG_CODE_MAX)} "
+            f"errno={bounded(error.errno, _WINDIAG_ERRNO_MAX)}")
+
+
+# Hosted Windows reported "root=1 entry=other winerror=32": the directory
+# itself was still open just after the fixture child (cwd=root) had exited.
+# That sharing violation clears on its own; nothing else is retried or ignored.
+_SHARING_VIOLATION = 32
+_CLEANUP_RETRY_DELAYS = (0.1, 0.25, 0.5, 1, 2, 4)
+
+
+@contextmanager
+def _noted_temporary_directory():
+    """TemporaryDirectory with strict cleanup and one bounded exception.
+
+    Only a Windows sharing violation (WinError 32) is retried, on a fixed
+    schedule of under 8 s. Any other cleanup OSError, or a sharing violation
+    that outlasts the schedule, is re-raised unchanged, with its context,
+    after one fixed scalar note is attached for the sanitized CI tail.
+    """
+    temporary = tempfile.TemporaryDirectory()
+    try:
+        yield temporary.name
+    finally:
+        delays = iter(_CLEANUP_RETRY_DELAYS)
+        while True:
+            try:
+                temporary.cleanup()
+                break
+            except OSError as error:
+                delay = next(delays, None) if getattr(error, "winerror", None) == _SHARING_VIOLATION else None
+                if delay is None:
+                    error.add_note(_tmp_cleanup_note(temporary.name, error))
+                    raise
+            time.sleep(delay)
+
+
 class ReleasePreparationTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -2806,7 +2869,7 @@ assert fixture_cache.SAFE and callable(jsonschema.validate)
 
     @unittest.skipUnless(os.name == "nt", "Windows executable search regression")
     def test_trusted_native_path_prevents_candidate_executable_lookup(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with _noted_temporary_directory() as directory:
             root = Path(directory)
             marker = root / "candidate-executed"
             # A harmless OS command processor stands in for candidate git.exe.
@@ -3697,9 +3760,14 @@ class ReleaseInputAndProcessTests(unittest.TestCase):
             tool = release.Release.__new__(release.Release)
             tool.spec = {"snapshot": {"path": str(repo), "remote": "reviewed", "repository": "example/demo",
                                      "starting_ref": "main", "commit": commit, "tree": tree}}
+            # Each call cold-starts pwsh and several git processes. On a loaded
+            # hosted Windows shard 30 s ran out before the script could reach its
+            # own verdict, so the expected platform_check_failed surfaced as
+            # doctor_deadline_exhausted. The budget only has to outlast startup.
+            budget = 120
             def powershell(name, arguments):
                 return REAL_COMMAND([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(ROOT / "scripts" / name),
-                    *arguments, "-GitExecutable", shutil.which("git")], cwd=ROOT, env=environment, deadline=time.monotonic() + 30)
+                    *arguments, "-GitExecutable", shutil.which("git")], cwd=ROOT, env=environment, deadline=time.monotonic() + budget)
             tool.powershell = powershell
             control = (ROOT / "scripts/windows-langgraph-primary-control.ps1").read_text()
             start = control.index('$snapshot = [string]$values["REPOSITORY_SNAPSHOT_HOST_PATH"]')
@@ -3713,7 +3781,7 @@ class ReleaseInputAndProcessTests(unittest.TestCase):
                     "-SnapshotPath", str(repo), "-Commit", commit, "-Tree", tree,
                     "-SelectedGit", shutil.which("git"), "-ScriptRoot", str(ROOT / "scripts")]
             tool.snapshot_check()
-            REAL_COMMAND(argv, cwd=ROOT, env=environment, deadline=time.monotonic() + 30)
+            REAL_COMMAND(argv, cwd=ROOT, env=environment, deadline=time.monotonic() + budget)
             for missing in (False, True):
                 if missing:
                     git("remote", "remove", "origin")
@@ -3722,7 +3790,7 @@ class ReleaseInputAndProcessTests(unittest.TestCase):
                 with self.subTest(missing=missing), self.assertRaisesRegex(release.ReleaseError, "^platform_check_failed$"):
                     tool.snapshot_check()
                 with self.subTest(control_missing=missing), self.assertRaisesRegex(release.ReleaseError, "^platform_check_failed$"):
-                    REAL_COMMAND(argv, cwd=ROOT, env=environment, deadline=time.monotonic() + 30)
+                    REAL_COMMAND(argv, cwd=ROOT, env=environment, deadline=time.monotonic() + budget)
 
     def test_cli_bootstrap_refuses_checkout_imports_without_isolation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -4028,6 +4096,111 @@ class ComposeRenderDiagnosticTests(unittest.TestCase):
             self.assertEqual(set(record), {"rc", "stdout_bytes", "argv", "stderr_tail"})
             self.assertEqual(record["rc"], 1)
             self.assertLessEqual(len(json.dumps(record["stderr_tail"])), 1500)
+
+
+class NotedTemporaryDirectoryTests(unittest.TestCase):
+    """The trusted-native-path fixture's cleanup stays strict apart from a bounded
+    sharing-violation retry; failures gain one note."""
+
+    def failing_cleanup(self, make_error):
+        # Remove the real directory first so the injected failure leaks nothing.
+        real_cleanup = tempfile.TemporaryDirectory.cleanup
+        def cleanup(temporary):
+            real_cleanup(temporary)
+            raise make_error(temporary.name)
+        return patch.object(tempfile.TemporaryDirectory, "cleanup", cleanup)
+
+    def test_strict_cleanup_removes_the_directory(self):
+        with _noted_temporary_directory() as directory:
+            (Path(directory) / "git.exe").write_bytes(b"fixture")
+        self.assertFalse(Path(directory).exists())
+
+    def test_cleanup_error_is_reraised_unchanged_with_one_private_free_note(self):
+        winerror = 5 if os.name == "nt" else -1
+        cases = (
+            (lambda root: root, f"root=1 entry=other winerror={winerror} errno=13"),
+            (lambda root: os.path.join(root, "git.exe"), f"root=0 entry=git.exe winerror={winerror} errno=13"),
+            (lambda root: os.path.join(root, "candidate-executed"),
+             f"root=0 entry=candidate-executed winerror={winerror} errno=13"),
+            (lambda root: os.path.join(root, "sk-private-entry.txt"), f"root=0 entry=other winerror={winerror} errno=13"),
+            (lambda root: os.path.join(root, "nested", "git.exe"), f"root=0 entry=other winerror={winerror} errno=13"),
+        )
+        for target, fields in cases:
+            injected = {}
+            def make_error(root, target=target):
+                injected["error"] = PermissionError(13, "private message", target(root), 5)
+                injected["root"] = root
+                return injected["error"]
+            with self.subTest(fields=fields), self.failing_cleanup(make_error), \
+                    self.assertRaises(PermissionError) as caught:
+                with _noted_temporary_directory():
+                    pass
+            error = caught.exception
+            self.assertIs(error, injected["error"])
+            self.assertEqual((error.errno, error.strerror), (13, "private message"))
+            self.assertEqual(error.__notes__, ["WINDIAG tmp_cleanup " + fields])
+            for private in ("private", "sk-", injected["root"], os.path.basename(injected["root"])):
+                self.assertNotIn(private, error.__notes__[0])
+            self.assertFalse(Path(injected["root"]).exists())
+
+    def test_cleanup_error_keeps_the_original_body_failure_as_context(self):
+        body = AssertionError("bare executable lookup ran candidate git.exe")
+        with self.failing_cleanup(lambda root: OSError(70000, "private", None)), \
+                self.assertRaises(OSError) as caught:
+            with _noted_temporary_directory():
+                raise body
+        self.assertIs(caught.exception.__context__, body)
+        # No filename and an out-of-range errno fall back to the closed defaults.
+        self.assertEqual(caught.exception.__notes__,
+                         ["WINDIAG tmp_cleanup root=0 entry=other winerror=-1 errno=-1"])
+
+    @staticmethod
+    def sharing_violation(root):
+        error = PermissionError(13, "private message", root)
+        error.winerror = _SHARING_VIOLATION  # Set directly so the case also runs off Windows.
+        return error
+
+    def test_transient_sharing_violation_is_retried_until_cleanup_succeeds(self):
+        real_cleanup = tempfile.TemporaryDirectory.cleanup
+        attempts = []
+        def cleanup(temporary):
+            attempts.append(temporary.name)
+            if len(attempts) <= 2:
+                raise self.sharing_violation(temporary.name)
+            real_cleanup(temporary)
+        with patch.object(tempfile.TemporaryDirectory, "cleanup", cleanup), \
+                patch.object(time, "sleep") as sleep:
+            with _noted_temporary_directory() as directory:
+                (Path(directory) / "git.exe").write_bytes(b"fixture")
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual([call.args for call in sleep.call_args_list], [(0.1,), (0.25,)])
+        self.assertFalse(Path(directory).exists())
+
+    def test_persistent_sharing_violation_is_bounded_and_reraised_with_its_note(self):
+        body = AssertionError("bare executable lookup ran candidate git.exe")
+        raised = []
+        def make_error(root):
+            raised.append(self.sharing_violation(root))
+            return raised[-1]
+        with self.failing_cleanup(make_error), patch.object(time, "sleep") as sleep, \
+                self.assertRaises(PermissionError) as caught:
+            with _noted_temporary_directory():
+                raise body
+        self.assertEqual(len(raised), len(_CLEANUP_RETRY_DELAYS) + 1)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], list(_CLEANUP_RETRY_DELAYS))
+        self.assertLess(sum(_CLEANUP_RETRY_DELAYS), 8)
+        error = caught.exception
+        self.assertIs(error, raised[-1])
+        self.assertIs(error.__context__, body)
+        self.assertEqual(error.__notes__, ["WINDIAG tmp_cleanup root=1 entry=other winerror=32 errno=13"])
+        self.assertTrue(all(not getattr(earlier, "__notes__", None) for earlier in raised[:-1]))
+
+    def test_other_cleanup_errors_are_never_retried(self):
+        with self.failing_cleanup(lambda root: PermissionError(13, "private message", root, 5)), \
+                patch.object(time, "sleep") as sleep, self.assertRaises(PermissionError):
+            with _noted_temporary_directory():
+                pass
+        sleep.assert_not_called()
 
 
 if __name__ == "__main__":
