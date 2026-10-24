@@ -314,9 +314,12 @@ class OpenAIActivityLedgers:
         }
 
     def require_floor(self, moment: Optional[datetime] = None) -> None:
+        """Hold every verdict except a sufficiently observed, passing floor."""
         stats = self.utilization(moment=moment)
-        if stats["verdict"] == "below_floor":
-            raise DirectorUtilizationHold("OpenAI Director utilization is below the required floor")
+        if stats["verdict"] != "meets_floor":
+            raise DirectorUtilizationHold(
+                f"OpenAI Director utilization has not met the required floor: {stats['verdict']}"
+            )
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:00 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | END]]
 # [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | END]]
