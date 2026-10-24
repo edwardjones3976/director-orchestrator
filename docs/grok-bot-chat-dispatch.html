@@ -16,7 +16,7 @@
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-17 | 00:59 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-13 | 19:15 UTC | BEGIN]] -->
 <h1 id="grok-bot-chat-dispatch">Grok Bot chat dispatch</h1>
-<p>Grok Bot (<code>C:\Program Files\Grok Bot\Grok Bot.exe</code>) has no CLI. This route
+<p>Grok Bot (currently installed at <code>%LOCALAPPDATA%\Programs\Grok Bot\Grok Bot.exe</code>) has no CLI. This route
 drives its chat composer from a session that has no computer-use tool. The
 owner ranks it among the top three ways to reach Grok Bot, above Computer Use.
 It is a coordination contact only: Grok Bot's reply is review evidence for the
@@ -28,6 +28,28 @@ No P/Invoke; COM <code>WScript.Shell</code> (AppActivate by <strong>process id</
 managed UI Automation (<code>UIAutomationClient</code>, to read which process owns
 keyboard focus before every keystroke), the clipboard (saved before the paste
 and restored after it), and a GDI screenshot only.</p>
+<h2 id="desktop-mcp-adapter">Dedicated desktop MCP adapter</h2>
+<p><code>scripts/grok_bot_mcp.py</code> is a separate local stdio MCP server for this
+desktop contact. It does not call the xAI model API. Its tools separately report
+status and focus, paste one review packet, expose a preview, and send only after
+the preview hash is supplied. Input and send require separate environment
+switches, <code>GROK_BOT_DESKTOP_INPUT_ENABLED=true</code> and
+<code>GROK_BOT_DESKTOP_SEND_ENABLED=true</code>. Keep both off until the desktop is
+idle and the packet has been reviewed. The adapter checks the dispatcher against
+the reviewed Git bytes before any GUI action. Packets must be ASCII and live
+under <code>%LOCALAPPDATA%\director-orchestrator\grok-bot\</code>.</p>
+<p>On 2026-10-12, Bitdefender quarantined <code>grok_bot_chat.ps1</code> as
+<code>CMD:Heur.BZC.PZQ.Boxter.1013.7FDF3065</code>. Its file access failure
+appeared as a Windows sharing violation even though the ACL allowed reads. The
+adapter reports this as a blocked dispatcher. Restore only that exact file using
+Bitdefender Protection &gt; Antivirus &gt; Settings &gt; Manage quarantine, then
+verify that the MCP status reports <code>dispatcher_ready=true</code>. A restore
+may create an antivirus exception; check the quarantine settings before doing
+so. The local MCP registration points to the restored script in the
+<code>director-orchestrator</code> checkout through
+<code>GROK_BOT_DISPATCH_SCRIPT</code>. Git stores LF and Windows checks out CRLF;
+the adapter normalizes that line-ending difference before checking the Git hash.
+Do not edit Bitdefender's quarantine files directly or disable protection.</p>
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-19 | 06:40 UTC]] -->
 <h2 id="where-things-live">Where things live</h2>
 <p>All artifacts default to <code>%LOCALAPPDATA%\director-orchestrator\grok-bot\</code> —
