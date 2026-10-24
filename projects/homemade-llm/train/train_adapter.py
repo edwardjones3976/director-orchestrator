@@ -2585,8 +2585,13 @@ def train(
         model, tokenizer = load_verified_model(snapshot, digest_verification,
             max_seq_length=epoch_context_limit if epochs is not None else SEQ)
         resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision, snapshot)
-        if callback is not None and callback.identity["base_revision"] != resolved:
-            raise ValueError("loaded model differs from frozen dev identity")
+        if callback is not None:
+            if callback.identity["base_revision"] != resolved:
+                raise ValueError("loaded model differs from frozen dev identity")
+            # A local-path load leaves config._commit_hash None, which the dev predictor
+            # guard refuses: carry the authenticated resolution (verified snapshot chain,
+            # mismatch already refused above) into the config before PEFT or any dev evaluation.
+            model.config._commit_hash = resolved
         model = FastLanguageModel.get_peft_model(
             model, r=16, lora_alpha=16, lora_dropout=0, bias="none",
             use_gradient_checkpointing=use_gradient_checkpointing,

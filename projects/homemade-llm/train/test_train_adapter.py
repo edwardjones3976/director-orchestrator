@@ -3406,6 +3406,68 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
                                  [mock.call(model, use_gradient_checkpointing=mode)] * 2)
                 self.assertTrue(report["operational_completion"])
 
+    def test_epoch_run_hands_dev_the_authenticated_revision_for_none_missing_and_matching_config(self):
+        # Observed on the pinned image: a local-path config load leaves _commit_hash None,
+        # which predict_dev's guard refuses. The run must hand PEFT and every dev evaluation
+        # a config carrying the revision resolved from the verified snapshot, not a caller value.
+        import predict_dev
+        base, revision = train_adapter.STUDENT_BASE, train_adapter.STUDENT_REVISION
+        configs = {"none": lambda: types.SimpleNamespace(_commit_hash=None),
+                   "missing": lambda: types.SimpleNamespace(),
+                   "matching": lambda: types.SimpleNamespace(_commit_hash=revision)}
+        for kind, make_config in configs.items():
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                model = mock.Mock(config=make_config())
+                def save(directory):
+                    Path(directory, "adapter_config.json").write_bytes(b'{"r":16}')
+                    Path(directory, "adapter_model.safetensors").write_bytes(b"synthetic adapter")
+                model.save_pretrained.side_effect = save
+                seen = {"dev": []}
+                def peft(candidate, **kwargs):
+                    seen["peft"] = getattr(candidate.config, "_commit_hash", "absent")
+                    return candidate
+                def inference(candidate):
+                    seen["dev"].append(getattr(candidate.config, "_commit_hash", "absent"))
+                tokenizer = ContextTokenizer()
+                flm = mock.Mock(from_pretrained=mock.Mock(return_value=(model, tokenizer)),
+                                get_peft_model=mock.Mock(side_effect=peft),
+                                for_inference=mock.Mock(side_effect=inference))
+                # The verified snapshot directory is named by the pinned revision, as on the host.
+                with mock.patch.object(train_adapter, "local_snapshot_dir", return_value=root / "snapshots" / revision):
+                    report = self._maintenance_epoch_run(root, Slice3CompleteTrainer, epochs=1, flm=flm,
+                        context_tokenizer=tokenizer, student=(base, revision))
+                self.assertEqual(seen["peft"], revision)
+                self.assertEqual(seen["dev"], [revision, revision])  # midpoint and epoch end
+                self.assertEqual(report["base_resolved_commit"], revision)
+                self.assertTrue(report["operational_completion"])
+                # The unchanged predictor guard accepts exactly the model object handed to dev.
+                predict_dev.DevPredictor._check_base_revision_binding(
+                    types.SimpleNamespace(model=model, identity={"base_revision": revision}))
+
+    def test_epoch_run_refuses_mismatched_loaded_commit_before_peft_dev_or_overwrite(self):
+        base, revision = train_adapter.STUDENT_BASE, train_adapter.STUDENT_REVISION
+        config = types.SimpleNamespace(_commit_hash="f" * 40)
+        model = mock.Mock(config=config)
+        tokenizer = ContextTokenizer()
+        flm = mock.Mock(from_pretrained=mock.Mock(return_value=(model, tokenizer)),
+                        get_peft_model=mock.Mock(return_value=model))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.object(train_adapter, "local_snapshot_dir", return_value=root / "snapshots" / revision), \
+                 self.assertRaisesRegex(SystemExit, "does not match the pinned revision"):
+                self._maintenance_epoch_run(root, Slice3CompleteTrainer, epochs=1, flm=flm,
+                    context_tokenizer=tokenizer, student=(base, revision))
+            flm.from_pretrained.assert_called_once()
+            flm.get_peft_model.assert_not_called()
+            flm.for_inference.assert_not_called()
+            model.save_pretrained.assert_not_called()
+            self.assertEqual(config._commit_hash, "f" * 40)
+            payload = json.loads((root / "reports" / "maintenance.json").read_bytes())
+            self.assertEqual(payload["state"], "failed")
+            self.assertEqual(payload["completed_epoch_ids"], [])
+            self.assertFalse((root / "models" / "maintenance" / "midpoint-epoch-01").exists())
+
     def test_completed_epoch_memory_admission_precedes_ready_handoff(self):
         class CompleteTrainer:
             def __init__(self, **kwargs):
