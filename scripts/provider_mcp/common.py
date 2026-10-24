@@ -9,7 +9,10 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -95,11 +98,58 @@ def post_json(url: str, body: dict, headers: dict[str, str]) -> dict:
     return response
 
 
+def get_json(url: str, headers: dict[str, str]) -> dict:
+    request = Request(url, method="GET", headers=headers)
+    try:
+        with urlopen(request, timeout=30) as result:
+            raw = result.read(MAX_RESPONSE + 1)
+    except HTTPError as exc:
+        raise RuntimeError(f"provider returned HTTP {exc.code}") from None
+    except URLError:
+        raise RuntimeError("provider connection failed or timed out") from None
+    if len(raw) > MAX_RESPONSE:
+        raise RuntimeError("provider response exceeds 1 MB")
+    response = json.loads(raw)
+    if not isinstance(response, dict):
+        raise RuntimeError("provider response is not an object")
+    return response
+
+
+def native_executable(name: str, override: str) -> str | None:
+    candidate = os.environ.get(override)
+    return candidate if candidate and Path(candidate).is_file() else shutil.which(name)
+
+
+def native_call(provider: str, text: str, command: list[str], *, timeout: int = 180) -> dict:
+    """One bounded CLI call in an empty directory with a minimal child environment."""
+    receipt = reserve(provider, text, 20)
+    allowed = {"PATH", "SYSTEMROOT", "WINDIR", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+               "TEMP", "TMP", "HOMEDRIVE", "HOMEPATH", "COMSPEC", "PATHEXT"}
+    child_env = {key: value for key, value in os.environ.items() if key.upper() in allowed}
+    try:
+        with tempfile.TemporaryDirectory(prefix=f"director-{provider}-mcp-") as cwd:
+            result = subprocess.run(command, cwd=cwd, env=child_env, capture_output=True,
+                                    text=True, timeout=timeout, check=False)
+        if result.returncode:
+            raise RuntimeError(f"{provider} CLI returned exit {result.returncode}")
+        output = result.stdout.strip()
+        if not output or len(output.encode("utf-8")) > 100_000:
+            raise RuntimeError(f"{provider} CLI returned empty or oversized output")
+        finish(receipt, "RETURNED")
+        return {"provider": provider, "output": output, "production_credit": False}
+    except Exception:
+        finish(receipt, "FAILED_OR_AMBIGUOUS")
+        raise
+
+
 def content(value: object, *, error: bool = False, provider: str) -> dict:
     payload = json.dumps(value, ensure_ascii=False)
-    secret = os.environ.get("XAI_API_KEY" if provider == "xai" else "ZAI_API_KEY", "")
-    if secret:
-        payload = payload.replace(secret, "[REDACTED]")
+    for name in ("XAI_API_KEY", "ZAI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+                 "CURSOR_API_KEY", "GEMINI_API_KEY", "PERPLEXITY_API_KEY",
+                 "FIRECRAWL_API_KEY", "COPILOT_GITHUB_TOKEN"):
+        secret = os.environ.get(name, "")
+        if secret:
+            payload = payload.replace(secret, "[REDACTED]")
     return {"content": [{"type": "text", "text": payload}],
             "isError": error}
 
