@@ -36,6 +36,340 @@ PREFLIGHT_SPEC = importlib.util.spec_from_file_location("preflight_contract_fixt
 PREFLIGHT_FIXTURE = importlib.util.module_from_spec(PREFLIGHT_SPEC)
 PREFLIGHT_SPEC.loader.exec_module(PREFLIGHT_FIXTURE)
 
+COMPOSE_RENDER_DIAGNOSTIC_FILENAME = "compose-render-diagnostic.txt"
+_COMPOSE_STDERR_LINE_REDACTED = "[stderr line redacted]"
+_COMPOSE_STDERR_INVALID_TEMPLATE = "[invalid template redacted]"
+_COMPOSE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_COMPOSE_UNSET_VARIABLE = re.compile(
+    r'The ["\']([A-Za-z_][A-Za-z0-9_]*)["\'] variable is not set',
+    re.IGNORECASE,
+)
+_COMPOSE_REQUIRED_VARIABLE = re.compile(
+    r"required variable ([A-Za-z_][A-Za-z0-9_]*) is missing a value",
+    re.IGNORECASE,
+)
+_COMPOSE_INVALID_TEMPLATE = re.compile(
+    r"invalid template|template syntax error",
+    re.IGNORECASE,
+)
+_COMPOSE_ENV_FILE_NOT_FOUND = re.compile(r"env file (.+?) not found", re.IGNORECASE)
+_COMPOSE_OPEN_NO_SUCH_FILE = re.compile(
+    r"open (.+?): no such file or directory",
+    re.IGNORECASE,
+)
+_COMPOSE_WINDOWS_NO_SUCH_FILE = re.compile(
+    r"the system cannot find the file specified",
+    re.IGNORECASE,
+)
+_COMPOSE_CONNECT_ERROR = re.compile(
+    r"error during connect|cannot connect to the docker daemon",
+    re.IGNORECASE,
+)
+_COMPOSE_PERMISSION_DENIED = re.compile(r"permission denied", re.IGNORECASE)
+_COMPOSE_UNKNOWN_FLAG = re.compile(r"unknown (?:shorthand )?flag", re.IGNORECASE)
+_COMPOSE_DOCKER_LOG_PREFIX = re.compile(
+    r'^time="[^"]*"\s+level=\S+\s+msg="(.*)"\s*$',
+)
+_COMPOSE_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+_COMPOSE_PATH_LIKE = re.compile(
+    r"(?:/[A-Za-z0-9_./-]+|\\\\wsl\.localhost\\[^\s:\"]+|\\\\[^\s:\"]+|[A-Za-z]:\\[^\s:\"]+)",
+)
+
+
+def compose_render_diagnostic_path(environ=None):
+    environ = os.environ if environ is None else environ
+    base = environ.get("RUNNER_TEMP") or tempfile.gettempdir()
+    return Path(base) / COMPOSE_RENDER_DIAGNOSTIC_FILENAME
+
+
+def _label_temp_absolute_path(operand, environ):
+    try:
+        path = Path(operand)
+        if not path.is_absolute():
+            return operand
+        resolved = path.resolve()
+        runner = environ.get("RUNNER_TEMP")
+        if runner:
+            root = Path(runner).resolve()
+            try:
+                return "<runner-temp>/" + resolved.relative_to(root).as_posix()
+            except ValueError:
+                pass
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        try:
+            return "<temp-path>/" + resolved.relative_to(temp_root).as_posix()
+        except ValueError:
+            pass
+    except OSError:
+        pass
+    return operand
+
+
+def _compose_invocation_resource_paths(argv):
+    env_file = None
+    compose_files = []
+    if not argv:
+        return env_file, compose_files
+    index = 1
+    while index < len(argv):
+        token = argv[index]
+        if token == "--env-file" and index + 1 < len(argv):
+            env_file = argv[index + 1]
+            index += 2
+            continue
+        if token in ("-f", "--file") and index + 1 < len(argv):
+            compose_files.append(argv[index + 1])
+            index += 2
+            continue
+        index += 1
+    return env_file, compose_files
+
+
+def _normalize_path_for_stderr_match(path_text):
+    text = path_text.replace("\\", "/").rstrip("/")
+    if text.startswith("//wsl.localhost/"):
+        return text.lower()
+    if len(text) > 2 and text[1] == ":":
+        return text.lower()
+    return text.lower()
+
+
+def _paths_refer_to_same(path_a, path_b):
+    if not path_a or not path_b:
+        return False
+    norm_a = _normalize_path_for_stderr_match(path_a)
+    norm_b = _normalize_path_for_stderr_match(path_b)
+    if norm_a == norm_b:
+        return True
+    return norm_a.endswith("/" + norm_b.lstrip("/")) or norm_b.endswith("/" + norm_a.lstrip("/"))
+
+
+def _stderr_path_label(path_text, env_file, compose_files, environ):
+    if env_file and _paths_refer_to_same(path_text, env_file):
+        return "<env-file>"
+    for compose_file in compose_files:
+        if _paths_refer_to_same(path_text, compose_file):
+            return "<compose-file>"
+    lowered = path_text.replace("\\", "/").lower()
+    raw_lower = path_text.lower()
+    if "/.docker/" in lowered or "\\.docker\\" in raw_lower or lowered.endswith("/.docker"):
+        return "<docker-config>"
+    try:
+        path = Path(path_text)
+        if path.is_absolute() or path_text.startswith(("\\\\", "/")):
+            resolved = path.resolve()
+            runner = environ.get("RUNNER_TEMP") if environ else None
+            if runner:
+                try:
+                    resolved.relative_to(Path(runner).resolve())
+                    return "<temp-path>"
+                except ValueError:
+                    pass
+            temp_root = Path(tempfile.gettempdir()).resolve()
+            try:
+                resolved.relative_to(temp_root)
+                return "<temp-path>"
+            except ValueError:
+                pass
+            if path_text.startswith(("/tmp/", "/var/folders/")) or "Temp" in path_text:
+                return "<temp-path>"
+            return "<other-path>"
+    except OSError:
+        pass
+    if "tmp" in lowered or "temp" in lowered:
+        return "<temp-path>"
+    return "<other-path>"
+
+
+def _stderr_label_for_paths_in_line(line, env_file, compose_files, environ, explicit_path=None):
+    path_texts = []
+    if explicit_path:
+        path_texts.append(explicit_path)
+    path_texts.extend(match.group(0) for match in _COMPOSE_PATH_LIKE.finditer(line))
+    labels = [
+        _stderr_path_label(path_text, env_file, compose_files, environ) for path_text in path_texts
+    ]
+    for preferred in ("<env-file>", "<compose-file>", "<docker-config>", "<temp-path>", "<other-path>"):
+        if preferred in labels:
+            return preferred
+    if env_file:
+        return "<env-file>"
+    if compose_files:
+        return "<compose-file>"
+    return "<other-path>"
+
+
+def _compose_stderr_unknown_line_literal(line):
+    stripped = line
+    docker_log = _COMPOSE_DOCKER_LOG_PREFIX.match(stripped)
+    if docker_log:
+        stripped = docker_log.group(1).replace('\\"', '"').replace("\\'", "'")
+    lowered = stripped.lstrip().lower()
+    for prefix, literal in (
+        ("error", "error"),
+        ("time=", "time="),
+        ("failed", "failed"),
+        ("cannot", "cannot"),
+        ("invalid", "invalid"),
+    ):
+        if lowered.startswith(prefix):
+            return literal
+    return "unrecognized"
+
+
+def _classify_compose_stderr_line(normalized, env_file, compose_files, environ):
+    unset = _COMPOSE_UNSET_VARIABLE.search(normalized)
+    if unset and _COMPOSE_IDENTIFIER.fullmatch(unset.group(1)):
+        return f"unset variable: {unset.group(1)}"
+    required = _COMPOSE_REQUIRED_VARIABLE.search(normalized)
+    if required and _COMPOSE_IDENTIFIER.fullmatch(required.group(1)):
+        return f"required variable missing: {required.group(1)}"
+    if _COMPOSE_INVALID_TEMPLATE.search(normalized):
+        return _COMPOSE_STDERR_INVALID_TEMPLATE
+    env_missing = _COMPOSE_ENV_FILE_NOT_FOUND.search(normalized)
+    if env_missing:
+        label = _stderr_label_for_paths_in_line(normalized, env_file, compose_files, environ)
+        if env_file:
+            label = "<env-file>"
+        return f"env file not found: {label}"
+    if _COMPOSE_CONNECT_ERROR.search(normalized):
+        return "connect error"
+    if _COMPOSE_UNKNOWN_FLAG.search(normalized):
+        return "unknown flag"
+    open_match = _COMPOSE_OPEN_NO_SUCH_FILE.search(normalized)
+    if open_match:
+        label = _stderr_label_for_paths_in_line(
+            normalized, env_file, compose_files, environ, open_match.group(1).strip(),
+        )
+        return f"open failed: {label}"
+    if _COMPOSE_WINDOWS_NO_SUCH_FILE.search(normalized) and not env_missing:
+        label = _stderr_label_for_paths_in_line(normalized, env_file, compose_files, environ)
+        return f"open failed: {label}"
+    if _COMPOSE_PERMISSION_DENIED.search(normalized):
+        label = _stderr_label_for_paths_in_line(normalized, env_file, compose_files, environ)
+        return f"permission denied: {label}"
+    return _compose_stderr_unknown_line_literal(normalized)
+
+
+def sanitize_compose_render_docker_argv(argv, environ=None):
+    environ = os.environ if environ is None else environ
+    if not argv:
+        return []
+    sanitized = []
+    executable = Path(argv[0])
+    sanitized.append(f"<docker-bin>/{executable.name}")
+    for operand in argv[1:]:
+        sanitized.append(_label_temp_absolute_path(operand, environ))
+    return sanitized
+
+
+def filter_compose_render_stderr_tail(stderr_bytes, argv=None, environ=None):
+    environ = os.environ if environ is None else environ
+    env_file, compose_files = _compose_invocation_resource_paths(argv or [])
+    text = stderr_bytes.decode("utf-8", errors="replace")[-1500:]
+    filtered = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        normalized = _COMPOSE_ANSI_ESCAPE.sub("", line)
+        normalized = normalized.replace('\\"', '"').replace("\\'", "'")
+        filtered.append(
+            _classify_compose_stderr_line(normalized, env_file, compose_files, environ)
+        )
+    return filtered
+
+
+def format_compose_render_diagnostic_record(result, argv, environ=None):
+    environ = os.environ if environ is None else environ
+    payload = {
+        "rc": result.returncode,
+        "stdout_bytes": len(result.stdout or b""),
+        "argv": sanitize_compose_render_docker_argv(argv, environ),
+        "stderr_tail": filter_compose_render_stderr_tail(result.stderr or b"", argv, environ),
+    }
+    return json.dumps(payload, ensure_ascii=False) + "\n"
+
+
+def write_compose_render_diagnostic_if_failed(result, argv, environ=None):
+    if result.returncode == 0:
+        return
+    try:
+        compose_render_diagnostic_path(environ).write_text(
+            format_compose_render_diagnostic_record(result, argv, environ),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def print_compose_render_diagnostic_for_ci():
+    path = Path(os.environ["RUNNER_TEMP"]) / COMPOSE_RENDER_DIAGNOSTIC_FILENAME
+    if path.is_file():
+        print(path.read_text(encoding="utf-8"), end="")
+
+
+# Closed entry tokens and bounds of the WINDIAG tmp_cleanup grammar in
+# scripts/run-tests-parallel.py.
+_TMP_CLEANUP_ENTRIES = ("git.exe", "candidate-executed")
+_WINDIAG_CODE_MAX = 0xFFFFFFFF
+_WINDIAG_ERRNO_MAX = 0xFFFF
+
+
+def _tmp_cleanup_note(root, error):
+    """One fixed scalar line; the failing filename or path is never published."""
+    is_root, entry = 0, "other"
+    try:
+        filename = os.fspath(error.filename) if isinstance(error.filename, (str, os.PathLike)) else None
+        if isinstance(filename, str):
+            path = os.path.normcase(os.path.abspath(filename))
+            base = os.path.normcase(os.path.abspath(root))
+            is_root = int(path == base)
+            name = os.path.basename(path)
+            if os.path.dirname(path) == base and name in _TMP_CLEANUP_ENTRIES:
+                entry = name
+    except (TypeError, ValueError, OSError):
+        is_root, entry = 0, "other"
+
+    def bounded(value, maximum):
+        return value if type(value) is int and 0 <= value <= maximum else -1
+
+    return (f"WINDIAG tmp_cleanup root={is_root} entry={entry} "
+            f"winerror={bounded(getattr(error, 'winerror', None), _WINDIAG_CODE_MAX)} "
+            f"errno={bounded(error.errno, _WINDIAG_ERRNO_MAX)}")
+
+
+# Hosted Windows reported "root=1 entry=other winerror=32": the directory
+# itself was still open just after the fixture child (cwd=root) had exited.
+# That sharing violation clears on its own; nothing else is retried or ignored.
+_SHARING_VIOLATION = 32
+_CLEANUP_RETRY_DELAYS = (0.1, 0.25, 0.5, 1, 2, 4)
+
+
+@contextmanager
+def _noted_temporary_directory():
+    """TemporaryDirectory with strict cleanup and one bounded exception.
+
+    Only a Windows sharing violation (WinError 32) is retried, on a fixed
+    schedule of under 8 s. Any other cleanup OSError, or a sharing violation
+    that outlasts the schedule, is re-raised unchanged, with its context,
+    after one fixed scalar note is attached for the sanitized CI tail.
+    """
+    temporary = tempfile.TemporaryDirectory()
+    try:
+        yield temporary.name
+    finally:
+        delays = iter(_CLEANUP_RETRY_DELAYS)
+        while True:
+            try:
+                temporary.cleanup()
+                break
+            except OSError as error:
+                delay = next(delays, None) if getattr(error, "winerror", None) == _SHARING_VIOLATION else None
+                if delay is None:
+                    error.add_note(_tmp_cleanup_note(temporary.name, error))
+                    raise
+            time.sleep(delay)
+
 
 class ReleasePreparationTests(unittest.TestCase):
     def setUp(self):
@@ -1511,11 +1845,14 @@ class ReleasePreparationTests(unittest.TestCase):
         for value in (self.compose, self.sibling_compose):
             path = self.root / (value["name"] + ".json")
             path.write_bytes(release.encoded(value))
+            pins = [{"path": str(path), "sha256": release.sha(path.read_bytes())}]
+            models = release.compose_input_check(pins, self.spec["runtime_env"])
             result = subprocess.run(["docker", "compose", "--project-name", value["name"], "--env-file",
                 self.spec["runtime_env"]["path"], "-f", str(path), "config", "--format", "json"],
                 cwd=self.root, env=release.child_environment(), capture_output=True, timeout=180)
             self.assertEqual(result.returncode, 0, "configuration-only Compose producer failed")
-            graphs.append(json.loads(result.stdout))
+            release.compose_input_check(pins, self.spec["runtime_env"])
+            graphs.append(release.preserve_explicit_bind_false(json.loads(result.stdout), models))
             self.assertRegex(resolved_deployment_digest(graphs[-1], self.image), r"^[0-9a-f]{64}$")
         release.isolated_sibling(*graphs, 18080)
         graphs[1]["services"]["orchestrator"]["ports"][0]["published"] = "8080"
@@ -2532,7 +2869,7 @@ assert fixture_cache.SAFE and callable(jsonschema.validate)
 
     @unittest.skipUnless(os.name == "nt", "Windows executable search regression")
     def test_trusted_native_path_prevents_candidate_executable_lookup(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with _noted_temporary_directory() as directory:
             root = Path(directory)
             marker = root / "candidate-executed"
             # A harmless OS command processor stands in for candidate git.exe.
@@ -2898,6 +3235,81 @@ except m['ReleaseError']: pass
                 release.Release(self.descriptor)
             self.assertEqual(self.calls, [])
 
+    def test_bind_false_omission_is_restored_from_same_pinned_input(self):
+        sibling = self.sibling()
+        original = copy.deepcopy(self.sibling_compose)
+        sibling["compose_files"] = [self.pin("compose.yml", release.encoded(original))]
+        self.spec["rehearsal"]["descriptor"] = self.pin("sibling.json", release.encoded(sibling))
+        self.save()
+        tool = release.Release(self.root / "sibling.json")
+        for empty_bind in (False, True):
+            with self.subTest(empty_bind=empty_bind):
+                self.sibling_compose = copy.deepcopy(original)
+                mount = self.sibling_compose["services"]["orchestrator"]["volumes"][0]
+                mount.pop("bind")
+                if empty_bind:
+                    mount["bind"] = {}
+                graph = tool.compose_document(tool.runtime)
+                self.assertEqual(graph, original)
+                release.stock_mounts(graph)
+                # The artifact consumed by later checks retains runtime false.
+                self.assertIs(json.loads(release.encoded(graph))["services"]["orchestrator"]["volumes"][0]
+                              ["bind"]["create_host_path"], False)
+
+    def test_bind_false_omission_without_authoritative_proof_is_refused(self):
+        self.sibling()
+        original = copy.deepcopy(self.sibling_compose)
+        for value in (None, True, 0, "false"):
+            with self.subTest(value=value):
+                model = copy.deepcopy(original)
+                mount = model["services"]["orchestrator"]["volumes"][0]
+                mount["bind"] = {} if value is None else {"create_host_path": value}
+                graph = copy.deepcopy(original)
+                graph["services"]["orchestrator"]["volumes"][0].pop("bind")
+                release.preserve_explicit_bind_false(graph, [model])
+                with self.assertRaisesRegex(release.ReleaseError, "sibling_mount_unsupported"):
+                    release.stock_mounts(graph)
+
+    def test_bind_false_explicit_invalid_and_extra_keys_are_refused(self):
+        self.sibling()
+        original = copy.deepcopy(self.sibling_compose)
+        release.stock_mounts(original)  # Keep explicit-false acceptance.
+        for bind in ({"create_host_path": True}, {"create_host_path": 0},
+                     {"create_host_path": "false"}, {"create_host_path": None},
+                     {"create_host_path": False, "propagation": "rprivate"},
+                     {"propagation": "rprivate"}, None, False, []):
+            with self.subTest(bind=bind):
+                graph = copy.deepcopy(original)
+                graph["services"]["orchestrator"]["volumes"][0]["bind"] = bind
+                release.preserve_explicit_bind_false(graph, [original])
+                with self.assertRaisesRegex(release.ReleaseError, "sibling_mount_unsupported"):
+                    release.stock_mounts(graph)
+
+    def test_bind_false_ambiguous_input_cannot_prove_omission(self):
+        self.sibling()
+        original = copy.deepcopy(self.sibling_compose)
+        models = []
+        models.append([original, {"services": {}}])
+        for defect in ("interpolated", "short", "duplicate", "extra"):
+            model = copy.deepcopy(original)
+            mounts = model["services"]["orchestrator"]["volumes"]
+            if defect == "interpolated":
+                mounts[0]["target"] = "${TARGET}"
+            elif defect == "short":
+                mounts.append("${SOURCE}:${TARGET}")
+            elif defect == "duplicate":
+                mounts.append(copy.deepcopy(mounts[0]))
+            else:
+                mounts[0]["bind"]["propagation"] = "rprivate"
+            models.append([model])
+        for inputs in models:
+            with self.subTest(inputs=inputs):
+                graph = copy.deepcopy(original)
+                graph["services"]["orchestrator"]["volumes"][0].pop("bind")
+                release.preserve_explicit_bind_false(graph, inputs)
+                with self.assertRaisesRegex(release.ReleaseError, "sibling_mount_unsupported"):
+                    release.stock_mounts(graph)
+
     def test_stock_compose_source_renders_bound_runtime_and_future_modes_without_daemon(self):
         docker = shutil.which("docker")
         if not docker and os.name == "nt":
@@ -2922,15 +3334,37 @@ except m['ReleaseError']: pass
             self.assertEqual(kwargs["env"]["DIRECTOR_ENV_FILE"], self.spec["runtime_env"]["path"])
             calls.append(argv)
             environment = dict(kwargs["env"])
+            subprocess_argv = [docker, *argv[1:]]
             if windows_cli_from_wsl:
+                def windows_path(path):
+                    try:
+                        converted = subprocess.run(
+                            ["wslpath", "-w", path], capture_output=True,
+                            text=True, timeout=10, check=True,
+                        ).stdout.strip()
+                    except (OSError, subprocess.SubprocessError):
+                        raise self.failureException("stock Compose WSL path conversion failed") from None
+                    if not converted:
+                        self.fail("stock Compose WSL path conversion failed")
+                    return converted
+
+                for index, operand in enumerate(argv[:-1]):
+                    if operand in {"--env-file", "-f", "--file"}:
+                        subprocess_argv[index + 1] = windows_path(argv[index + 1])
+                environment["DIRECTOR_ENV_FILE"] = windows_path(environment["DIRECTOR_ENV_FILE"])
                 # A WSL Docker shim may invoke Windows Docker.exe. Forward the
                 # synthetic inputs across that boundary, preserving the bound
                 # file identity. Native Linux and Windows paths stay unchanged.
                 forwarded = (set(runtime) | {"DIRECTOR_COMPOSE_PROJECT_NAME"}) - {"DIRECTOR_ENV_FILE"}
-                environment["WSLENV"] = ":".join(["DIRECTOR_ENV_FILE/pw", *sorted(key + "/w" for key in forwarded)])
-            result = subprocess.run([docker, *argv[1:]], cwd=kwargs["cwd"], env=environment,
+                environment["WSLENV"] = ":".join(["DIRECTOR_ENV_FILE/w", *sorted(key + "/w" for key in forwarded)])
+            result = subprocess.run(subprocess_argv, cwd=kwargs["cwd"], env=environment,
                                     capture_output=True, timeout=30)
-            self.assertEqual(result.returncode, 0, "configuration-only stock Compose producer failed")
+            write_compose_render_diagnostic_if_failed(result, [docker, *argv[1:]])
+            self.assertEqual(
+                result.returncode, 0,
+                "configuration-only stock Compose producer failed; "
+                "see compose-render-diagnostic.txt on self-hosted CI lanes",
+            )
             return result.stdout
         tool = release.Release(self.descriptor)
         runtime = dict(tool.runtime)
@@ -3326,9 +3760,14 @@ class ReleaseInputAndProcessTests(unittest.TestCase):
             tool = release.Release.__new__(release.Release)
             tool.spec = {"snapshot": {"path": str(repo), "remote": "reviewed", "repository": "example/demo",
                                      "starting_ref": "main", "commit": commit, "tree": tree}}
+            # Each call cold-starts pwsh and several git processes. On a loaded
+            # hosted Windows shard 30 s ran out before the script could reach its
+            # own verdict, so the expected platform_check_failed surfaced as
+            # doctor_deadline_exhausted. The budget only has to outlast startup.
+            budget = 120
             def powershell(name, arguments):
                 return REAL_COMMAND([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(ROOT / "scripts" / name),
-                    *arguments, "-GitExecutable", shutil.which("git")], cwd=ROOT, env=environment, deadline=time.monotonic() + 30)
+                    *arguments, "-GitExecutable", shutil.which("git")], cwd=ROOT, env=environment, deadline=time.monotonic() + budget)
             tool.powershell = powershell
             control = (ROOT / "scripts/windows-langgraph-primary-control.ps1").read_text()
             start = control.index('$snapshot = [string]$values["REPOSITORY_SNAPSHOT_HOST_PATH"]')
@@ -3342,7 +3781,7 @@ class ReleaseInputAndProcessTests(unittest.TestCase):
                     "-SnapshotPath", str(repo), "-Commit", commit, "-Tree", tree,
                     "-SelectedGit", shutil.which("git"), "-ScriptRoot", str(ROOT / "scripts")]
             tool.snapshot_check()
-            REAL_COMMAND(argv, cwd=ROOT, env=environment, deadline=time.monotonic() + 30)
+            REAL_COMMAND(argv, cwd=ROOT, env=environment, deadline=time.monotonic() + budget)
             for missing in (False, True):
                 if missing:
                     git("remote", "remove", "origin")
@@ -3351,7 +3790,7 @@ class ReleaseInputAndProcessTests(unittest.TestCase):
                 with self.subTest(missing=missing), self.assertRaisesRegex(release.ReleaseError, "^platform_check_failed$"):
                     tool.snapshot_check()
                 with self.subTest(control_missing=missing), self.assertRaisesRegex(release.ReleaseError, "^platform_check_failed$"):
-                    REAL_COMMAND(argv, cwd=ROOT, env=environment, deadline=time.monotonic() + 30)
+                    REAL_COMMAND(argv, cwd=ROOT, env=environment, deadline=time.monotonic() + budget)
 
     def test_cli_bootstrap_refuses_checkout_imports_without_isolation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -3395,6 +3834,373 @@ class ReleaseInputAndProcessTests(unittest.TestCase):
         with self.assertRaisesRegex(release.ReleaseError, "^platform_check_failed$"):
             release.command([sys.executable, "-c", "import sys; sys.stderr.write('fixture-secret'); sys.exit(1)"],
                             cwd=ROOT, env=release.child_environment(), deadline=time.monotonic() + 5)
+
+
+class ComposeRenderWslPathTests(unittest.TestCase):
+    def adapter(self, env_path, windows_cli_from_wsl):
+        import ast
+        import inspect
+        import textwrap
+
+        # Exercise the nested adapter itself without Docker or the release fixture.
+        source = inspect.getsource(
+            ReleasePreparationTests.test_stock_compose_source_renders_bound_runtime_and_future_modes_without_daemon)
+        method = ast.parse(textwrap.dedent(source)).body[0]
+        adapter = next(node for node in method.body if isinstance(node, ast.FunctionDef) and node.name == "actual_config")
+        self.spec = {"runtime_env": {"path": env_path}}
+        namespace = dict(globals(), self=self, docker="fixture-docker", calls=[],
+                         runtime={"FIXTURE_BOUND_INPUT": "synthetic", "DIRECTOR_ENV_FILE": env_path},
+                         windows_cli_from_wsl=windows_cli_from_wsl)
+        exec(compile(ast.Module(body=[adapter], type_ignores=[]), __file__, "exec"), namespace)
+        return namespace["actual_config"]
+
+    def test_converts_all_path_operands_and_environment_without_mutating_bindings(self):
+        env_path = "/tmp/fixture with spaces/runtime.env"
+        argv = ["docker", "compose", "--env-file", env_path,
+                "-f", "/tmp/compose.yml", "--file", "/tmp/override with spaces.yml",
+                "config", "--format", "json"]
+        environment = {"DIRECTOR_ENV_FILE": env_path, "FIXTURE_BOUND_INPUT": "synthetic",
+                       "DIRECTOR_COMPOSE_PROJECT_NAME": "fixture-director"}
+        original_argv, original_environment = list(argv), dict(environment)
+        paths = [env_path, argv[5], argv[7], env_path]
+        converted = {path: "C:\\fixture with spaces\\" + path.rsplit("/", 1)[-1] for path in paths}
+        adapter = self.adapter(env_path, True)
+        def run(command, **kwargs):
+            if command[0] == "wslpath":
+                self.assertEqual(command[:2], ["wslpath", "-w"])
+                self.assertEqual(kwargs, dict(capture_output=True, text=True, timeout=10, check=True))
+                return subprocess.CompletedProcess(command, 0, converted[command[2]] + "\n")
+            expected = ["fixture-docker", *original_argv[1:]]
+            for index in (3, 5, 7):
+                expected[index] = converted[original_argv[index]]
+            self.assertEqual(command, expected)
+            self.assertEqual(kwargs, dict(cwd="fixture-cwd", capture_output=True, timeout=30,
+                env={**original_environment, "DIRECTOR_ENV_FILE": converted[env_path],
+                     "WSLENV": "DIRECTOR_ENV_FILE/w:DIRECTOR_COMPOSE_PROJECT_NAME/w:FIXTURE_BOUND_INPUT/w"}))
+            return subprocess.CompletedProcess(command, 0, b"{}")
+        with patch.object(subprocess, "run", side_effect=run) as mocked:
+            self.assertEqual(adapter(argv, env=environment, cwd="fixture-cwd"), b"{}")
+        self.assertEqual([call.args[0][2] for call in mocked.call_args_list[:-1]], paths)
+        self.assertEqual(mocked.call_count, 5)
+        self.assertEqual(argv, original_argv)
+        self.assertEqual(environment, original_environment)
+
+    def test_conversion_failures_are_explicit_and_do_not_echo_paths(self):
+        env_path = "/tmp/private-path/runtime.env"
+        argv = ["docker", "compose", "--env-file", env_path, "-f", "/tmp/compose.yml",
+                "config", "--format", "json"]
+        failures = [subprocess.CalledProcessError(1, ["wslpath", "-w", env_path]),
+                    subprocess.TimeoutExpired(["wslpath", "-w", env_path], 10),
+                    FileNotFoundError(env_path), subprocess.CompletedProcess([], 0, " \n")]
+        for failure in failures:
+            for position in range(3):
+                with self.subTest(failure=type(failure).__name__, position=position):
+                    adapter = self.adapter(env_path, True)
+                    replies = [subprocess.CompletedProcess([], 0, "C:\\fixture\\file\n")] * position + [failure]
+                    with patch.object(subprocess, "run", side_effect=replies) as mocked:
+                        with self.assertRaisesRegex(AssertionError, "^stock Compose WSL path conversion failed$"):
+                            adapter(argv, env={"DIRECTOR_ENV_FILE": env_path}, cwd="fixture-cwd")
+                    self.assertEqual(mocked.call_count, position + 1)
+
+    def test_native_paths_and_environment_are_unchanged(self):
+        for env_path in ("/tmp/fixture with spaces/runtime.env", "C:\\fixture with spaces\\runtime.env"):
+            with self.subTest(env_path=env_path):
+                adapter = self.adapter(env_path, False)
+                argv = ["docker", "compose", "--env-file", env_path, "-f", env_path + ".yml",
+                        "config", "--format", "json"]
+                environment = {"DIRECTOR_ENV_FILE": env_path, "WSLENV": "EXISTING/w"}
+                with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"{}")) as mocked:
+                    self.assertEqual(adapter(argv, env=environment, cwd="fixture-cwd"), b"{}")
+                mocked.assert_called_once_with(["fixture-docker", *argv[1:]], cwd="fixture-cwd",
+                                               env=environment, capture_output=True, timeout=30)
+
+
+class ComposeRenderDiagnosticTests(unittest.TestCase):
+    sentinel = "SENTINEL_COMPOSE_DIAG_SECRET"
+
+    def _failed_result(self, *, stdout=b"", stderr=b"", returncode=1):
+        return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
+
+    def test_compose_render_diagnostic_writes_on_nonzero_return(self):
+        with tempfile.TemporaryDirectory() as runner_temp, tempfile.TemporaryDirectory() as shard_temp:
+            environ = {"RUNNER_TEMP": runner_temp, "TMP": shard_temp, "TEMP": shard_temp}
+            docker = str(Path(shard_temp) / "bin" / "docker.exe")
+            argv = [docker, "compose", "--env-file", str(Path(shard_temp) / "runtime.env"), "config"]
+            stderr = (
+                b'level=warning msg="The \\"MISSING_VAR\\" variable is not set. Defaulting to a blank string."\n'
+            )
+            write_compose_render_diagnostic_if_failed(self._failed_result(stderr=stderr), argv, environ)
+            record = json.loads(compose_render_diagnostic_path(environ).read_text(encoding="utf-8"))
+            self.assertEqual(record["rc"], 1)
+            self.assertEqual(record["stdout_bytes"], 0)
+            self.assertEqual(record["argv"][0], "<docker-bin>/docker.exe")
+            self.assertTrue(any(
+                entry.startswith("<temp-path>/") and entry.endswith("/runtime.env") for entry in record["argv"]
+            ))
+            self.assertEqual(record["stderr_tail"], ["unset variable: MISSING_VAR"])
+
+    def test_compose_render_diagnostic_skipped_on_success(self):
+        with tempfile.TemporaryDirectory() as runner_temp:
+            environ = {"RUNNER_TEMP": runner_temp}
+            write_compose_render_diagnostic_if_failed(self._failed_result(returncode=0), ["docker"], environ)
+            self.assertFalse(compose_render_diagnostic_path(environ).exists())
+
+    def test_compose_render_diagnostic_prefers_runner_temp_over_shard_temp(self):
+        with tempfile.TemporaryDirectory() as runner_temp, tempfile.TemporaryDirectory() as shard_temp:
+            environ = {"RUNNER_TEMP": runner_temp, "TMP": shard_temp, "TEMP": shard_temp}
+            write_compose_render_diagnostic_if_failed(self._failed_result(stderr=b"noise\n"), ["docker"], environ)
+            self.assertTrue(compose_render_diagnostic_path(environ).is_file())
+            self.assertFalse((Path(shard_temp) / COMPOSE_RENDER_DIAGNOSTIC_FILENAME).exists())
+
+    def test_compose_render_diagnostic_never_copies_sentinel_secrets(self):
+        with tempfile.TemporaryDirectory() as runner_temp:
+            environ = {"RUNNER_TEMP": runner_temp}
+            stderr = (
+                f"error while interpolating services.orchestrator.environment.X: "
+                f"required variable MISSING is missing a value: ${{MISSING:?{self.sentinel}}}\n"
+                f"arbitrary failure line containing {self.sentinel}\n"
+            ).encode()
+            stdout = self.sentinel.encode()
+            write_compose_render_diagnostic_if_failed(
+                self._failed_result(stdout=stdout, stderr=stderr),
+                ["docker", "compose"],
+                environ,
+            )
+            raw = compose_render_diagnostic_path(environ).read_text(encoding="utf-8")
+            self.assertNotIn(self.sentinel, raw)
+            record = json.loads(raw)
+            self.assertEqual(record["stdout_bytes"], len(stdout))
+            self.assertEqual(record["stderr_tail"], [
+                "required variable missing: MISSING",
+                "unrecognized",
+            ])
+
+    def test_compose_render_diagnostic_ci_consumer_prints_record(self):
+        runner_spec = importlib.util.spec_from_file_location(
+            "run_tests_parallel_fixture", ROOT / "scripts/run-tests-parallel.py")
+        runner = importlib.util.module_from_spec(runner_spec)
+        runner_spec.loader.exec_module(runner)
+        payload = format_compose_render_diagnostic_record(
+            self._failed_result(stderr=b'The "SAFE" variable is not set.\n'),
+            ["docker", "compose"],
+            {"RUNNER_TEMP": "unused"},
+        )
+        with tempfile.TemporaryDirectory() as runner_temp:
+            path = Path(runner_temp) / COMPOSE_RENDER_DIAGNOSTIC_FILENAME
+            path.write_text(payload, encoding="utf-8")
+            with patch.dict(os.environ, {"RUNNER_TEMP": runner_temp}), redirect_stdout(io.StringIO()) as output:
+                print_compose_render_diagnostic_for_ci()
+            printed = output.getvalue()
+            self.assertIn("unset variable: SAFE", printed)
+            self.assertNotIn("[stderr line redacted]", runner.sanitized_tail(printed))
+
+    def test_compose_render_diagnostic_ci_consumer_absent_file_is_no_op(self):
+        with tempfile.TemporaryDirectory() as runner_temp, patch.dict(os.environ, {"RUNNER_TEMP": runner_temp}), redirect_stdout(io.StringIO()) as output:
+            print_compose_render_diagnostic_for_ci()
+        self.assertEqual(output.getvalue(), "")
+
+    def _argv(self, shard_temp):
+        env_path = str(Path(shard_temp) / "runtime.env")
+        compose_path = str(Path(shard_temp) / "compose.yml")
+        return [
+            "docker",
+            "compose",
+            "--project-name",
+            "fixture-director",
+            "--env-file",
+            env_path,
+            "-f",
+            compose_path,
+            "config",
+        ]
+
+    def test_filter_compose_render_stderr_classifies_env_file_not_found_wsl(self):
+        with tempfile.TemporaryDirectory() as shard_temp:
+            env_path = str(Path(shard_temp) / "runtime.env")
+            argv = self._argv(shard_temp)
+            line = (
+                f"env file \\\\wsl.localhost\\Ubuntu\\home\\user\\runtime.env not found: "
+                f"GetFileAttributesEx {env_path}: The system cannot find the file specified."
+            )
+            tail = filter_compose_render_stderr_tail(line.encode(), argv, {"RUNNER_TEMP": shard_temp})
+            self.assertEqual(tail, ["env file not found: <env-file>"])
+            self.assertNotIn(self.sentinel, json.dumps(tail))
+
+    def test_filter_compose_render_stderr_classifies_open_failed_and_connect(self):
+        with tempfile.TemporaryDirectory() as shard_temp:
+            argv = self._argv(shard_temp)
+            compose_path = str(Path(shard_temp) / "compose.yml")
+            lines = "\n".join([
+                f"open {compose_path}: no such file or directory",
+                "error during connect: Get http://%2F%2F.%2Fpipe%2Fdocker_engine/v1.24/containers/json: open //./pipe/docker_engine: The system cannot find the file specified.",
+                "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+            ])
+            tail = filter_compose_render_stderr_tail(lines.encode(), argv, {"RUNNER_TEMP": shard_temp})
+            self.assertEqual(tail[0], "open failed: <compose-file>")
+            self.assertEqual(tail[1], "connect error")
+            self.assertEqual(tail[2], "connect error")
+
+    def test_filter_compose_render_stderr_classifies_permission_and_unknown_flag(self):
+        with tempfile.TemporaryDirectory() as shard_temp:
+            argv = self._argv(shard_temp)
+            docker_config = str(Path(shard_temp) / ".docker" / "config.json")
+            lines = "\n".join([
+                f"permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock: {docker_config}",
+                "unknown flag: --imaginary",
+                "unknown shorthand flag: 'x' in -x",
+            ])
+            tail = filter_compose_render_stderr_tail(lines.encode(), argv, {"RUNNER_TEMP": shard_temp})
+            self.assertEqual(tail[0], "permission denied: <docker-config>")
+            self.assertEqual(tail[1], "unknown flag")
+            self.assertEqual(tail[2], "unknown flag")
+
+    def test_filter_compose_render_stderr_unknown_line_allowlist_and_docker_log_prefix(self):
+        with tempfile.TemporaryDirectory() as shard_temp:
+            argv = self._argv(shard_temp)
+            lines = "\n".join([
+                'time="2026-10-22T11:13:01Z" level=warning msg="The \\"SAFE\\" variable is not set. Defaulting to a blank string."',
+                "error loading compose file",
+                "failed to read /tmp/secret-token-abc",
+                "cannot stat file",
+                "invalid project name",
+                f"arbitrary noise with {self.sentinel}",
+                "\x1b[31merror\x1b[0m from ansi",
+            ])
+            tail = filter_compose_render_stderr_tail(lines.encode(), argv, {"RUNNER_TEMP": shard_temp})
+            self.assertEqual(tail[0], "unset variable: SAFE")
+            self.assertEqual(tail[1:], ["error", "failed", "cannot", "invalid", "unrecognized", "error"])
+            self.assertNotIn(self.sentinel, json.dumps(tail))
+
+    def test_filter_compose_render_stderr_temp_and_other_path_labels(self):
+        with tempfile.TemporaryDirectory() as shard_temp:
+            argv = self._argv(shard_temp)
+            other = "C:\\Program Files\\Docker\\docker.exe"
+            tmp_path = str(Path(shard_temp) / "nested" / "missing.yml")
+            lines = f"open {tmp_path}: no such file or directory\nopen {other}: no such file or directory\n"
+            tail = filter_compose_render_stderr_tail(lines.encode(), argv, {"RUNNER_TEMP": shard_temp})
+            self.assertEqual(tail[0], "open failed: <temp-path>")
+            self.assertEqual(tail[1], "open failed: <other-path>")
+
+    def test_filter_compose_render_stderr_multiline_and_bounds_propagate(self):
+        with tempfile.TemporaryDirectory() as shard_temp:
+            argv = self._argv(shard_temp)
+            stderr = ("cannot proceed\n" * 200).encode()
+            tail = filter_compose_render_stderr_tail(stderr, argv, {"RUNNER_TEMP": shard_temp})
+            self.assertTrue(all(entry == "cannot" for entry in tail))
+            payload = format_compose_render_diagnostic_record(
+                self._failed_result(stderr=stderr),
+                argv,
+                {"RUNNER_TEMP": shard_temp},
+            )
+            record = json.loads(payload)
+            self.assertEqual(set(record), {"rc", "stdout_bytes", "argv", "stderr_tail"})
+            self.assertEqual(record["rc"], 1)
+            self.assertLessEqual(len(json.dumps(record["stderr_tail"])), 1500)
+
+
+class NotedTemporaryDirectoryTests(unittest.TestCase):
+    """The trusted-native-path fixture's cleanup stays strict apart from a bounded
+    sharing-violation retry; failures gain one note."""
+
+    def failing_cleanup(self, make_error):
+        # Remove the real directory first so the injected failure leaks nothing.
+        real_cleanup = tempfile.TemporaryDirectory.cleanup
+        def cleanup(temporary):
+            real_cleanup(temporary)
+            raise make_error(temporary.name)
+        return patch.object(tempfile.TemporaryDirectory, "cleanup", cleanup)
+
+    def test_strict_cleanup_removes_the_directory(self):
+        with _noted_temporary_directory() as directory:
+            (Path(directory) / "git.exe").write_bytes(b"fixture")
+        self.assertFalse(Path(directory).exists())
+
+    def test_cleanup_error_is_reraised_unchanged_with_one_private_free_note(self):
+        winerror = 5 if os.name == "nt" else -1
+        cases = (
+            (lambda root: root, f"root=1 entry=other winerror={winerror} errno=13"),
+            (lambda root: os.path.join(root, "git.exe"), f"root=0 entry=git.exe winerror={winerror} errno=13"),
+            (lambda root: os.path.join(root, "candidate-executed"),
+             f"root=0 entry=candidate-executed winerror={winerror} errno=13"),
+            (lambda root: os.path.join(root, "sk-private-entry.txt"), f"root=0 entry=other winerror={winerror} errno=13"),
+            (lambda root: os.path.join(root, "nested", "git.exe"), f"root=0 entry=other winerror={winerror} errno=13"),
+        )
+        for target, fields in cases:
+            injected = {}
+            def make_error(root, target=target):
+                injected["error"] = PermissionError(13, "private message", target(root), 5)
+                injected["root"] = root
+                return injected["error"]
+            with self.subTest(fields=fields), self.failing_cleanup(make_error), \
+                    self.assertRaises(PermissionError) as caught:
+                with _noted_temporary_directory():
+                    pass
+            error = caught.exception
+            self.assertIs(error, injected["error"])
+            self.assertEqual((error.errno, error.strerror), (13, "private message"))
+            self.assertEqual(error.__notes__, ["WINDIAG tmp_cleanup " + fields])
+            for private in ("private", "sk-", injected["root"], os.path.basename(injected["root"])):
+                self.assertNotIn(private, error.__notes__[0])
+            self.assertFalse(Path(injected["root"]).exists())
+
+    def test_cleanup_error_keeps_the_original_body_failure_as_context(self):
+        body = AssertionError("bare executable lookup ran candidate git.exe")
+        with self.failing_cleanup(lambda root: OSError(70000, "private", None)), \
+                self.assertRaises(OSError) as caught:
+            with _noted_temporary_directory():
+                raise body
+        self.assertIs(caught.exception.__context__, body)
+        # No filename and an out-of-range errno fall back to the closed defaults.
+        self.assertEqual(caught.exception.__notes__,
+                         ["WINDIAG tmp_cleanup root=0 entry=other winerror=-1 errno=-1"])
+
+    @staticmethod
+    def sharing_violation(root):
+        error = PermissionError(13, "private message", root)
+        error.winerror = _SHARING_VIOLATION  # Set directly so the case also runs off Windows.
+        return error
+
+    def test_transient_sharing_violation_is_retried_until_cleanup_succeeds(self):
+        real_cleanup = tempfile.TemporaryDirectory.cleanup
+        attempts = []
+        def cleanup(temporary):
+            attempts.append(temporary.name)
+            if len(attempts) <= 2:
+                raise self.sharing_violation(temporary.name)
+            real_cleanup(temporary)
+        with patch.object(tempfile.TemporaryDirectory, "cleanup", cleanup), \
+                patch.object(time, "sleep") as sleep:
+            with _noted_temporary_directory() as directory:
+                (Path(directory) / "git.exe").write_bytes(b"fixture")
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual([call.args for call in sleep.call_args_list], [(0.1,), (0.25,)])
+        self.assertFalse(Path(directory).exists())
+
+    def test_persistent_sharing_violation_is_bounded_and_reraised_with_its_note(self):
+        body = AssertionError("bare executable lookup ran candidate git.exe")
+        raised = []
+        def make_error(root):
+            raised.append(self.sharing_violation(root))
+            return raised[-1]
+        with self.failing_cleanup(make_error), patch.object(time, "sleep") as sleep, \
+                self.assertRaises(PermissionError) as caught:
+            with _noted_temporary_directory():
+                raise body
+        self.assertEqual(len(raised), len(_CLEANUP_RETRY_DELAYS) + 1)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], list(_CLEANUP_RETRY_DELAYS))
+        self.assertLess(sum(_CLEANUP_RETRY_DELAYS), 8)
+        error = caught.exception
+        self.assertIs(error, raised[-1])
+        self.assertIs(error.__context__, body)
+        self.assertEqual(error.__notes__, ["WINDIAG tmp_cleanup root=1 entry=other winerror=32 errno=13"])
+        self.assertTrue(all(not getattr(earlier, "__notes__", None) for earlier in raised[:-1]))
+
+    def test_other_cleanup_errors_are_never_retried(self):
+        with self.failing_cleanup(lambda root: PermissionError(13, "private message", root, 5)), \
+                patch.object(time, "sleep") as sleep, self.assertRaises(PermissionError):
+            with _noted_temporary_directory():
+                pass
+        sleep.assert_not_called()
 
 
 if __name__ == "__main__":

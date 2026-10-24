@@ -1008,7 +1008,7 @@ class PostgresValidationTests(unittest.TestCase):
                 (admission["reservation"],)).fetchone()[0]
         self.assertNotEqual("succeeded",row[0]);self.assertIsNone(row[1]);self.assertEqual(0,succeeded)
 
-    def _responses_service_fixture(self,*,transport_ceiling=60):
+    def _responses_service_fixture(self,*,transport_ceiling=60,packet_ceiling=2):
         """Real store and service; only the provider transport is synthetic.
 
         `transport_ceiling` bounds `maximum_timeout_seconds`. It defaults to a
@@ -1017,12 +1017,15 @@ class PostgresValidationTests(unittest.TestCase):
         The admission contention case needs it equal to the packet ceiling
         instead: admission itself runs before that packet is even known, so
         it can only ever be bounded by the transport ceiling.
+        `packet_ceiling` is the work packet's `timeout_seconds`, bound before
+        canonicalization and digest pinning. The 2s default is the contract
+        the contention, cleanup and drift cases verify.
         """
         import time as time_module
         from types import SimpleNamespace
         from director_orchestrator.openai_responses_validation import OpenAIResponsesValidationRoute
         work=work_packet()
-        work["limits"]["timeout_seconds"]=2
+        work["limits"]["timeout_seconds"]=packet_ceiling
         packet=canonical_json_bytes(work)
         transport=SimpleNamespace(model="gpt-fixture-responses",
             api_url="https://api.openai.com/v1/responses",_api_key="sk-contention-fixture",
@@ -1067,12 +1070,12 @@ class PostgresValidationTests(unittest.TestCase):
         wrapped store call and keeps holding it across the primary refusal AND
         the except-path fail cleanup, so the SQL state and elapsed time witness
         real contention, not a mocked timeout. The blocker self-releases after
-        3 seconds as a safety-net watchdog only: the 2s packet budget plus the
-        1s scheduler grace is the whole boundary, and the cleanup allowance in
-        PostgresValidationStore.fail is anchored to that same absolute
+        5 seconds as a safety-net watchdog only: the test allows 1s scheduling
+        slack beyond the nominal 2s packet budget plus 1s cleanup boundary.
+        The cleanup allowance in PostgresValidationStore.fail is anchored to that same absolute
         deadline-plus-grace, not a second, fresh window stacked on top of it.
         Elapsed time is the full ``service.run()`` clock, start to refusal:
-        that is the original absolute 2s+1s contract. Production
+        the runtime retains its original absolute 2s+1s contract. Production
         ``verify_fence`` is a plain SELECT, which SELECT FOR UPDATE does
         not block (CI 36915002980/36915004595 at line 1150). Fence
         contention is therefore ACCESS EXCLUSIVE on ``attempts``, taken
@@ -1103,8 +1106,19 @@ class PostgresValidationTests(unittest.TestCase):
         """
         import threading
         import time as time_module
+        from contextlib import ExitStack
+        execution_budget_seconds=2.0
+        cleanup_allowance_seconds=1.0
+        # WO-G93 / g90-diag: cleanup targets 2 + 1 - 0.25 = 2.75s;
+        # allow host scheduling beyond the nominal 3s, without extending runtime deadlines.
+        test_scheduling_allowance_seconds=1.0
+        whole_call_bound_seconds=execution_budget_seconds+cleanup_allowance_seconds+test_scheduling_allowance_seconds
+        watchdog_seconds=whole_call_bound_seconds+1.0
         fixture=self._responses_service_fixture()
         box={"watchdog_fired":None,"errors":[]}
+        events=[]
+        deadlines=[]
+        callbacks=[]
         def start_blocker(reservation):
             release,held=threading.Event(),threading.Event()
             def blocker():
@@ -1118,15 +1132,14 @@ class PostgresValidationTests(unittest.TestCase):
                             db.execute(f"SELECT 1 FROM {SCHEMA}.attempts WHERE reservation=%s FOR UPDATE",
                                        (reservation,)).fetchone()
                         held.set()
-                        # Self-release at 3s (2s packet budget + 1s
-                        # scheduler grace) is a watchdog safety net; the
+                        # Self-release beyond the 4s whole-call bound is a safety net; the
                         # service is expected to finish, and this test to
                         # call release.set() itself, well before this
                         # fires. Event.wait returns False on a timeout
                         # without setting the event, so the outcome is
                         # recorded explicitly rather than inferred from
                         # release.is_set().
-                        released_explicitly=release.wait(3.0)
+                        released_explicitly=release.wait(watchdog_seconds)
                         box["watchdog_fired"]=not released_explicitly
                 except BaseException as error:
                     box["errors"].append(error)
@@ -1143,17 +1156,39 @@ class PostgresValidationTests(unittest.TestCase):
             if not acquired:
                 release.set();thread.join(5)
                 raise AssertionError("contention blocker never acquired its lock")
-        def wrapped_factory(original):
+        def wrapped_factory(name,original):
             def wrapped(*args,**kwargs):
-                if phase in ("claim_execution","settle"):
-                    box["reservation"]=args[0]["reservation"]
-                elif phase=="verify_fence":
-                    box["reservation"]=args[0].task_id.removeprefix("VALIDATION-")
-                start_blocker(box["reservation"])
-                return original(*args,**kwargs)
+                events.append((name,"entered"))
+                remaining=kwargs["remaining_seconds"]
+                callbacks.append((name,remaining))
+                before=time_module.monotonic()
+                try:
+                    left=remaining()
+                except ValidationError:
+                    # Cleanup can already be exhausted after a scheduling delay.
+                    pass
+                else:
+                    after=time_module.monotonic()
+                    allowance=cleanup_allowance_seconds if name=="fail" else 0.0
+                    deadlines.append((before+left-allowance,after+left-allowance))
+                if name==phase:
+                    if phase in ("claim_execution","settle"):
+                        box["reservation"]=args[0]["reservation"]
+                    elif phase=="verify_fence":
+                        box["reservation"]=args[0].task_id.removeprefix("VALIDATION-")
+                    start_blocker(box["reservation"])
+                try:
+                    result=original(*args,**kwargs)
+                except Exception:
+                    events.append((name,"refused"))
+                    raise
+                events.append((name,"returned"))
+                return result
             return wrapped
         try:
-            with patch.object(self.store,phase,wrapped_factory(getattr(self.store,phase))):
+            with ExitStack() as patches:
+                for name in ("claim_execution","verify_fence","settle","fail"):
+                    patches.enter_context(patch.object(self.store,name,wrapped_factory(name,getattr(self.store,name))))
                 started=time_module.monotonic()
                 with self.assertRaises(Exception) as caught:
                     fixture["service"].run(ValidationRequest(
@@ -1165,10 +1200,29 @@ class PostgresValidationTests(unittest.TestCase):
                             or "timeout" in str(error).lower()
                             or "deadline" in str(error).lower(),
                             f"unexpected refusal: {error!r}")
-            # The 2s packet budget plus 1s scheduler grace is the whole
-            # boundary; no extra cleanup budget may push completion past it.
-            self.assertLess(elapsed,2.0+1.0,
-                            f"service overran the 2s budget plus 1s scheduler grace: {elapsed:.2f}s")
+            self.assertLess(elapsed,whole_call_bound_seconds,
+                            f"service overran the 4s whole-call test bound: {elapsed:.2f}s")
+            completed_phases={
+                "claim_execution":[],
+                "verify_fence":["claim_execution"],
+                "settle":["claim_execution","verify_fence","verify_fence","verify_fence"],
+            }[phase]
+            expected_events=[event for name in completed_phases
+                             for event in ((name,"entered"),(name,"returned"))]
+            self.assertEqual(events[:-1],expected_events+[
+                (phase,"entered"),(phase,"refused"),("fail","entered")])
+            self.assertIn(events[-1],(("fail","returned"),("fail","refused")))
+            execution_callback=callbacks[0][1]
+            self.assertTrue(all(callback is execution_callback for name,callback in callbacks if name!="fail"))
+            self.assertIsNot(callbacks[-1][1],execution_callback)
+            # Bracket callback readings with the real clock: all phases share
+            # one deadline, and cleanup adds exactly the original allowance.
+            self.assertTrue(deadlines)
+            # Subtracting the cleanup allowance can introduce floating-point roundoff.
+            self.assertLessEqual(max(lower for lower,upper in deadlines)-
+                                 min(upper for lower,upper in deadlines),1e-6)
+            self.assertGreaterEqual(deadlines[0][1],started+execution_budget_seconds)
+            self.assertLessEqual(deadlines[0][0],started+elapsed+execution_budget_seconds)
             self.assertIsNone(box.get("watchdog_fired"),
                               "blocker watchdog already fired before the service completed")
             expected_sends=1 if phase=="settle" else 0
@@ -1297,42 +1351,58 @@ class PostgresValidationTests(unittest.TestCase):
         call -- the reservation does not exist until admission returns -- and
         holds it, uncontended with claim/fence/settle's own row locks, across
         the rest of the operation.
+
+        The blocker's connection and transaction-local timeouts are prepared
+        before ``service.run()`` starts the shared 2s clock (CI 40000064851;
+        a 2.1s blocker-connect delay reproduced the line-1397 refusal
+        locally, without establishing the hosted cause). Only the advisory
+        lock itself, on the real admitted reservation, runs inside that
+        clock. If the service refuses before claim, the parked blocker is
+        released without locking and joined in the finally.
         """
         import threading
         import time as time_module
         fixture=self._responses_service_fixture()
         box={"watchdog_fired":None,"errors":[]}
+        ready,go,held,release=threading.Event(),threading.Event(),threading.Event(),threading.Event()
+        def blocker():
+            try:
+                with self.store.connect() as db:
+                    db.execute("SELECT set_config('statement_timeout','15000',true),"
+                        "set_config('lock_timeout','15000',true)")
+                    ready.set()
+                    if not go.wait(10):
+                        raise AssertionError("commit blocker never received the admitted reservation")
+                    if release.is_set():
+                        return
+                    db.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,20260914))",
+                               (box["reservation"],)).fetchone()
+                    held.set()
+                    released_explicitly=release.wait(3.0)
+                    box["watchdog_fired"]=not released_explicitly
+            except BaseException as error:
+                box["errors"].append(error)
+                ready.set();held.set()
         def wrapped_claim(original):
             def wrapped(*args,**kwargs):
-                reservation=args[0]["reservation"]
-                box["reservation"]=reservation
-                release,held=threading.Event(),threading.Event()
-                def blocker():
-                    try:
-                        with self.store.connect() as db:
-                            db.execute("SELECT set_config('statement_timeout','15000',true),"
-                                "set_config('lock_timeout','15000',true)")
-                            db.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,20260914))",
-                                       (reservation,)).fetchone()
-                            held.set()
-                            released_explicitly=release.wait(3.0)
-                            box["watchdog_fired"]=not released_explicitly
-                    except BaseException as error:
-                        box["errors"].append(error)
-                        held.set()
-                thread=threading.Thread(target=blocker,daemon=True)
-                box["release"]=release;box["thread"]=thread
-                thread.start()
+                box["reservation"]=args[0]["reservation"]
+                go.set()
                 acquired=held.wait(10)
                 if box["errors"]:
-                    release.set();thread.join(5)
                     raise AssertionError(f"commit blocker setup failed: {box['errors'][0]!r}") from box["errors"][0]
                 if not acquired:
-                    release.set();thread.join(5)
                     raise AssertionError("commit contention blocker never acquired its advisory lock")
                 return original(*args,**kwargs)
             return wrapped
         try:
+            thread=threading.Thread(target=blocker,daemon=True)
+            box["release"]=release;box["thread"]=thread
+            thread.start()
+            prepared=ready.wait(10)
+            if box["errors"]:
+                raise AssertionError(f"commit blocker setup failed: {box['errors'][0]!r}") from box["errors"][0]
+            if not prepared:
+                raise AssertionError("commit blocker never prepared its connection")
             with patch.object(self.store,"claim_execution",wrapped_claim(self.store.claim_execution)):
                 started=time_module.monotonic()
                 with self.assertRaises(Exception) as caught:
@@ -1364,9 +1434,8 @@ class PostgresValidationTests(unittest.TestCase):
             self.assertIsNone(row[1])
             self.assertEqual(0,succeeded)
         finally:
-            release=box.get("release");thread=box.get("thread")
-            if release is not None:
-                release.set()
+            release.set();go.set()
+            thread=box.get("thread")
             if thread is not None:
                 thread.join(5)
 
@@ -1391,7 +1460,11 @@ class PostgresValidationTests(unittest.TestCase):
         transport call and a verifiable evidence digest. This is the baseline
         the claim/fence/settle contention cases above are refused against.
         """
-        fixture=self._responses_service_fixture()
+        # A functional baseline, not a deadline test: CI 39977962976 exhausted
+        # the 2s packet after send, fence and rehash but before settlement.
+        # 30s is bounded fixture headroom, not a measured performance guarantee;
+        # the 2s contract stays covered by the contention cases.
+        fixture=self._responses_service_fixture(packet_ceiling=30)
         result=fixture["service"].run(ValidationRequest(
             generation=fixture["generation"],provider="openai"),OWNER)
         self.assertTrue(result.get("evidence_digest"))

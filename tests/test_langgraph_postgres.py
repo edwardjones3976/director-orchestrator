@@ -2451,6 +2451,49 @@ class PostgresControlPlaneIntegrationTests(unittest.TestCase):
         self.addCleanup(handle.close)
         return handle.claim_store
 
+    def test_acceptance_single_winner_reservation_restart_and_result(self):
+        """The same journal contract against separate real Postgres sessions."""
+        from concurrent.futures import ThreadPoolExecutor
+        from director_orchestrator.langgraph_primary import (
+            AcceptanceResult, AcceptanceDecision, AcceptanceUnresolved, _canonical_digest)
+        key = _canonical_digest({"task": self.task_id, "sha": "a" * 40, "revision": 0})
+        binding = {"task": self.task_id, "sha": "a" * 40, "revision": 0}
+        scope = self.task_id
+        stores = [self.store, self.second_store()]
+        barrier = threading.Barrier(2)
+        def claim(index):
+            barrier.wait(timeout=10)
+            return stores[index].acceptance_claim(key, binding, cents=155, requests=5,
+                scope=scope, limit_cents=1000, limit_requests=5)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            outcomes = list(executor.map(claim, range(2)))
+        self.assertEqual(sum(won for won, _ in outcomes), 1)
+        row = next(row for won, row in outcomes if won)
+        with self.assertRaises(AcceptanceUnresolved):
+            self.store.acceptance_replay(row, "a" * 40)
+        self.store.acceptance_http(key, row["owner"], "create")
+        with self.assertRaises(AcceptanceUnresolved):
+            stores[1].acceptance_http(key, row["owner"], "create")
+        self.store.acceptance_response_id(key, row["owner"], "resp-postgres")
+        held = stores[1].acceptance_read(key)
+        self.assertEqual(held["state"], "RESPONSE_ID_RECORDED")
+        self.assertEqual(held["reserved_cents"], 155)
+        result = AcceptanceResult(_canonical_digest({"result": "accepted"}), "a" * 40,
+                                  AcceptanceDecision.ACCEPT)
+        with self.assertRaises(AcceptanceUnresolved):
+            self.store.acceptance_finish(key, "wrong-owner", result)
+        stores[1].acceptance_finish(key, row["owner"], result)
+        won, completed = self.store.acceptance_claim(key, binding, cents=155, requests=5,
+            scope=scope, limit_cents=1000, limit_requests=5)
+        self.assertFalse(won)
+        self.assertEqual(self.store.acceptance_replay(completed, "a" * 40), result)
+        with self.assertRaises(ValueError):
+            stores[1].acceptance_claim(key, {**binding, "revision": 1}, cents=155, requests=5,
+                scope=scope, limit_cents=1000, limit_requests=5)
+        with self.assertRaises(ValueError):
+            stores[1].acceptance_claim(_canonical_digest({"other": self.task_id}), binding,
+                cents=1, requests=1, scope=scope, limit_cents=1000, limit_requests=5)
+
     def test_provider_v2_real_pool_checks_identity_before_any_ddl(self):
         # A disposable event trigger records attempted successful DDL, including
         # idempotent setup, rather than merely comparing unchanged table names.

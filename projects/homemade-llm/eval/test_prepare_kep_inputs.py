@@ -1753,6 +1753,295 @@ class KepInputSelectionV3Tests(unittest.TestCase):
             self.assertNotIn(forbidden, source_text)
 
 
+class ConstraintsV4Tests(unittest.TestCase):
+    """Frozen A2 synthetic controls; source excerpts remain exact Unicode slices."""
+
+    def units(self, body, template_lines=frozenset()):
+        import kep_constraints_v4 as selector
+        text = "# T\n## Proposal\n\n" + body
+        lines = tool._document_lines(text)
+        source_span = selector.lead_source(selector.headings(text), "proposal")
+        removed = [line["raw"] in template_lines for line in lines]
+        return text, [(unit, selector.classify(text, unit))
+                      for unit in selector.region_units(text, lines, removed, source_span)]
+
+    def ok_units(self, body):
+        text, units = self.units(body)
+        return text, [unit for unit, code in units if code == "OK"]
+
+    def test_a2_synthetic_scope_controls(self):
+        cases = [
+            ("If the feature gate is enabled:\n- The controller must reject every request without a namespace.\n", 2),
+            ("- When running in HA mode:\n  - Every apiserver must read the same configuration file.\n", 2),
+            ("The following apply when the flag is set:\n\n- The kubelet must not restart running pods.\n", 2),
+            ("- Writes must be atomic for every object kind\n  - except during the initial bootstrap phase\n", 1),
+        ]
+        for body, span_count in cases:
+            with self.subTest(body=body):
+                text, units = self.ok_units(body)
+                candidates = [unit for unit in units if len(unit["spans"]) == span_count]
+                self.assertTrue(candidates)
+                unit = candidates[0]
+                self.assertEqual(unit["text"], body.replace(":\n\n", ":\n"))
+                self.assertEqual(unit["text"], "".join(text[s["start"]:s["end"]] for s in unit["spans"]))
+
+    def test_a2_synthetic_lexical_controls_and_exclusions(self):
+        keep = (
+            "- Portworx CSI driver needs to be already deployed before enabling this feature.\n",
+            "The hostname field of the kernel is limited to 64 bytes.\n",
+            "A pod can mount at most 16 volumes of this type at once.\n",
+            "Reload must  not add or remove Node or RBAC authorizers.\n",
+        )
+        refuse = (
+            "Users will have to run an extra process outside of kubelet.\n",
+            "The controller will be required to resync every object on start.\n",
+            "Administrators should be careful when migrating from the old flags.\n",
+            "It is recommended that the cache must be warmed before rollout.\n",
+            "Eventually the API must support all versions of the resource.\n",
+            "The value must <!-- internal note --> be set before startup.\n",
+            "There is a risk that the cache must be rebuilt after upgrade.\n",
+            "Does this feature require a restart of every kubelet?\n",
+            "The field must be set. " + "x" * 600 + "\n",
+            "```\nThe controller must reject every request without a namespace.\n```\n",
+            "| The controller must reject every request without a namespace. |\n",
+            "- [ ] The controller must reject every request without a namespace.\n",
+            "<!-- The controller must reject every request without a namespace. -->\n",
+        )
+        for body in keep:
+            with self.subTest(body=body):
+                _, units = self.ok_units(body)
+                self.assertEqual(len(units), 1)
+                self.assertEqual(units[0]["text"], body)
+        for body in refuse:
+            with self.subTest(body=body):
+                self.assertEqual(self.ok_units(body)[1], [])
+        body = keep[0]
+        self.assertEqual(self.units(body, frozenset([body.rstrip("\n")]))[1], [])
+
+    def test_exact_unit_length_boundaries(self):
+        for size, expected in ((29, "TOO_SHORT"), (30, "OK"), (600, "OK"), (601, "TOO_LONG")):
+            body = "Must " + "x" * (size - 6) + "\n"
+            self.assertEqual(self.units(body)[1][0][1], expected)
+
+    @staticmethod
+    def a2_readme():
+        return ("# KEP-1: T\n\n## Summary\n\nA summary.\n\n## Motivation\n\n"
+                + "Port ranges are needed by many users. " * 4 + "Today each port is listed.\n\n"
+                "### Goals\n\nAdd a validated field to the API.\n\n### Non-Goals\n\n- Changing defaults.\n\n"
+                "## Proposal\n\nThe endPort field must be greater than or equal to the port field.\n\n"
+                "### Notes/Constraints/Caveats\n\nThe CNI might not support port ranges.\n\n"
+                "## Design Details\n\n### Test Plan\n\nUnit tests cover validation.\n\n"
+                "### Graduation Criteria\n\n#### Alpha\n\n- Feature implemented behind a gate.\n")
+
+    def test_a2_readme_allocation_and_missing_unit(self):
+        import kep_constraints_v4 as selector
+        text = self.a2_readme()
+        result = selector.analyse(text, frozenset())
+        self.assertEqual((result["stage"], result["tier"]), ("B", "tier2"))
+        self.assertTrue(result["first_unit_text"].startswith("The endPort field must"))
+        self.assertFalse(tool._spans_overlap([result["objective_span"], *result["context_spans"]]))
+        text = text.replace("The endPort field must be greater than or equal to the port field.", "This adds a field.")
+        self.assertEqual(selector.analyse(text, frozenset())["stage"], "REFUSE_NO_LEXICAL_UNIT")
+
+    def test_tier1_lexical_candidate_blocks_fallback_even_when_overlong(self):
+        import kep_constraints_v4 as selector
+        text = self.a2_readme().replace("The CNI might not support port ranges.", "The field must be set. " + "x" * 600)
+        result = selector.analyse(text, frozenset())
+        self.assertEqual((result["stage"], result["tier"]), ("L_ONLY", "tier1"))
+        self.assertEqual(result["role"], selector.CONSTRAINTS)
+        self.assertIn("TOO_LONG", result["unit_refusals"])
+
+    def test_shared_scope_and_subtree_emitted_once_and_no_subheading_lead(self):
+        import kep_constraints_v4 as selector
+        text = self.a2_readme().replace(
+            "The endPort field must be greater than or equal to the port field.",
+            "If the feature gate is enabled:\n- The controller must reject every invalid port.\n"
+            "  - except during the initial bootstrap phase\n- The client must supply a valid namespace.")
+        result = selector.analyse(text, frozenset())
+        self.assertEqual(result["stage"], "B")
+        context = "".join(text[s["start"]:s["end"]] for s in result["context_spans"])
+        self.assertEqual(context.count("If the feature gate is enabled:"), 1)
+        self.assertEqual(context.count("except during the initial bootstrap phase"), 1)
+        self.assertFalse(tool._spans_overlap(result["context_spans"]))
+        _, units = self.units("General introduction.\n### Nested detail\nThe controller must reject every invalid port.\n")
+        self.assertFalse(any(code == "OK" for _, code in units))
+
+    def test_mandatory_role_refuses_with_role_and_reason(self):
+        import kep_constraints_v4 as selector
+        text = self.a2_readme().replace("- Changing defaults.", "")
+        result = selector.analyse(text, frozenset())
+        self.assertEqual(result["stage"], "W_ONLY")
+        self.assertEqual(result["role"], "Non-Goals")
+        self.assertEqual(result["reason"], "MISSING_OR_EMPTY_SUPPORT_SECTION")
+
+    def test_v4_allocation_exact_boundary_and_optional_no_transfer(self):
+        import kep_constraints_v4 as selector
+        text = v3_body(19, notes="The controller must reject every request without a namespace.",
+                       summary=None, motivation=None)
+        template_lines = tool._template_line_set(TEMPLATE_BODY)
+        initial = selector.analyse(text, template_lines)
+        self.assertEqual(initial["stage"], "B")
+        padding = "N" * (2100 - initial["mandatory_chars"])
+        exact = text.replace("Do not expand unrelated work.", "Do not expand unrelated work." + padding)
+        self.assertEqual(selector.analyse(exact, template_lines)["mandatory_chars"], 2100)
+        over = exact.replace("Do not expand unrelated work.", "Do not expand unrelated work.X")
+        result = selector.analyse(over, template_lines)
+        self.assertEqual((result["stage"], result["role"], result["reason"]),
+                         ("W_ONLY", "allocation", "MANDATORY_MINIMA_OVER_BUDGET"))
+        # Unused optional budgets cannot rescue a mandatory pool overflow.
+        self.assertNotIn("total_chars", result)
+
+    def test_crlf_scoped_unit_keeps_exact_original_line_endings(self):
+        body = "If the feature gate is enabled:\r\n- The controller must  reject invalid requests.\r\n"
+        text, units = self.ok_units(body)
+        self.assertEqual(len(units), 1)
+        self.assertEqual(units[0]["text"], body)
+        self.assertEqual(body, "".join(text[s["start"]:s["end"]] for s in units[0]["spans"]))
+
+
+@unittest.skipUnless(os.name == "nt", "Pinned reads and publication require Windows")
+class KepInputSelectionV4Tests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="synthetic-kep-v4-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def fixture(self, items=None):
+        if items is None:
+            items = [dict(number=19, sig="sig-example", status="implemented",
+                          text=v3_body(19, notes="The controller must reject every request without a namespace."))]
+        fixture = V3Fixture(self.root, items)
+        with patch.object(tool, "V3_TEMPLATE", fixture.template_pin):
+            fixture.policy = tool.v4_policy("2020-01-01T00:00:00Z")
+        fixture.refresh()
+        return fixture
+
+    def test_v3_fixture_output_hash_and_explicit_rule_are_unchanged(self):
+        text = ("# Synthetic KEP 19\n\n## Goals\n\nBound synthetic scope 19.\n\n"
+                "## Non-Goals\n\nDo not expand unrelated work.\n\n"
+                "## Risks and Mitigations\n\nThe synthetic platform might require support.\n\n"
+                "## Graduation Criteria\n\nValidate before enabling the feature.\n\n"
+                "## Test Plan\n\nTest synthetic endpoints.\n")
+        fixture = V3Fixture(self.root, [dict(number=19, sig="sig-example", status="implemented", text=text)],
+                            template_text="Unique synthetic template line.\n")
+        fixture.prepare()
+        raw = (self.root / "out" / "inputs.jsonl").read_bytes()
+        self.assertEqual(tool.digest(raw), "989de65b9c97a80e0942024057fce98bf9ce6dec12fdea8d6d453eab3826a3e5")
+        fixture.prepare(rule_version="v3", out=self.root / "explicit")
+        self.assertEqual(raw, (self.root / "explicit" / "inputs.jsonl").read_bytes())
+
+    def test_v4_publication_uses_exact_selector_spans_and_preserved_allocation(self):
+        import kep_constraints_v4 as selector
+        fixture = self.fixture()
+        result = fixture.prepare(rule_version="v4")
+        self.assertEqual(result["stage_counts"]["allocation_valid"], 1)
+        self.assertEqual(result["stage_counts"]["tokens"], "NOT_MEASURED")
+        row = json.loads((self.root / "out" / "inputs.jsonl").read_bytes())
+        text = fixture.items[0]["text"]
+        selected = selector.analyse(text, tool._template_line_set(fixture.template_text))
+        for field in ("title_span", "objective_span", "context_spans"):
+            self.assertEqual(row[field], selected[field])
+        tool.validate_record(row, text)
+        self.assertLessEqual(selected["mandatory_chars"], 2100)
+        self.assertLessEqual(selected["total_chars"], 2500)
+        self.assertNotIn("minimum_usable_inputs", fixture.policy["postconstruction_token_gate"])
+        self.assertEqual(fixture.policy["postconstruction_token_gate"]["maximum_input_prompt_tokens"], 1400)
+
+    def test_v4_policy_and_explicit_version_fail_closed(self):
+        fixture = self.fixture()
+        with self.assertRaisesRegex(tool.Refusal, "RULE_POLICY_MISMATCH"):
+            fixture.prepare(rule_version="v3")
+        for field, value in (("constraints_selector", {}), ("section_aliases", tool.V3_SECTION_ALIASES),
+                             ("trim", {}), ("postconstruction_token_gate", tool.V3_TOKEN_GATE)):
+            with self.subTest(field=field):
+                previous = fixture.policy[field]
+                fixture.policy[field] = value
+                fixture.refresh()
+                with self.assertRaisesRegex(tool.Refusal, "INVALID_POLICY"):
+                    fixture.prepare(rule_version="v4")
+                fixture.policy[field] = previous
+
+    def test_v4_publication_refuses_start_equal_to_policy_freeze(self):
+        fixture = self.fixture()
+        with patch.object(tool, "_Publication", side_effect=AssertionError("invalid chronology must not publish")):
+            with self.assertRaisesRegex(tool.Refusal, "^INVALID_CHRONOLOGY$"):
+                fixture.prepare(rule_version="v4", clock=lambda: fixture.policy["frozen_at"])
+        self.assertFalse((self.root / "out").exists())
+
+    def test_count_only_cli_no_writes_ranks_and_jsonl_refusals(self):
+        from contextlib import redirect_stdout, redirect_stderr
+        items = [dict(number=n, sig="sig-example", status="implemented",
+                      text=v3_body(n, notes="The controller must reject every request without a namespace.")) for n in (19, 29)]
+        items.append(dict(number=39, sig="sig-example", status="implemented", text=v3_body(39)))
+        fixture = self.fixture(items)
+        argv = [part for name in ("archive", "tree", "census", "license")
+                for part in ("--" + name, str(fixture.paths[name]))] + ["--rule", "v4", "--count-only"]
+        before = {p.name: p.read_bytes() for p in self.root.iterdir()}
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.object(tool, "PINS", fixture.pins), patch.object(tool, "V3_TEMPLATE", fixture.template_pin), \
+                patch.object(tool, "_Publication", side_effect=AssertionError("count-only must not publish")), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            self.assertEqual(tool.main(argv), 0)
+            equal_stdout, equal_stderr = io.StringIO(), io.StringIO()
+            with patch.object(tool.prepare, "__kwdefaults__", tool.prepare.__kwdefaults__ | {
+                    "clock": lambda: "2020-01-02T00:00:00Z"}), \
+                    redirect_stdout(equal_stdout), redirect_stderr(equal_stderr):
+                self.assertEqual(tool.main(argv), 0)
+        result = json.loads(stdout.getvalue())
+        counts = result["stage_counts"]
+        self.assertEqual(json.loads(equal_stdout.getvalue())["stage_counts"], counts)
+        self.assertEqual(equal_stderr.getvalue(), stderr.getvalue())
+        self.assertEqual([counts[k] for k in ("eligible_groups", "lexical", "whole_source_bound", "allocation_valid")], [3, 2, 2, 2])
+        kept = result["kept_groups"]
+        self.assertEqual([r["sha256_rank"] for r in kept], [0, 1])
+        self.assertEqual([r["sha256"] for r in kept], sorted(tool.digest(r["group_id"].encode()) for r in kept))
+        refusals = [json.loads(line) for line in stderr.getvalue().splitlines()]
+        self.assertEqual(refusals, [{"group_id": "licensed/kubernetes/enhancements/kep-39",
+                                    "role": "Notes/Constraints/Caveats", "reason": "NO_LEXICAL_UNIT"}])
+        self.assertEqual(before, {p.name: p.read_bytes() for p in self.root.iterdir()})
+
+    def test_count_only_zero_supply_succeeds_and_never_accepts_output_arguments(self):
+        fixture = self.fixture([dict(number=19, sig="sig-example", status="implemented", text=v3_body(19))])
+        args = fixture.args(rule_version="v4", count_only=True, out=None, policy=None, policy_sha256=None)
+        with patch.object(tool, "V3_TEMPLATE", fixture.template_pin):
+            result = tool.prepare(**args)
+            self.assertEqual(result["kept_groups"], [])
+            self.assertEqual(len(result["refusals"]), 1)
+            for overrides in ({"out": self.root / "bad"}, {"policy": fixture.paths["policy"]},
+                              {"dry_run": True}, {"rule_version": "v3"}):
+                with self.assertRaisesRegex(tool.Refusal, "INVALID_COUNT_ONLY_ARGUMENTS"):
+                    tool.prepare(**(args | overrides))
+
+    def test_pinned_204_funnel(self):
+        import kep_constraints_v4 as selector
+        archive = Path(r"C:\llm\reports\codex-m2-delegation-20260930\kep-route-prestage-20261002\enhancements-pinned.tar.gz")
+        population = Path(r"C:\llm\runs\m2\route-r\context-probe-204-20261006\inputs-204.jsonl")
+        if not archive.exists() or not population.exists():
+            self.skipTest("Pinned archive/204 fixture unavailable; dispatcher must run this test on the corpus host")
+        raw_population = tool.pinned_file(population, "da0b4f5727fb894158f7ee9e13d30f7fdcbe7091e1d55a7b4cc6d7d00de22da8", tool.MAX_SOURCE_TOTAL)
+        raw_archive = tool.pinned_file(archive, tool.PINS["archive"], tool.MAX_ARCHIVE)
+        rows = [json.loads(line) for line in raw_population.splitlines()]
+        self.assertEqual(len(rows), 204)
+        self.assertEqual(len({r["source_group"] for r in rows}), 204)
+        prefix = "enhancements-" + tool.COMMIT + "/"
+        stages = []
+        with tarfile.open(fileobj=io.BytesIO(raw_archive), mode="r:gz") as tar:
+            template = tar.extractfile(prefix + tool.TEMPLATE_PATH).read()
+            self.assertEqual(tool.digest(template), tool.TEMPLATE_SHA256)
+            template_lines = tool._template_line_set(template.decode("utf-8"))
+            for row in rows:
+                ref = row["input"]["context"][0]
+                self.assertTrue(tool.safe_archive_name(ref["source_ref"]))
+                member = tar.getmember(prefix + ref["source_ref"])
+                self.assertTrue(member.isfile() and member.size <= tool.MAX_SOURCE)
+                raw = tar.extractfile(member).read()
+                self.assertEqual(tool.digest(raw), ref["source_sha256"])
+                stages.append(selector.analyse(raw.decode("utf-8"), template_lines)["stage"])
+        counts = (len(stages), sum(s in ("L_ONLY", "W_ONLY", "B") for s in stages),
+                  sum(s in ("W_ONLY", "B") for s in stages), stages.count("B"))
+        self.assertEqual(counts, (204, 83, 75, 73))
+
+
 class PublicationPlatformTests(unittest.TestCase):
     def test_non_windows_publication_refuses_without_any_directory_operation(self):
         with tempfile.TemporaryDirectory(prefix="synthetic-publication-platform-") as folder:

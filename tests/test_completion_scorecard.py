@@ -99,6 +99,7 @@ import json
 import hashlib
 import importlib.util
 import os
+import threading
 import sqlite3
 import subprocess
 import sys
@@ -6319,6 +6320,82 @@ class ScorecardCollectorTests(unittest.TestCase):
             self.assertLess(time.monotonic() - started, 5)
         self.assertEqual(len(graces), 1)
         self.assertLess(graces[0], 0.5)  # what was left of the 1-second deadline, never a fresh 5 seconds
+
+    def test_timed_out_reader_cannot_consume_the_next_commands_stdout(self):
+        """Pause a reader before its syscall, then reuse the process boundary."""
+        entered, release, finished = (threading.Event() for _ in range(3))
+        real_launch, real_read = sc.launch_contained_process, os.read
+        stale_fd = None
+        launches = 0
+        old_readers = []
+
+        def launch(*args, **kwargs):
+            nonlocal stale_fd, launches
+            process, guard = real_launch(*args, **kwargs)
+            launches += 1
+            if launches == 1:
+                stale_fd = process.stdout.fileno()
+                real_wait = process.wait
+
+                def wait(*args, **kwargs):
+                    self.assertTrue(entered.wait(5), "reader was not paused")
+                    return real_wait(*args, **kwargs)
+
+                process.wait = wait
+            else:
+                release.set()
+                self.assertTrue(finished.wait(5), "old reader did not finish")
+            return process, guard
+
+        def read(fd, size):
+            if fd == stale_fd and threading.current_thread() is not threading.main_thread() and not entered.is_set():
+                old_readers.append(threading.current_thread())
+                entered.set()
+                try:
+                    if not release.wait(5):
+                        raise OSError("test reader release timed out")
+                    return real_read(fd, size)
+                finally:
+                    finished.set()
+            return real_read(fd, size)
+
+        sc._DEADLINE[0] = None
+        try:
+            with patch.object(sc, "launch_contained_process", side_effect=launch), patch.object(sc.os, "read", side_effect=read):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    sc._run_bytes([sys.executable, "-c", "import time; time.sleep(30)"], timeout=0.5)
+                self.assertTrue(entered.is_set(), "reader was not paused")
+                self.assertEqual(sc._run_bytes([sys.executable, "-c", "print('ok')"]).strip(), b"ok")
+        finally:
+            release.set()
+            for reader in old_readers:
+                reader.join(5)
+                self.assertFalse(reader.is_alive(), "old reader leaked")
+            sc._DEADLINE[0] = None
+
+    def test_pipe_read_errors_never_return_partial_output(self):
+        real_launch, real_read = sc.launch_contained_process, os.read
+        for pipe in ("stdout", "stderr"):
+            with self.subTest(pipe=pipe):
+                streams = {}
+                target_fd = None
+
+                def launch(*args, **kwargs):
+                    nonlocal target_fd
+                    process, guard = real_launch(*args, **kwargs)
+                    streams.update(stdout=process.stdout, stderr=process.stderr)
+                    target_fd = streams[pipe].fileno()
+                    return process, guard
+
+                def read(fd, size):
+                    if threading.current_thread() is not threading.main_thread() and fd == target_fd:
+                        raise OSError("injected pipe read failure")
+                    return real_read(fd, size)
+
+                with patch.object(sc, "launch_contained_process", side_effect=launch), patch.object(sc.os, "read", side_effect=read):
+                    with self.assertRaises(ValueError):
+                        sc._run_bytes([sys.executable, "-c", "print('ok')"])
+                self.assertTrue(all(stream.closed for stream in streams.values()))
 
     def test_run_bytes_piped_print_ok_is_exactly_ok(self):
         """#388 Ubuntu run 36896064850 failed at the original print('ok')

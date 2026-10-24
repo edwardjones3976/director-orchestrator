@@ -314,7 +314,8 @@ def _run_bytes(arguments: list[str], timeout: int = 15) -> bytes:
     returned. Its wall clock is its timeout clamped to the collection deadline, and nothing waits past it: the whole
     tree is ended (stop_contained_process, under its own short grace), the readers read the raw pipe fds, never the
     buffered streams (a descendant that kept a pipe open would otherwise hold the buffered lock a close waits on), and
-    readers still blocked when the time is up are abandoned as daemons after their fds are closed."""
+    readers still blocked when the time is up remain daemons owning their streams until they exit. A reader's fd
+    must not be closed and reused by another command while that reader can still issue a read."""
     end = time.monotonic() + _remaining(timeout)
     options = {}
     if arguments[0] == "git":
@@ -330,19 +331,22 @@ def _run_bytes(arguments: list[str], timeout: int = 15) -> bytes:
     streams = {"stdout": process.stdout, "stderr": process.stderr}
     process.stdout = process.stderr = None  # stop_contained_process must not touch what a reader may still hold
     captured = {name: bytearray() for name in streams}
-    overflow, done = threading.Event(), threading.Event()
+    overflow, read_failed, done = threading.Event(), threading.Event(), threading.Event()
 
     def drain(name: str) -> None:
-        fd = streams[name].fileno()
         try:
-            while not done.is_set() and (chunk := os.read(fd, 65536)):
-                if len(captured[name]) + len(chunk) > MAX_BYTES:
-                    overflow.set()
-                    signal_contained_tree(process, guard)
-                    return
-                captured[name] += chunk
+            # Only this reader may close its descriptor, including after the caller's deadline.
+            with streams[name] as stream:
+                fd = stream.fileno()
+                while not done.is_set() and (chunk := os.read(fd, 65536)):
+                    if len(captured[name]) + len(chunk) > MAX_BYTES:
+                        overflow.set()
+                        signal_contained_tree(process, guard)
+                        return
+                    captured[name] += chunk
         except OSError:
-            pass
+            read_failed.set()
+            signal_contained_tree(process, guard)
 
     readers = [threading.Thread(target=drain, args=(name,), daemon=True) for name in streams]
     for reader in readers:
@@ -366,14 +370,9 @@ def _run_bytes(arguments: list[str], timeout: int = 15) -> bytes:
             reader.join(timeout=max(0.0, end - time.monotonic()))
         drained = not any(reader.is_alive() for reader in readers)
         done.set()
-        for stream in streams.values():
-            try:
-                stream.close()  # never contended: the readers use os.read on the fd, not this buffered object
-            except OSError:
-                pass
     if timed_out:
         raise subprocess.TimeoutExpired(arguments, timeout)
-    if overflow.is_set() or process.returncode or not contained or not drained:
+    if overflow.is_set() or read_failed.is_set() or process.returncode or not contained or not drained:
         raise ValueError("read-only command failed or exceeded its output bound")
     return bytes(captured["stdout"])
 

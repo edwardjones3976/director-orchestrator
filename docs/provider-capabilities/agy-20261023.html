@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Provider Capability Note: agy Route (Gemini Antigravity)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+      color: #1a202c;
+      background-color: #ffffff;
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem;
+    }
+    h1, h2, h3 { color: #0f172a; line-height: 1.25; }
+    h1 { border-bottom: 2px solid #e2e8f0; padding-bottom: 0.5rem; margin-bottom: 1.5rem; }
+    h2 { margin-top: 2rem; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.3rem; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    code { background-color: #f1f5f9; padding: 0.2em 0.4em; border-radius: 4px; font-size: 0.9em; }
+    .meta-box {
+      background-color: #f8fafc;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 2rem;
+    }
+    .meta-box ul { margin: 0; padding-left: 1.25rem; }
+    section { margin-bottom: 1.5rem; }
+  </style>
+</head>
+<body>
+<!-- [[Gemini Antigravity | Gemini 3.8 Flash | 2026-10-23 | 15:00 UTC | BEGIN]] -->
+<header>
+  <h1>Provider Capability Verification: Route <code>agy</code></h1>
+</header>
+
+<div class="meta-box" role="region" aria-label="Route and Verification Metadata">
+  <ul>
+    <li><strong>Provider / Route:</strong> Gemini Antigravity (route <code>agy</code>)</li>
+    <li><strong>Task Ref:</strong> ISSUE-299 / WO-FRM-20261023-CAP01 / CAPABILITY_VERIFICATION</li>
+    <li><strong>Native Session:</strong> UNKNOWN (not exposed in native environment)</li>
+    <li><strong>Account Context:</strong> Shared Git/GitHub account sender <code>edwardjones3976</code>; provider authorship remains solely Gemini Antigravity.</li>
+    <li><strong>Date &amp; Scope:</strong> 2026-10-23 / Scoped offline-readable capability note</li>
+  </ul>
+</div>
+
+<main>
+  <section aria-labelledby="sec-route-overview">
+    <h2 id="sec-route-overview">1. Route Overview &amp; Task Ingestion</h2>
+    <p>
+      The <code>agy</code> route operates as a bounded, specialist implementation provider within Director-Orchestrator.
+      Work orders are ingested strictly as scoped JSON assignments specifying unambiguous task boundaries and an explicit
+      list of <code>allowed_paths</code>. Operations outside defined task boundaries or allowed paths are strictly forbidden.
+    </p>
+  </section>
+
+  <section aria-labelledby="sec-git-mcp">
+    <h2 id="sec-git-mcp">2. Tooling and Publication Discipline</h2>
+    <p>
+      The route interacts with repository source trees exclusively via mediated MCP tools (such as <code>director_git</code>),
+      invoking operations like <code>worker_git_status</code>, <code>worker_git_read_file</code>, <code>worker_git_write_file</code>,
+      <code>worker_git_commit</code>, <code>worker_git_publish_draft</code>, and <code>worker_git_comment</code>.
+    </p>
+    <ul>
+      <li><strong>No Native Shell Bypass:</strong> No shell commands, raw processes, or unauthorized tool executions are used when MCP mediation is specified.</li>
+      <li><strong>Pre-commit Hooks:</strong> Standard git hooks execute unmodified on commit operations; no circumvention or bypass flags are permitted.</li>
+      <li><strong>Draft-Only Publication:</strong> All work is published strictly as draft pull requests against <code>main</code>. The route never opens standard/ready pull requests, merges, or pushes to protected branches directly.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="sec-authorship-comm">
+    <h2 id="sec-authorship-comm">3. Authorship Attribution vs. Account Identity</h2>
+    <p>
+      Material code contributions authored on this route are solely attributed to Gemini Antigravity (route <code>agy</code>).
+      While transport and GitHub credentials utilize the shared machine/committer account <code>edwardjones3976</code>,
+      this shared transport identity does not dilute or redefine native provider authorship.
+      Communication remains strictly bound to authorized pull-request threads and audit receipts; unverified native Slack
+      or external messaging channels are never used for findings or dispositions.
+    </p>
+  </section>
+
+  <section aria-labelledby="sec-reconciliation">
+    <h2 id="sec-reconciliation">4. Error Handling and Stop-and-Reconcile Protocol</h2>
+    <p>
+      Whenever an unexpected state, refusing tool response, cryptographic mismatch, or ambiguous effect is encountered,
+      the route immediately stops in place. A refusal is treated as final: no automated retries with alternative workarounds,
+      no fallback shell commands, and no parameter alterations are attempted. The exact blocker and returned receipt are reported
+      verbatim for human/Foreman reconciliation.
+    </p>
+  </section>
+
+  <section aria-labelledby="sec-gates">
+    <h2 id="sec-gates">5. Independent Review, CI, and Merge Controls</h2>
+    <p>
+      The <code>agy</code> route observes strict separation of duties:
+    </p>
+    <ul>
+      <li><strong>No Self-Review:</strong> An implementation author cannot review, provide source <code>ACCEPT</code>, or approve its own contributions.</li>
+      <li><strong>Independent Review Required:</strong> Every PR must undergo evaluation by an independent non-author reviewer.</li>
+      <li><strong>Deterministic Gates:</strong> Branch protections, CI test matrices, security checks, and exact-candidate SHA verification must pass deterministically.</li>
+      <li><strong>No Merge Authority:</strong> Route <code>agy</code> never executes merge actions or production deployments.</li>
+    </ul>
+  </section>
+</main>
+
+<footer>
+  <hr>
+  <p><small>Provider capability documentation generated for Director-Orchestrator issue ISSUE-299.</small></p>
+</footer>
+<!-- [[Gemini Antigravity | Gemini 3.8 Flash | 2026-10-23 | 15:00 UTC | END]] -->
+</body>
+</html>
