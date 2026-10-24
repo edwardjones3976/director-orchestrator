@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<!-- [[Claude Code | Claude Opus 5.5 (claude-opus-5-5) | 2026-10-23 | 15:05 UTC | BEGIN]] -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude scoped coding route: capability note (2026-10-23)</title>
+<style>
+  body { font-family: system-ui, sans-serif; line-height: 1.5; max-width: 46rem; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; background: #fff; }
+  code, pre { font-family: ui-monospace, Consolas, monospace; background: #f3f3f3; }
+  pre { padding: .75rem; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #999; padding: .4rem .6rem; text-align: left; vertical-align: top; }
+  th { background: #eee; }
+  .unknown { font-weight: bold; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Claude scoped coding route</h1>
+  <p>Capability note for work order <code>WO-FRM-20261023-CAP01</code> (issue #299, capability verification). Written 23 October 2026 by the Claude route as the sole accountable author.</p>
+</header>
+
+<main>
+<section aria-labelledby="route">
+  <h2 id="route">What the route actually is</h2>
+  <p>The Director starts a Claude agent session (Claude Agent SDK / Claude Code) inside one dedicated git worktree and branch. In this route the agent has no native shell, no browser, no other provider and no permission editing. Its only effects go through the <code>director_git</code> MCP tools, which are scoped to the worktree root:</p>
+  <table>
+    <caption>Tools available on this route</caption>
+    <thead><tr><th scope="col">Tool</th><th scope="col">Effect</th><th scope="col">Limit</th></tr></thead>
+    <tbody>
+      <tr><td><code>worker_git_status</code></td><td>Reports the head, base, branch, changed files and bound PR</td><td>Read-only</td></tr>
+      <tr><td><code>worker_git_read_file</code></td><td>Returns the file content and its SHA-256, or <code>ABSENT</code></td><td>Read-only</td></tr>
+      <tr><td><code>worker_git_write_file</code></td><td>Writes one file</td><td>Compare-and-swap on <code>expected_sha256</code>; must be an allowed path</td></tr>
+      <tr><td><code>worker_git_commit</code></td><td>Commits the listed paths</td><td>Normal git hooks run; no bypass</td></tr>
+      <tr><td><code>worker_git_publish_draft</code></td><td>Pushes the branch and opens a <em>draft</em> PR against <code>main</code></td><td>Draft only; no merge or review authority</td></tr>
+      <tr><td><code>worker_git_comment</code></td><td>Comments on the PR bound to this branch</td><td>Bound PR only</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section aria-labelledby="task">
+  <h2 id="task">How the Director gives a scoped task</h2>
+  <p>The Director sends one JSON object. The agent treats <code>allowed_paths</code> as a hard boundary and the numbered steps as the whole job:</p>
+<pre><code>{
+  "task": "[Director-Orchestrator] [ISSUE-NNN] [WO-...] numbered, bounded steps",
+  "allowed_paths": ["path/to/the/only/file.ext"]
+}</code></pre>
+  <p>A good task names the exact path, the expected starting state (an existing SHA-256 or <code>ABSENT</code>), the commit message intent, the PR title and the checkpoint time for the readback. Anything outside that scope gets refused and reported. The agent does not quietly widen the scope.</p>
+</section>
+
+<section aria-labelledby="publish">
+  <h2 id="publish">Draft-only GitHub publication and hooks</h2>
+  <ul>
+    <li>Writes fail closed if the file changed since it was read, because the hash no longer matches. The agent re-reads the file before deciding anything.</li>
+    <li>Commits run the repository's normal hooks. A hook failure is a real result to report, not something to route around.</li>
+    <li>Publication opens a draft PR to <code>main</code> and nothing more: no ready-for-review flip, no merge, no CI rerun and no deployment.</li>
+  </ul>
+</section>
+
+<section aria-labelledby="unknown">
+  <h2 id="unknown">Errors and UNKNOWN: stop and reconcile</h2>
+  <p>If a tool returns an error, a refusal or an ambiguous effect (for example, a timeout where the commit or push may have happened), the agent stops. It does not retry blindly or try a workaround. It reads the state back with <code>worker_git_status</code> or <code>worker_git_read_file</code>, reports exactly what it observed, and repeats a successful effect only when the readback shows the effect is missing. A refusal is final for that work order. Any fact the tools did not return is written as <span class="unknown">UNKNOWN</span>.</p>
+</section>
+
+<section aria-labelledby="identity">
+  <h2 id="identity">Authorship versus sender, and channels</h2>
+  <dl>
+    <dt>Provider authorship</dt>
+    <dd>The content is authored by the Claude route (Anthropic). The native client exposed the model as Claude Opus 5.5 (<code>claude-opus-5-5</code>). The native session identifier was not exposed to the agent, so it is <span class="unknown">UNKNOWN</span>. The Foreman records the returned native metadata separately.</dd>
+    <dt>Shared sender</dt>
+    <dd>Commits, pushes, PRs and comments reach GitHub under the shared account <code>edwardjones3976</code>. That account is the transport, not the author. Attribution comes from the contribution tags and the PR text, not from the GitHub username.</dd>
+    <dt>Communication channel</dt>
+    <dd>This route communicates only through GitHub PR comments on the bound PR. Native Slack posting was not available or tested on this route, so it is unverified.</dd>
+  </dl>
+</section>
+
+<section aria-labelledby="gates">
+  <h2 id="gates">Gates this route cannot satisfy</h2>
+  <p>This note is an implementation contribution. Its author cannot review, accept or approve it. A change from this route lands only after all of these:</p>
+  <ol>
+    <li>An exact-SHA ACCEPT from an independent non-author reviewer.</li>
+    <li>Green CI at the current head, from a run that actually executed.</li>
+    <li>A merge by that reviewer or another authorized merger, never by this route.</li>
+  </ol>
+  <p>The commit SHA, PR URL and acknowledgement for this note are recorded in the PR comment, not here, because a file cannot contain the SHA of the commit that adds it. This file does not claim that any completion stage has happened.</p>
+</section>
+</main>
+</body>
+</html>
+<!-- [[Claude Code | Claude Opus 5.5 (claude-opus-5-5) | 2026-10-23 | 15:05 UTC | END]] -->

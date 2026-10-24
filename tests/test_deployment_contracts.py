@@ -115,7 +115,9 @@ const outputs = input.responses.map(json => run([{json}], () => store));
 process.stdout.write(JSON.stringify({outputs, store}));
 """],
             input_text=json.dumps({"code": code["parameters"]["jsCode"], "responses": responses}),
-            timeout=10,
+            # The script itself runs in milliseconds; the budget only covers a
+            # Node cold start, which exceeded 10 s on loaded hosted Windows shards.
+            timeout=60,
         )
         return json.loads(result.stdout)
 
