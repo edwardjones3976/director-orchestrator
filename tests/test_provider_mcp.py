@@ -273,6 +273,21 @@ class ProviderMcpTests(unittest.TestCase):
             self.assertNotIn("OPENAI_API_KEY", child_env)
             self.assertEqual(child_env["GROK_BOT_DESKTOP_INPUT_ENABLED"], "true")
 
+    def test_cursor_ask_pins_non_fast_model(self):
+        from scripts.provider_mcp import cursor
+
+        with patch.dict(os.environ, {"DIRECTOR_MCP_PAID_CALLS_ENABLED": "true",
+                                     "CURSOR_MCP_ENABLED": "true"}), \
+             patch.object(cursor, "executable", return_value="cursor-agent"), \
+             patch.object(cursor, "workspace_read_boundary", return_value=True), \
+             patch.object(cursor, "supports_read_boundary", return_value=True), \
+             patch.object(cursor, "native_call") as native_call:
+            cursor.ask("public example")
+        native_call.assert_called_once_with(
+            "cursor", "public example",
+            ["cursor-agent", "--print", "--mode", "ask", "--model", "composer-2.5",
+             "--sandbox", "enabled", "--trust", "public example"])
+
     def test_cursor_requires_workspace_read_boundary(self):
         from scripts.provider_mcp import cursor
 

@@ -59,7 +59,8 @@ def ask(text: str) -> dict:
     if not workspace_read_boundary() or not supports_read_boundary(exe):
         raise ValueError("Cursor workspace read boundary is not configured or supported")
     # The CLI's ask mode is read-only. Do not pass --force, --yolo, or MCP approval.
-    command = [exe, "--print", "--mode", "ask", "--sandbox", "enabled", "--trust", text]
+    command = [exe, "--print", "--mode", "ask", "--model", "composer-2.5",
+               "--sandbox", "enabled", "--trust", text]
     if exe.lower().endswith(".ps1"):
         command = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", *command]
     return native_call("cursor", text, command)
