@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import types
 import unittest
 from pathlib import Path
@@ -2802,6 +2803,63 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
             with self.assertRaises(SystemExit):
                 train_adapter.verify_expected_digests(root, [{"path": "nope.bin", "sha256": "a" * 64, "size": 1}])
 
+    @unittest.skipUnless(os.name == "nt", "Windows creation/change-time semantics")
+    def test_windows_verified_read_keeps_change_time_not_path_creation_time(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "synthetic.bin")
+            path.write_bytes(b"stable")
+            # Changing only mtime also advances the NTFS metadata-change time.
+            time.sleep(0.02)
+            os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+            with path.open("rb") as stream:
+                expected = os.fstat(stream.fileno())
+            self.assertNotEqual(expected.st_ctime_ns, path.stat().st_ctime_ns)
+            attempt = {"bytes_read": 0}
+            self.assertEqual(train_adapter._read_file_once(path, 6, attempt), b"stable")
+            self.assertEqual(attempt["identity"][-1], expected.st_ctime_ns)
+
+    @unittest.skipUnless(os.name == "nt", "Windows handle-to-path binding")
+    def test_windows_verified_read_rejects_handle_and_path_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "synthetic.bin")
+            path.write_bytes(b"stable")
+            with path.open("rb") as stream:
+                real = os.fstat(stream.fileno())
+            fields = ("st_mode", "st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+            original = {field: getattr(real, field) for field in fields}
+            for position in (1, 2):
+                for field in fields[1:]:
+                    with self.subTest(position=position, field=field):
+                        stats = [types.SimpleNamespace(**original) for _ in range(3)]
+                        setattr(stats[position], field, original[field] + 1)
+                        with mock.patch.object(train_adapter.os, "fstat", side_effect=stats):
+                            with self.assertRaisesRegex(ValueError, "input changed while reading"):
+                                train_adapter._read_file_once(path, 6, {"bytes_read": 0})
+
+    @unittest.skipUnless(os.name == "nt", "Windows reopened-path handle cleanup")
+    def test_windows_verified_read_closes_handles_on_path_query_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "synthetic.bin")
+            path.write_bytes(b"stable")
+            real_open, real_fstat = os.open, os.fstat
+            opened = []
+            def tracked_open(*args):
+                descriptor = real_open(*args)
+                opened.append(descriptor)
+                return descriptor
+            def checked_fstat(descriptor):
+                if len(opened) == 2 and descriptor == opened[1]:
+                    raise OSError("synthetic path query failure")
+                return real_fstat(descriptor)
+            with mock.patch.object(train_adapter.os, "open", side_effect=tracked_open), \
+                 mock.patch.object(train_adapter.os, "fstat", side_effect=checked_fstat):
+                with self.assertRaisesRegex(OSError, "synthetic path query failure"):
+                    train_adapter._read_file_once(path, 6, {"bytes_read": 0})
+            self.assertEqual(len(opened), 2)
+            for descriptor in opened:
+                with self.assertRaises(OSError):
+                    real_fstat(descriptor)
+
     def test_verify_expected_digests_size_mismatch(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -3405,6 +3463,68 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
                 self.assertEqual(flm.for_training.call_args_list,
                                  [mock.call(model, use_gradient_checkpointing=mode)] * 2)
                 self.assertTrue(report["operational_completion"])
+
+    def test_epoch_run_hands_dev_the_authenticated_revision_for_none_missing_and_matching_config(self):
+        # Observed on the pinned image: a local-path config load leaves _commit_hash None,
+        # which predict_dev's guard refuses. The run must hand PEFT and every dev evaluation
+        # a config carrying the revision resolved from the verified snapshot, not a caller value.
+        import predict_dev
+        base, revision = train_adapter.STUDENT_BASE, train_adapter.STUDENT_REVISION
+        configs = {"none": lambda: types.SimpleNamespace(_commit_hash=None),
+                   "missing": lambda: types.SimpleNamespace(),
+                   "matching": lambda: types.SimpleNamespace(_commit_hash=revision)}
+        for kind, make_config in configs.items():
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                model = mock.Mock(config=make_config())
+                def save(directory):
+                    Path(directory, "adapter_config.json").write_bytes(b'{"r":16}')
+                    Path(directory, "adapter_model.safetensors").write_bytes(b"synthetic adapter")
+                model.save_pretrained.side_effect = save
+                seen = {"dev": []}
+                def peft(candidate, **kwargs):
+                    seen["peft"] = getattr(candidate.config, "_commit_hash", "absent")
+                    return candidate
+                def inference(candidate):
+                    seen["dev"].append(getattr(candidate.config, "_commit_hash", "absent"))
+                tokenizer = ContextTokenizer()
+                flm = mock.Mock(from_pretrained=mock.Mock(return_value=(model, tokenizer)),
+                                get_peft_model=mock.Mock(side_effect=peft),
+                                for_inference=mock.Mock(side_effect=inference))
+                # The verified snapshot directory is named by the pinned revision, as on the host.
+                with mock.patch.object(train_adapter, "local_snapshot_dir", return_value=root / "snapshots" / revision):
+                    report = self._maintenance_epoch_run(root, Slice3CompleteTrainer, epochs=1, flm=flm,
+                        context_tokenizer=tokenizer, student=(base, revision))
+                self.assertEqual(seen["peft"], revision)
+                self.assertEqual(seen["dev"], [revision, revision])  # midpoint and epoch end
+                self.assertEqual(report["base_resolved_commit"], revision)
+                self.assertTrue(report["operational_completion"])
+                # The unchanged predictor guard accepts exactly the model object handed to dev.
+                predict_dev.DevPredictor._check_base_revision_binding(
+                    types.SimpleNamespace(model=model, identity={"base_revision": revision}))
+
+    def test_epoch_run_refuses_mismatched_loaded_commit_before_peft_dev_or_overwrite(self):
+        base, revision = train_adapter.STUDENT_BASE, train_adapter.STUDENT_REVISION
+        config = types.SimpleNamespace(_commit_hash="f" * 40)
+        model = mock.Mock(config=config)
+        tokenizer = ContextTokenizer()
+        flm = mock.Mock(from_pretrained=mock.Mock(return_value=(model, tokenizer)),
+                        get_peft_model=mock.Mock(return_value=model))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.object(train_adapter, "local_snapshot_dir", return_value=root / "snapshots" / revision), \
+                 self.assertRaisesRegex(SystemExit, "does not match the pinned revision"):
+                self._maintenance_epoch_run(root, Slice3CompleteTrainer, epochs=1, flm=flm,
+                    context_tokenizer=tokenizer, student=(base, revision))
+            flm.from_pretrained.assert_called_once()
+            flm.get_peft_model.assert_not_called()
+            flm.for_inference.assert_not_called()
+            model.save_pretrained.assert_not_called()
+            self.assertEqual(config._commit_hash, "f" * 40)
+            payload = json.loads((root / "reports" / "maintenance.json").read_bytes())
+            self.assertEqual(payload["state"], "failed")
+            self.assertEqual(payload["completed_epoch_ids"], [])
+            self.assertFalse((root / "models" / "maintenance" / "midpoint-epoch-01").exists())
 
     def test_completed_epoch_memory_admission_precedes_ready_handoff(self):
         class CompleteTrainer:

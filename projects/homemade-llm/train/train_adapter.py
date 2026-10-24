@@ -461,7 +461,16 @@ def _read_file_once(path, expected_size, attempt):
                     break
         after = os.fstat(fd)
         signature = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
-        if signature(before) != signature(after) or signature(after) != signature(path.stat()):
+        if os.name == "nt":
+            # Windows path stat uses creation time; fstat uses metadata-change time.
+            path_fd = os.open(path, os.O_RDONLY)
+            try:
+                current = os.fstat(path_fd)
+            finally:
+                os.close(path_fd)
+        else:
+            current = path.stat()
+        if signature(before) != signature(after) or signature(after) != signature(current):
             raise ValueError("input changed while reading")
         attempt["identity"] = list(signature(after))
         if attempt["bytes_read"] != read_size:
@@ -2585,8 +2594,13 @@ def train(
         model, tokenizer = load_verified_model(snapshot, digest_verification,
             max_seq_length=epoch_context_limit if epochs is not None else SEQ)
         resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision, snapshot)
-        if callback is not None and callback.identity["base_revision"] != resolved:
-            raise ValueError("loaded model differs from frozen dev identity")
+        if callback is not None:
+            if callback.identity["base_revision"] != resolved:
+                raise ValueError("loaded model differs from frozen dev identity")
+            # A local-path load leaves config._commit_hash None, which the dev predictor
+            # guard refuses: carry the authenticated resolution (verified snapshot chain,
+            # mismatch already refused above) into the config before PEFT or any dev evaluation.
+            model.config._commit_hash = resolved
         model = FastLanguageModel.get_peft_model(
             model, r=16, lora_alpha=16, lora_dropout=0, bias="none",
             use_gradient_checkpointing=use_gradient_checkpointing,
