@@ -35,6 +35,10 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Agent Operating Rules
 
+REA MCP and the installed `reverse-engineer-anything` skill are available for
+scoped artifact and authorized runtime investigations. Read the skill and the
+[canonical Foreman REA guidance](docs/site-coordination.html#rea-investigations)
+for target selection, actual tool/engine readiness and evidence boundaries.
 
 These rules apply to every AI coding agent working in this repository.
 
