@@ -18,7 +18,15 @@ ROOT = Path(__file__).resolve().parents[1]
 @unittest.skipUnless(os.name == "nt", "Windows PowerShell runner")
 class ForemanPowerShellMcpTests(unittest.TestCase):
     def test_real_read_list_and_search_use_fixed_operations(self):
-        with patch.dict(os.environ, {"FOREMAN_READ_ROOTS": str(ROOT)}):
+        run = subprocess.run
+
+        def integration_run(*args, **kwargs):
+            self.assertEqual(kwargs.pop("timeout"), 20)
+            # Exercise real operations under CI load; test the production deadline separately.
+            return run(*args, timeout=60, **kwargs)
+
+        with patch.dict(os.environ, {"FOREMAN_READ_ROOTS": str(ROOT)}), \
+             patch("scripts.foreman_mcp.powershell_readonly.subprocess.run", side_effect=integration_run):
             procedure = call("foreman_read_file", {
                 "path": str(ROOT / "docs" / "foreman-repair-work-orders.html")})
             self.assertIn("Foreman-controlled repair work orders", procedure["text"])
@@ -29,6 +37,15 @@ class ForemanPowerShellMcpTests(unittest.TestCase):
                 "path": str(ROOT / "src" / "director_orchestrator" / "policy.py"),
                 "needle": "powershell"})["matches"]
             self.assertTrue(matches)
+
+    def test_production_timeout_refuses_without_retry(self):
+        with patch.dict(os.environ, {"FOREMAN_READ_ROOTS": str(ROOT)}), \
+             patch("scripts.foreman_mcp.powershell_readonly.subprocess.run",
+                   side_effect=subprocess.TimeoutExpired("powershell", 20)) as run:
+            with self.assertRaisesRegex(ValueError, "PowerShell read operation timed out"):
+                call("foreman_read_file", {"path": str(ROOT / "docs" / "foreman-repair-work-orders.html")})
+            run.assert_called_once()
+            self.assertEqual(run.call_args.kwargs["timeout"], 20)
 
     def test_outside_file_and_arbitrary_command_refuse(self):
         with tempfile.TemporaryDirectory() as tmp, \
