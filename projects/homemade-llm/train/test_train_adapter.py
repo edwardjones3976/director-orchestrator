@@ -185,7 +185,7 @@ def _wrapper_mount_construction(source: str) -> str:
     probe_start = source.index("if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) {", source.index("# Smoke/probe output directories"))
     probe_end = source.index("\n        }", probe_start) + len("\n        }")
     bounded = helper.with_name("invoke-bounded.ps1")
-    return (". '" + bounded.as_posix().replace("'", "''") + "'\n. '"
+    return ("if (-not (Get-Variable ProbeHandoff -ErrorAction SilentlyContinue)) { $ProbeHandoff = $false }\n. '" + bounded.as_posix().replace("'", "''") + "'\n. '"
             + helper.as_posix().replace("'", "''") + "'\n" + call + "\n" + source[probe_start:probe_end] + "\n")
 
 
@@ -1252,7 +1252,7 @@ Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
         self.assertIn("m2-expected-qwen3-14b-v2.json", text)
         self.assertIn("HF_HUB_OFFLINE", text)
 
-    def _context_wrapper_run(self, tmp: Path, code_dir: Path, override: str = ""):
+    def _context_wrapper_run(self, tmp: Path, code_dir: Path, override: str = "", *, handoff=False):
         """Run the REAL wrapper mount/staging block and argument construction for a context probe; return (completed, args)."""
         pwsh = shutil.which("pwsh")
         if pwsh is None:
@@ -1270,6 +1270,7 @@ Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
             "$Base = 'dummy-base'; $Revision = 'dummy-revision'; $Steps = 20; $Epochs = 0; $runId = 'm2-0123abcd'\n"
             "$Winner = $false; $Probe = $true; $ProbeSeqLen = 2048; $ProbeRowsTotal = 96; $PSBoundParameters = @{}\n"
             "$ProbeContextInputs = 'C:/synthetic/inputs.jsonl'; $ProbeContextLimit = 15009\n"
+            f"$ProbeHandoff = ${str(handoff).lower()}\n"
             f"$repoRoot = '{q(Path(__file__).resolve().parents[3])}'\n"
             f"$HotRoot = '{q(tmp)}'\n$Rows = '{q(tmp)}/accepted.jsonl'\n$ExpectedDigests = ''\n$TrustedDigestRoot = ''\n"
             + setup + construction + "\nConvertTo-Json -InputObject $dockerArgs -Compress")
@@ -1277,6 +1278,177 @@ Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
                                    capture_output=True, text=True, timeout=60)
         args = json.loads(completed.stdout) if completed.returncode == 0 else None
         return completed, args
+
+    def test_handoff_wrapper_retains_rows_eval_renderer_and_explicit_switch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            completed, args = self._context_wrapper_run(tmp, tmp / "code", handoff=True)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("--probe-handoff", args)
+            self.assertIn("--probe-context-inputs", args)
+            self.assertIn("dummy-eval:/eval:ro", args)
+            self.assertIn(f"{tmp.as_posix()}:/workspace/rows:ro", [value.replace("\\", "/") for value in args])
+            self.assertTrue(any(value.endswith(":/code/prompt_template.py:ro") for value in args))
+            self.assertFalse(any(":/workspace/models" in value and "/m2-0123abcd" not in value.replace("\\", "/") for value in args))
+
+    def test_handoff_cli_reuses_validated_rows_and_refuses_incomplete_or_epoch_modes(self):
+        base = ["--rows", "fixtures/accepted.jsonl", "--report", "out.json", "--probe",
+                "--base", train_adapter.STUDENT_BASE, "--revision", train_adapter.STUDENT_REVISION,
+                "--probe-context-inputs", "inputs.jsonl", "--probe-context-limit", "4096", "--probe-handoff"]
+        with mock.patch.object(train_adapter, "load_training_rows", return_value=[row()]) as rows, \
+             mock.patch.object(train_adapter, "run_handoff_probe", return_value={}) as probe, \
+             mock.patch.object(train_adapter, "run_context_probe") as context, \
+             contextlib.redirect_stdout(io.StringIO()):
+            train_adapter.main(base)
+            self.assertEqual(probe.call_args.args[0], [row()])
+            self.assertEqual(probe.call_args.kwargs["context_limit"], 4096)
+            rows.assert_called_once()
+            context.assert_not_called()
+        for extra in (["--epochs", "1"], ["--check-only"], ["--probe-rows-total", "96"],
+                      ["--probe-seq-len", "1536"], ["--probe-context-limit", "2048"]):
+            with self.subTest(extra=extra), mock.patch.object(train_adapter, "run_handoff_probe") as probe:
+                with self.assertRaises(SystemExit):
+                    train_adapter.main(base + extra)
+                probe.assert_not_called()
+        with mock.patch.object(train_adapter, "run_handoff_probe") as probe:
+            with self.assertRaises(SystemExit):
+                train_adapter.main(["--rows", "x", "--report", "x", "--probe-handoff", "--steps", "1"])
+            probe.assert_not_called()
+
+    def test_handoff_microsteps_keep_one_optimizer_and_fail_before_resume(self):
+        for fault in (None, "generation", "nonfinite", "skipped_update"):
+            with self.subTest(fault=fault):
+                events = []
+                optimizer = mock.Mock()
+                optimizer.state = {"parameter": {"step": 0}}
+
+                def update():
+                    events.append("step")
+                    if fault != "skipped_update" or events.count("step") == 1:
+                        optimizer.state["parameter"]["step"] += 1
+
+                optimizer.step.side_effect = update
+                model = mock.Mock()
+                model.parameters.side_effect = lambda: iter([types.SimpleNamespace(device="cpu")])
+                loss = mock.MagicMock()
+                loss.__truediv__.return_value = loss
+                loss.backward.side_effect = lambda: events.append("backward")
+                model.return_value.loss = loss
+                torch = mock.Mock()
+                torch.cuda.is_available.return_value = False
+                torch.optim.AdamW.return_value = optimizer
+                torch.isfinite.return_value.item.return_value = fault != "nonfinite"
+
+                def generate(current):
+                    self.assertIs(current, optimizer)
+                    self.assertEqual(events.count("step"), 1)
+                    events.append("generation")
+                    if fault == "generation":
+                        raise RuntimeError("synthetic generation refusal")
+
+                with mock.patch.object(train_adapter, "torch", torch), \
+                     mock.patch.object(train_adapter, "collate_features", return_value={"input_ids": mock.Mock()}):
+                    if fault:
+                        with self.assertRaises((RuntimeError, ValueError)):
+                            train_adapter.run_probe_microsteps(model, [{}], warmup_microsteps=8,
+                                timed_microsteps=8, gradient_accumulation=8, between_updates=generate)
+                        self.assertEqual(events.count("step"), {"generation": 1, "nonfinite": 0, "skipped_update": 2}[fault])
+                    else:
+                        train_adapter.run_probe_microsteps(model, [{}], warmup_microsteps=8,
+                            timed_microsteps=8, gradient_accumulation=8, between_updates=generate)
+                        self.assertEqual(events, ["backward"] * 8 + ["step", "generation"] + ["backward"] * 8 + ["step"])
+                    torch.optim.AdamW.assert_called_once()
+                    torch.cuda.reset_peak_memory_stats.assert_not_called()
+        with mock.patch.object(train_adapter, "torch") as torch:
+            with self.assertRaisesRegex(ValueError, "exactly one"):
+                train_adapter.run_probe_microsteps(mock.Mock(), [{}], warmup_microsteps=10,
+                    timed_microsteps=40, gradient_accumulation=8, between_updates=generate)
+            torch.optim.AdamW.assert_not_called()
+
+    @admitted_probe_template()
+    def test_handoff_probe_identity_save_restore_memory_and_error_reporting(self):
+        import predict_dev
+        for fault in (None, "context", "generation", "schema", "memory", "generation_memory", "empty_state"):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                inputs, report_path = root / "inputs.jsonl", root / "report.json"
+                item = synthetic_kep_input(row()["input"])["input"]
+                inputs.write_text(json.dumps(item) + "\n", encoding="utf-8")
+                model = mock.Mock(config=types.SimpleNamespace(_commit_hash=None))
+
+                def save(path):
+                    Path(path, "adapter_config.json").write_text("{}", encoding="utf-8")
+                    Path(path, "adapter_model.safetensors").write_bytes(b"synthetic adapter")
+
+                model.save_pretrained.side_effect = save
+                api = mock.Mock()
+                api.get_peft_model.return_value = model
+                cuda = mock.Mock(max_memory_reserved=mock.Mock(return_value=2 * 2**30))
+                resumed = []
+
+                def predict(rows, current, tokenizer, **kw):
+                    self.assertIs(current, model)
+                    self.assertEqual(current.config._commit_hash, train_adapter.STUDENT_REVISION)
+                    self.assertEqual(kw["source_label"], "checkpoint")
+                    self.assertEqual(kw["max_new_tokens"], 2048)
+                    self.assertEqual(kw["identity"]["adapter_sha256"],
+                        hashlib.sha256((root / "report.DIAGNOSTIC" / "adapter-hashes.json").read_bytes()).hexdigest())
+                    if fault == "generation":
+                        raise RuntimeError("private synthetic error text")
+                    if fault == "generation_memory":
+                        cuda.max_memory_reserved.return_value = 11 * 2**30
+                    rid = rows[0]["row_id"]
+                    return {"complete": fault != "schema", "schema_invalid_row_ids": [],
+                        "predictions": {rid: {field: ["discard-this-generated-text"] for field in train_adapter.TARGET_FIELDS}},
+                        "binding": {"source_label": "checkpoint", "seed": 1234, "max_new_tokens": 2048,
+                            "thinking": False, "roster": kw["frozen_roster"], "row_ids": [rid],
+                            "identity": kw["identity"], "expected_packets_sha256": train_adapter._canonical_sha(kw["expected_packets"]),
+                            "input_sha256": {rid: train_adapter._canonical_sha(rows[0]["input"])}}}
+
+                def steps(current, examples, **kw):
+                    self.assertEqual((kw["warmup_microsteps"], kw["timed_microsteps"], kw["gradient_accumulation"]), (8, 8, 8))
+                    self.assertEqual(kw["learning_rate"], train_adapter.EPOCH_LEARNING_RATE)
+                    tensor = mock.Mock(numel=mock.Mock(return_value=16), element_size=mock.Mock(return_value=4))
+                    kw["between_updates"](types.SimpleNamespace(state={"param": {} if fault == "empty_state" else {"exp_avg": tensor}}))
+                    api.for_training.assert_called_once_with(model, use_gradient_checkpointing="unsloth")
+                    resumed.append(True)
+                    return 1.0, 11.0 if fault == "memory" else 3.0
+
+                with contextlib.ExitStack() as stack:
+                    for name, value in [("FastLanguageModel", api), ("set_seed", mock.Mock()),
+                        ("load_verified_model", mock.Mock(return_value=(model, ContextTokenizer()))),
+                        ("resolve_commit", mock.Mock(return_value=train_adapter.STUDENT_REVISION)),
+                        ("local_snapshot_dir", mock.Mock(return_value=root)),
+                        ("digest_verification_before_load", mock.Mock(return_value={"upstream_digest_list_sha256": "a" * 64})),
+                        ("encode_rows", mock.Mock(return_value=[{}])),
+                        ("prepare_probe_examples", mock.Mock(return_value=([{}], "synthetic"))),
+                        ("run_probe_microsteps", mock.Mock(side_effect=steps))]:
+                        stack.enter_context(mock.patch.object(train_adapter, name, value))
+                    stack.enter_context(mock.patch.object(train_adapter.torch, "cuda", cuda, create=True))
+                    stack.enter_context(mock.patch.object(train_adapter.torch, "is_tensor", return_value=True, create=True))
+                    stack.enter_context(mock.patch.object(predict_dev, "run_predictions", side_effect=predict))
+                    call = lambda: train_adapter.run_handoff_probe([row()], inputs, train_adapter.STUDENT_BASE,
+                        train_adapter.STUDENT_REVISION, report_path, context_limit=2049 if fault == "context" else 4096)
+                    if fault:
+                        with self.assertRaises((ValueError, RuntimeError)):
+                            call()
+                    else:
+                        call()
+                report = json.loads(report_path.read_text())
+                self.assertEqual(report["handoff_pass"], fault is None)
+                self.assertFalse(report["qualified"])
+                self.assertFalse(report["authoritative"])
+                self.assertFalse(report["admitted_training"])
+                self.assertIsNone(report["quality_score"])
+                self.assertNotIn("discard-this-generated-text", report_path.read_text())
+                self.assertNotIn("private synthetic error text", report_path.read_text())
+                self.assertEqual(resumed, [True] if fault in (None, "memory") else [])
+                cuda.reset_peak_memory_stats.assert_called_once()
+                if fault in ("context", "empty_state"):
+                    model.save_pretrained.assert_not_called()
+                    api.for_inference.assert_not_called()
+                else:
+                    api.for_training.assert_called_once()
 
     def test_context_probe_wrapper_binds_the_admitted_lf_renderer_over_a_crlf_checkout(self):
         # The Windows working tree is CRLF; the probe must still see the exact admitted LF renderer (#472 P1 4193399786).
@@ -1812,6 +1984,9 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
         prerequisites = ". '" + helper.as_posix().replace("'", "''") + "'\n" + prerequisites
         prerequisites += "$Image = '" + 'unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739' + "'\n"
         epoch_pin = {"EpochContextLimit": "4096", "Epochs": "4", "TimeoutMinutes": "1", "Base": "$WinnerBase", "Revision": "$WinnerRevision"}
+        handoff_pin = {"Student4Bit": "$true", "Probe": "$true", "ProbeHandoff": "$true",
+                       "ProbeContextInputs": "'" + script.as_posix().replace("'", "''") + "'",
+                       "ProbeContextLimit": "4096"}
         cases = [
             ({}, None),
             ({"Winner": "$true", "Probe": "$false"}, "-Winner is only valid together with -Probe"),
@@ -1845,12 +2020,18 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
             *[({**epoch_pin, "Batch": "'batch-0001'", "TimeoutMinutes": value},
                "must be finite and positive") for value in ("0", "-1", "[double]::NaN", "[double]::PositiveInfinity")],
             ({"Winner": "$true", "Probe": "$true"}, None),
+            (handoff_pin, None),
+            ({**handoff_pin, "Student4Bit": "$false"}, "handoff diagnostic requires"),
+            ({**handoff_pin, "ProbeRowsTotal": "96"}, "handoff diagnostic requires"),
+            ({**handoff_pin, "ProbeSeqLen": "1536"}, "handoff diagnostic requires"),
+            ({"Student4Bit": "$true", "Probe": "$true", "ProbeHandoff": "$true"}, "handoff diagnostic requires"),
         ]
         for overrides, message in cases:
             with self.subTest(overrides=overrides, message=message):
                 bound = "@{ " + "; ".join(
                     f"{name} = {value}" for name, value in overrides.items()
-                    if name in ("Epochs", "Steps", "Base", "Revision", "TimeoutMinutes", "Batch", "EpochContextLimit")
+                    if name in ("Epochs", "Steps", "Base", "Revision", "TimeoutMinutes", "Batch", "EpochContextLimit",
+                                "ProbeContextInputs", "ProbeContextLimit", "ProbeRowsTotal")
                 ) + " }"
                 setup = "\n".join(
                     f"${name} = {value}" for name, value in overrides.items()
@@ -1859,6 +2040,7 @@ foreach ($case in 'exit1', 'timeout', 'empty', 'success') {{
                     "$ErrorActionPreference = 'Stop'\n"
                     "$Winner = $false; $Fallback = $false; $Student4Bit = $false; $Probe = $false; "
                     "$Epochs = 0; $Steps = 20; $TimeoutMinutes = 90; $Batch = ''; $PSBoundParameters = @{}\n"
+                    "$ProbeHandoff = $false; $ProbeContextInputs = ''; $ProbeContextLimit = 0; $ProbeSeqLen = 2048\n"
                     + prerequisites
                     + setup + "\n"
                     + (f"$PSBoundParameters = {bound}\n" if bound != "@{  }" else "")

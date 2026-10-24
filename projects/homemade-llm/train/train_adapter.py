@@ -1525,8 +1525,13 @@ def run_probe_microsteps(
     timed_microsteps: int,
     gradient_accumulation: int,
     learning_rate: float = 2e-4,
+    between_updates: Any = None,
 ) -> tuple[float, float]:
     """Warm up, then time ``timed_microsteps`` microsteps at ``gradient_accumulation``."""
+    if between_updates is not None and (
+            warmup_microsteps != gradient_accumulation or timed_microsteps != gradient_accumulation
+            or gradient_accumulation < 1):
+        raise ValueError("handoff diagnostic requires exactly one optimizer update on each side")
     device = next(model.parameters()).device
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     model.train()
@@ -1547,6 +1552,8 @@ def run_probe_microsteps(
             batch = collate_features([example])
             batch = {key: value.to(device) for key, value in batch.items()}
             loss = model(**batch).loss / gradient_accumulation
+            if between_updates is not None and not torch.isfinite(loss).item():
+                raise ValueError("handoff diagnostic loss is not finite")
             loss.backward()
             pending += 1
             if pending == gradient_accumulation:
@@ -1571,9 +1578,17 @@ def run_probe_microsteps(
         return 0.0
 
     run_phase(warmup_microsteps, timed=False, discard_pending=True)
-    if torch.cuda.is_available():
+    if between_updates is not None:
+        # Keep this optimizer and its initialized state alive across generation.
+        if not optimizer.state or any(float(state.get("step", -1)) != 1 for state in optimizer.state.values()):
+            raise ValueError("handoff optimizer did not complete its first update")
+        between_updates(optimizer)
+    elif torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
     elapsed = run_phase(timed_microsteps, timed=True)
+    if between_updates is not None and (
+            not optimizer.state or any(float(state.get("step", -1)) != 2 for state in optimizer.state.values())):
+        raise ValueError("handoff optimizer did not advance after generation")
     peak_gib = torch.cuda.max_memory_reserved() / 2**30 if torch.cuda.is_available() else 0.0
     seconds_per_microstep = elapsed / timed_microsteps if timed_microsteps else 0.0
     return seconds_per_microstep, peak_gib
@@ -2824,6 +2839,137 @@ def run_context_probe(inputs_path: Path, base: str, revision: str, report_path: 
         raise
 
 
+def run_handoff_probe(rows: list[dict[str, Any]], inputs_path: Path, base: str, revision: str,
+                      report_path: Path, *, context_limit: int,
+                      expected_digests_path: Path | None = None,
+                      trusted_digest_root_path: Path | None = None) -> dict[str, Any]:
+    """One update, public-input dev generation, one update; never cohort qualification."""
+    report = {"format": "adapter-handoff-probe/v1", "base": base, "revision": revision,
+              "qualified": False, "authoritative": False, "admitted_training": False,
+              "quality_score": None, "handoff_pass": False, "sequence_length": SEQ,
+              "context_limit": context_limit, "max_new_tokens": SEQ, "generation_seed": 1234,
+              "thinking": False, "optimizer_updates_before": 0, "optimizer_updates_after": 0,
+              "generation_executed": False, "peak_reserved_gib": None}
+    tracking = False
+    try:
+        if not is_student_4bit_pin(base, revision):
+            raise ValueError("handoff diagnostic requires the pinned 4-bit 8B student")
+        if type(context_limit) is not int or context_limit <= SEQ:
+            raise ValueError("handoff diagnostic requires explicit context limit above 2048")
+        template_path = Path(__file__).with_name("prompt_template.py")
+        with template_path.open("rb") as handle:
+            template_bytes = handle.read(64 * 1024 + 1)
+        template = _verified_source_module(template_bytes, template_path, ADMITTED_TEMPLATE_SHA256,
+                                           "handoff_prompt_template", "handoff template digest mismatch")
+        inputs, input_sha256 = _read_context_probe_inputs(inputs_path, template)
+        report.update(inputs_sha256=input_sha256, input_count=len(inputs),
+                      template_sha256=ADMITTED_TEMPLATE_SHA256, fixture_rows=len(rows))
+        resolved_paths: list[Path] = []
+        verification = digest_verification_before_load(base, revision, expected_digests_path,
+            trusted_digest_root_path, resolved=resolved_paths,
+            receipt_path=report_path.with_suffix(".verified-read.json"))
+        if not isinstance(verification, dict):
+            raise ValueError("handoff diagnostic requires authenticated weight verification")
+        weights_sha256 = verification.get("upstream_digest_list_sha256")
+        _require_hex(weights_sha256, 64, "weights manifest digest")
+        snapshot = resolved_paths[0] if resolved_paths else local_snapshot_dir(base, revision)
+        set_seed(SEED)
+        torch.cuda.reset_peak_memory_stats()
+        tracking = True
+        model, tokenizer = load_verified_model(snapshot, verification, max_seq_length=context_limit)
+        resolved = resolve_commit(getattr(model.config, "_commit_hash", None), base, revision, snapshot)
+        model.config._commit_hash = resolved
+        report.update(resolved_commit=resolved, digest_verification=verification)
+        model = FastLanguageModel.get_peft_model(model, r=16, lora_alpha=16, lora_dropout=0, bias="none",
+            use_gradient_checkpointing="unsloth",
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            random_state=SEED)
+        lengths = [len(input_prompt_ids(tokenizer, item, template=template)) for item in inputs]
+        position = max(range(len(inputs)), key=lengths.__getitem__)
+        report.update(record_position=position + 1, prompt_max=lengths[position],
+                      required_positions=lengths[position] + SEQ)
+        if lengths[position] + SEQ > context_limit:
+            raise ValueError("handoff prompt plus max_new_tokens exceeds requested context")
+
+        def tokenize(messages, add_generation_prompt):
+            return list(tokenizer.apply_chat_template(messages, tokenize=True,
+                add_generation_prompt=add_generation_prompt, enable_thinking=False, truncation=False))
+
+        encoded = encode_rows(rows, tokenize)
+        examples, method = prepare_probe_examples(rows, encoded, SEQ, tokenize)
+        report["sequence_length_method"] = method
+        item = inputs[position]
+        row_id, group = _canonical_sha(item), "diagnostic-public-input"
+        dev_rows = [{"row_id": row_id, "source_group": group, "input": item}]
+        packets = {group: [row_id]}
+        eval_dir = str(Path(__file__).parent.parent / "eval")
+        if eval_dir not in sys.path:
+            sys.path.insert(0, eval_dir)
+        import predict_dev
+
+        def generate(optimizer):
+            if not optimizer.state:
+                raise ValueError("handoff optimizer has no initialized state")
+            report["optimizer_updates_before"] = 1
+            report["optimizer_state_bytes"] = sum(value.numel() * value.element_size()
+                for state in optimizer.state.values() for value in state.values() if torch.is_tensor(value))
+            if report["optimizer_state_bytes"] <= 0:
+                raise ValueError("handoff optimizer has no resident state tensors")
+            peak = torch.cuda.max_memory_reserved() / 2**30
+            if not math.isfinite(peak) or not probe_memory_pass(peak):
+                raise ValueError("handoff optimizer peak must be finite and strictly below 11 GiB")
+            leaf = report_path.parent / (report_path.stem + ".DIAGNOSTIC")
+            write_adapter_leaf(model, leaf, base_repo=base, base_revision=resolved)
+            _, manifest_sha256 = write_leaf_manifest(leaf)
+            report.update(diagnostic_adapter=str(leaf), diagnostic_adapter_sha256=manifest_sha256)
+            identity = {"base_revision": resolved, "weights_manifest_sha256": weights_sha256,
+                        "template_sha256": ADMITTED_TEMPLATE_SHA256, "adapter_sha256": manifest_sha256}
+            expected_binding = {"source_label": "checkpoint", "seed": 1234, "max_new_tokens": SEQ,
+                "thinking": False, "roster": [group], "row_ids": [row_id], "identity": identity,
+                "expected_packets_sha256": _canonical_sha(packets), "input_sha256": {row_id: row_id}}
+            started = time.perf_counter()
+            try:
+                FastLanguageModel.for_inference(model)
+                report["generation_executed"] = True
+                result = predict_dev.run_predictions(dev_rows, model, tokenizer, frozen_roster=[group],
+                    expected_packets=packets, max_new_tokens=SEQ, source_label="checkpoint", identity=identity)
+                torch.cuda.synchronize()
+            finally:
+                FastLanguageModel.for_training(model, use_gradient_checkpointing="unsloth")
+            report["generation_seconds"] = time.perf_counter() - started
+            if (not isinstance(result, dict) or result.get("binding") != expected_binding
+                    or result.get("complete") is not True or result.get("schema_invalid_row_ids") != []
+                    or set(result.get("predictions", {})) != {row_id}):
+                raise ValueError("handoff generation has invalid schema, completeness or identity")
+            report["schema_valid_predictions"] = 1
+            peak = torch.cuda.max_memory_reserved() / 2**30
+            if not math.isfinite(peak) or not probe_memory_pass(peak):
+                raise ValueError("handoff generation peak must be finite and strictly below 11 GiB")
+            # Only counts and identities survive; generated text never becomes data.
+
+        _, peak = run_probe_microsteps(model, examples, warmup_microsteps=PROBE_GRAD_ACCUM,
+            timed_microsteps=PROBE_GRAD_ACCUM, gradient_accumulation=PROBE_GRAD_ACCUM,
+            learning_rate=EPOCH_LEARNING_RATE, between_updates=generate)
+        report.update(optimizer_updates_after=1, peak_reserved_gib=peak)
+        if not math.isfinite(peak) or not probe_memory_pass(peak):
+            raise ValueError("combined handoff peak must be finite and strictly below 11 GiB")
+        report["handoff_pass"] = True
+        write_report(report_path, report)
+        return report
+    except BaseException as exc:
+        report.update(handoff_pass=False, error_type=type(exc).__name__)
+        if tracking:
+            try:
+                report["peak_reserved_gib"] = torch.cuda.max_memory_reserved() / 2**30
+            except BaseException:
+                pass
+        try:
+            write_report(report_path, report)
+        except BaseException as report_exc:
+            exc.add_note("handoff failure report could not be persisted: " + type(report_exc).__name__)
+        raise
+
+
 def run_probe(
     rows: list[dict[str, Any]],
     base: str,
@@ -2990,6 +3136,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--probe", action="store_true", help="D-M1-F feasibility probe; writes metrics only.")
     parser.add_argument("--probe-context-inputs", type=Path, default=None, help="Separate short input-only context probe JSONL.")
     parser.add_argument("--probe-context-limit", type=int, default=None, help="Explicit context probe load request; not a qualification claim.")
+    parser.add_argument("--probe-handoff", action="store_true", help="With context inputs: one update, dev generation, one update; diagnostic only.")
     parser.add_argument("--probe-rows-total", type=int, default=None)
     parser.add_argument("--probe-seq-len", type=int, default=SEQ)
     parser.add_argument("--expected-digests", type=Path, default=None)
@@ -3044,13 +3191,21 @@ def main(argv: list[str] | None = None) -> None:
         )
     if args.winner and (args.base != WINNER_BASE or args.revision != WINNER_REVISION):
         fail(f"winner probe is pinned to {WINNER_BASE}@{WINNER_REVISION}")
+    if args.probe_handoff and (not args.probe or args.probe_context_inputs is None
+            or args.probe_context_limit is None or args.probe_rows_total is not None or args.probe_seq_len != SEQ):
+        fail("handoff probe requires --probe, context inputs/limit, sequence 2048 and no row projection")
     if args.probe_context_inputs is not None or args.probe_context_limit is not None:
         if (not args.probe or args.probe_context_inputs is None or args.probe_context_limit is None
                 or args.probe_context_limit <= SEQ):
             fail("context probe requires --probe, --probe-context-inputs and explicit --probe-context-limit > 2048")
-        report = run_context_probe(args.probe_context_inputs, args.base, args.revision, args.report,
-            context_limit=args.probe_context_limit, expected_digests_path=args.expected_digests,
-            trusted_digest_root_path=args.trusted_digest_root)
+        if args.probe_handoff:
+            report = run_handoff_probe(load_training_rows(args.rows), args.probe_context_inputs,
+                args.base, args.revision, args.report, context_limit=args.probe_context_limit,
+                expected_digests_path=args.expected_digests, trusted_digest_root_path=args.trusted_digest_root)
+        else:
+            report = run_context_probe(args.probe_context_inputs, args.base, args.revision, args.report,
+                context_limit=args.probe_context_limit, expected_digests_path=args.expected_digests,
+                trusted_digest_root_path=args.trusted_digest_root)
         print(json.dumps(report, indent=2))
         return
     try:
