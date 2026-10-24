@@ -54,6 +54,13 @@ jobs:
   # base-merge update after a green full run can select mapped focused tests.
   scope:
     name: CI scope
+    # Both OS runners share one host; reserve it before any job steps run.
+    concurrency:
+      group: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'director-blackbox-ci' || format('director-hosted-ci-{0}-{1}-scope-{2}', github.run_id, github.run_attempt, matrix.os || 'none') }}
+      cancel-in-progress: false
+      queue: max
+    env:
+      DIRECTOR_TEST_LANE_MAX_CONCURRENCY: "4"
     permissions:
       contents: read
       actions: read
@@ -77,6 +84,12 @@ jobs:
 
   changes:
     name: Documentation changes
+    concurrency:
+      group: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'director-blackbox-ci' || format('director-hosted-ci-{0}-{1}-changes-{2}', github.run_id, github.run_attempt, matrix.os || 'none') }}
+      cancel-in-progress: false
+      queue: max
+    env:
+      DIRECTOR_TEST_LANE_MAX_CONCURRENCY: "4"
     runs-on: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","director"]') || 'ubuntu-latest' }}
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
@@ -102,9 +115,14 @@ jobs:
 
   contribution-attribution:
     name: Contribution attribution
+    concurrency:
+      group: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'director-blackbox-ci' || format('director-hosted-ci-{0}-{1}-contribution-attribution-{2}', github.run_id, github.run_attempt, matrix.os || 'none') }}
+      cancel-in-progress: false
+      queue: max
     runs-on: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","director"]') || 'ubuntu-latest' }}
     env:
       PYTHONPATH: src
+      DIRECTOR_TEST_LANE_MAX_CONCURRENCY: "4"
       BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
       HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
     steps:
@@ -128,6 +146,10 @@ jobs:
     # matrix.os stays the hosted label on self-hosted runners too: it is part of
     # the pinned check name.
     name: Python 3.12 (${{ matrix.os }})
+    concurrency:
+      group: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'director-blackbox-ci' || format('director-hosted-ci-{0}-{1}-python-{2}', github.run_id, github.run_attempt, matrix.os || 'none') }}
+      cancel-in-progress: false
+      queue: max
     needs: scope
     if: ${{ always() && !cancelled() }}
     runs-on: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.self_hosted) || matrix.os }}
@@ -146,6 +168,7 @@ jobs:
     env:
       PYTHONPATH: src
       # Windows: per-process long-path support (no global git config change).
+      DIRECTOR_TEST_LANE_MAX_CONCURRENCY: "4"
       DIRECTOR_TEST_SHARDS: ${{ vars.DIRECTOR_TEST_SHARDS || matrix.shards }}
       GIT_CONFIG_COUNT: "1"
       GIT_CONFIG_KEY_0: core.longpaths
@@ -356,6 +379,15 @@ jobs:
           PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -v '^/mnt/' | paste -sd: -)"
           export PATH
           python scripts/ci_scope.py run
+      - name: Print compose-render diagnostic (self-hosted)
+        if: always() && runner.environment == 'self-hosted'
+        shell: python
+        run: |
+          from pathlib import Path
+          import os
+          path = Path(os.environ["RUNNER_TEMP"]) / "compose-render-diagnostic.txt"
+          if path.is_file():
+              print(path.read_text(encoding="utf-8"), end="")
       - run: python -m compileall -q src scripts tests
         if: (needs.scope.result != 'success' || needs.scope.outputs.mode != 'focused')
       - name: Validate canonical HTML documentation
@@ -401,6 +433,10 @@ jobs:
 
   containers:
     name: Compose and container build
+    concurrency:
+      group: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'director-blackbox-ci' || format('director-hosted-ci-{0}-{1}-containers-{2}', github.run_id, github.run_attempt, matrix.os || 'none') }}
+      cancel-in-progress: false
+      queue: max
     needs: [changes, scope]
     if: ${{ always() && !cancelled() }}
     # Self-hosted: Docker Compose is reliable on the Windows host, not through
@@ -408,6 +444,7 @@ jobs:
     runs-on: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Windows","director"]') || 'ubuntu-latest' }}
     env:
       DIRECTOR_ENV_FILE: .env.example
+      DIRECTOR_TEST_LANE_MAX_CONCURRENCY: "4"
     steps:
       - name: Docs-only no-op
         if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.docs_only == 'true' }}
@@ -451,6 +488,12 @@ jobs:
 
   secret-hygiene:
     name: Secret hygiene
+    concurrency:
+      group: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'director-blackbox-ci' || format('director-hosted-ci-{0}-{1}-secret-hygiene-{2}', github.run_id, github.run_attempt, matrix.os || 'none') }}
+      cancel-in-progress: false
+      queue: max
+    env:
+      DIRECTOR_TEST_LANE_MAX_CONCURRENCY: "4"
     runs-on: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","director"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v5
@@ -494,11 +537,16 @@ jobs:
 
   recovery-probe:
     name: Cross-process recovery probe
+    concurrency:
+      group: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'director-blackbox-ci' || format('director-hosted-ci-{0}-{1}-recovery-probe-{2}', github.run_id, github.run_attempt, matrix.os || 'none') }}
+      cancel-in-progress: false
+      queue: max
     needs: [changes, scope]
     if: ${{ always() && !cancelled() }}
     runs-on: ${{ vars.DIRECTOR_CI_RUNNER == 'self-hosted' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","director"]') || 'ubuntu-latest' }}
     env:
       PYTHONPATH: src
+      DIRECTOR_TEST_LANE_MAX_CONCURRENCY: "4"
     steps:
       - name: Docs-only no-op
         if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.docs_only == 'true' }}

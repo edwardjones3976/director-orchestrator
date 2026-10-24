@@ -23,16 +23,78 @@
 from __future__ import annotations
 
 import json
+import math
+import os
 import re
 import shutil
 import subprocess
+import sys
+import time
 import unittest
+from unittest.mock import patch
 
 from director_orchestrator.documentation import read_document
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+# Bounds of the WINDIAG node_timeout grammar in scripts/run-tests-parallel.py.
+_WINDIAG_MS_MAX = 3_600_000
+_WINDIAG_LENGTH_MAX = 1 << 30
+_WINDIAG_CODE_MAX = 0xFFFFFFFF
+
+
+def _node_timeout_note(code, spawn_seconds, wait_seconds, drain_seconds, stdout, stderr):
+    """One fixed scalar line: never argv, input, output text or messages."""
+    alive = code is None
+    if alive or type(code) is not int or not 0 <= code <= _WINDIAG_CODE_MAX:
+        code = -1
+
+    def milliseconds(seconds):
+        if type(seconds) not in (int, float) or not math.isfinite(seconds):
+            return 0
+        return min(_WINDIAG_MS_MAX, max(0, round(seconds * 1000)))
+
+    spawn, wait, drain = map(milliseconds, (spawn_seconds, wait_seconds, drain_seconds))
+    out, err = (min(_WINDIAG_LENGTH_MAX, len(text or "")) for text in (stdout, stderr))
+    return (f"WINDIAG node_timeout alive={int(alive)} code={code} spawn_ms={spawn} wait_ms={wait} "
+            f"drain_ms={drain} out={out} err={err}")
+
+
+def _run_status_process(argv, *, input_text, timeout):
+    """subprocess.run(input=, text UTF-8, capture_output, timeout, check=True).
+
+    Popen/communicate keep CPython 3.12 run() semantics: on TimeoutExpired
+    the child is killed, then drained with communicate() on Windows (wait()
+    elsewhere), and the original exception is re-raised with only a fixed
+    scalar note added. The child is polled inside the handler, after the
+    deadline has already elapsed, so alive= is the state when observed,
+    not exactly at the deadline.
+    """
+    started = time.monotonic()
+    with subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True, encoding="utf-8") as process:
+        spawned = time.monotonic()
+        try:
+            stdout, stderr = process.communicate(input_text, timeout=timeout)
+        except subprocess.TimeoutExpired as error:
+            observed = time.monotonic()
+            code = process.poll()
+            process.kill()
+            if os.name == "nt":
+                error.stdout, error.stderr = process.communicate()
+            else:
+                process.wait()
+            error.add_note(_node_timeout_note(code, spawned - started, observed - spawned,
+                                              time.monotonic() - observed, error.stdout, error.stderr))
+            raise
+        except BaseException:
+            process.kill()
+            raise
+        code = process.poll()
+        if code:
+            raise subprocess.CalledProcessError(code, process.args, output=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(process.args, code, stdout, stderr)
 
 
 class DeploymentContractTests(unittest.TestCase):
@@ -43,7 +105,7 @@ class DeploymentContractTests(unittest.TestCase):
         code = next(node for node in workflow["nodes"] if node["name"] == "Diff Readiness")
         node = shutil.which("node")
         self.assertIsNotNone(node, "Node.js is required to execute the stored n8n status code")
-        result = subprocess.run(
+        result = _run_status_process(
             [node, "-e", """
 const fs = require('node:fs');
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
@@ -52,8 +114,10 @@ const store = {};
 const outputs = input.responses.map(json => run([{json}], () => store));
 process.stdout.write(JSON.stringify({outputs, store}));
 """],
-            input=json.dumps({"code": code["parameters"]["jsCode"], "responses": responses}),
-            text=True, encoding="utf-8", capture_output=True, timeout=10, check=True,
+            input_text=json.dumps({"code": code["parameters"]["jsCode"], "responses": responses}),
+            # The script itself runs in milliseconds; the budget only covers a
+            # Node cold start, which exceeded 10 s on loaded hosted Windows shards.
+            timeout=60,
         )
         return json.loads(result.stdout)
 
@@ -686,6 +750,70 @@ process.stdout.write(JSON.stringify({outputs, store}));
             self.assertEqual(set(lanes), set(PRIMARY_PROVIDER_LANES))
             for lane in lanes.values():
                 self.assertEqual(lane, {"configured": False, "live_ready": False})
+
+
+class StatusProcessObservationTests(unittest.TestCase):
+    """The status helper keeps run() behaviour; only a timeout gains a note."""
+
+    NOTE = re.compile(r"WINDIAG node_timeout alive=([01]) code=(-1|[0-9]+) spawn_ms=([0-9]+) "
+                      r"wait_ms=([0-9]+) drain_ms=([0-9]+) out=([0-9]+) err=([0-9]+)")
+
+    def test_success_round_trips_utf8_text(self):
+        child = ("import sys; sys.stdin.reconfigure(encoding='utf-8'); sys.stdout.reconfigure(encoding='utf-8'); "
+                 "sys.stdout.write(sys.stdin.read()[::-1])")
+        argv = [sys.executable, "-c", child]
+        result = _run_status_process(argv, input_text="true → false", timeout=10)
+        self.assertEqual((result.args, result.returncode, result.stdout, result.stderr),
+                         (argv, 0, "eslaf → eurt", ""))
+
+    def test_nonzero_exit_keeps_called_process_error_output_without_note(self):
+        argv = [sys.executable, "-c",
+                "import sys; sys.stdout.write(sys.stdin.read().upper()); sys.stderr.write('e'); sys.exit(3)"]
+        with self.assertRaises(subprocess.CalledProcessError) as caught:
+            _run_status_process(argv, input_text="ok", timeout=10)
+        error = caught.exception
+        self.assertEqual((error.returncode, error.cmd, error.output, error.stderr), (3, argv, "OK", "e"))
+        self.assertFalse(getattr(error, "__notes__", None))
+
+    def test_timeout_kills_drains_and_reraises_original_with_one_scalar_note(self):
+        argv = [sys.executable, "-c",
+                "import sys,time; sys.stdout.write('private-output'); sys.stdout.flush(); time.sleep(60)",
+                "sk-private-argv"]
+        started = time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired) as caught:
+            _run_status_process(argv, input_text="private-input", timeout=1)
+        self.assertLess(time.monotonic() - started, 30, "timed-out child was not killed")
+        error = caught.exception
+        self.assertEqual((error.cmd, error.timeout), (argv, 1))
+        [note] = error.__notes__
+        fields = self.NOTE.fullmatch(note)
+        self.assertIsNotNone(fields, note)
+        self.assertEqual((fields[1], fields[2]), ("1", "-1"), "a sleeping child is still alive when polled")
+        self.assertGreaterEqual(int(fields[4]), 900)
+        self.assertEqual((int(fields[6]), int(fields[7])), (len(error.stdout or ""), len(error.stderr or "")))
+        for private in ("private", "sk-", sys.executable):
+            self.assertNotIn(private, note)
+
+    def test_other_failures_kill_the_child_and_propagate_unchanged(self):
+        argv = [sys.executable, "-c", "import time; time.sleep(60)"]
+        failure = RuntimeError("injected")
+        started = time.monotonic()
+        with patch.object(subprocess.Popen, "communicate", side_effect=failure), \
+                self.assertRaises(RuntimeError) as caught:
+            _run_status_process(argv, input_text="", timeout=10)
+        self.assertIs(caught.exception, failure)
+        self.assertFalse(getattr(failure, "__notes__", None))
+        self.assertLess(time.monotonic() - started, 30, "child was not killed on a non-timeout failure")
+
+    def test_note_fields_are_bounded_and_unknown_codes_use_the_sentinel(self):
+        self.assertEqual(_node_timeout_note(None, -1.0, 10.0004, float("inf"), "abc", None),
+                         "WINDIAG node_timeout alive=1 code=-1 spawn_ms=0 wait_ms=10000 drain_ms=0 out=3 err=0")
+        self.assertEqual(_node_timeout_note(1, 0.012, 1e9, 0.002, "x" * 5, b"yy"),
+                         "WINDIAG node_timeout alive=0 code=1 spawn_ms=12 wait_ms=3600000 drain_ms=2 out=5 err=2")
+        for code in (-9, 2**32, True, "1"):
+            with self.subTest(code=code):
+                self.assertIn(" alive=0 code=-1 ", _node_timeout_note(code, 0, 0, 0, None, None))
+
 
 if __name__ == "__main__":
     unittest.main()
