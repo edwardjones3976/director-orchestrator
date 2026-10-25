@@ -52,7 +52,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
-from .workload_policy import MAX_PROVIDER_ATTEMPTS
+from .workload_policy import SUPPORTED_ATTEMPT_LIMITS
 import hashlib
 import hmac
 import json
@@ -273,6 +273,7 @@ def validate_attempt_history(assignments, attempts, *, task_id=None):
     by_assignment = {}
     for row in assignments:
         if (not _is_id(row.get("assignment_id")) or not _is_count(row.get("sequence")) or row["sequence"] < 1
+                or not _is_count(row.get("retry_limit")) or row["retry_limit"] not in SUPPORTED_ATTEMPT_LIMITS
                 or not _is_id(row.get("provider_id")) or not _is_id(row.get("deployment_id"))
                 or row["assignment_id"] in by_assignment
                 or row.get("status") not in ("PENDING", "ACTIVE", "AMBIGUOUS", "SUCCEEDED", "FAILED",
@@ -288,7 +289,7 @@ def validate_attempt_history(assignments, attempts, *, task_id=None):
         assignment = by_assignment.get(row.get("assignment_id"))
         if assignment is None:
             return None, "attempt does not join a listed assignment"
-        if (not _is_count(row.get("attempt_ordinal")) or not 1 <= row["attempt_ordinal"] <= MAX_PROVIDER_ATTEMPTS
+        if (not _is_count(row.get("attempt_ordinal")) or not 1 <= row["attempt_ordinal"] <= assignment["retry_limit"]
                 or not _is_count(row.get("event_sequence")) or not 1 <= row["event_sequence"] <= 3
                 or not _is_count(row.get("assignment_sequence"))
                 or row.get("status") not in ATTEMPT_STATUSES
@@ -373,6 +374,7 @@ def validate_attempt_history(assignments, attempts, *, task_id=None):
                    and held["reason_code"] == PROVIDER_TRANSIENT_TRANSPORT_FAILURE else FailureKind.TERMINAL)
         try:
             authorized, _ = authorize_provider_retry(attempt_number=ordinal, previous_failure=failure,
+                                                     retry_limit=by_assignment[assignment_id]["retry_limit"],
                                                      transport_id=events[0]["transport_id"],
                                                      previous_transport_id=held["transport_id"])
         except ParallelDispatchError:

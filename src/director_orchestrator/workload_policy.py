@@ -1130,9 +1130,12 @@ def evaluate_retry(
             violations.append("primary_attempt_must_not_have_previous_failure")
     elif request.previous_failure is FailureKind.AMBIGUOUS_PAID_DISPATCH:
         violations.append("ambiguous_paid_dispatch_must_not_be_repeated")
-    elif (request.retry_limit == MAX_PROVIDER_ATTEMPTS
-          and request.previous_failure is FailureKind.TRANSIENT):
-        pass
+    elif request.retry_limit == MAX_PROVIDER_ATTEMPTS:
+        if request.previous_failure is FailureKind.NONE:
+            violations.append("additional_attempt_requires_classified_failure")
+        elif (request.previous_failure is not FailureKind.TRANSIENT
+              and not (request.materially_new_information or request.corrected_approach)):
+            violations.append("provider_retry_evidence_insufficient")
     elif request.attempt_number == 2:
         if request.previous_failure is not FailureKind.TRANSIENT:
             violations.append("recovery_requires_transient_failure")

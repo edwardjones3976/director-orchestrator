@@ -1049,6 +1049,46 @@ class ScorecardEvidencePostgresTests(unittest.TestCase):
             self.assertEqual([item["verified"] for item in evidence.packet_rows(connection, self.schema, "work",
                                                                                  tasks=[other])], [False])
 
+    def test_stored_five_attempt_limit_reaches_both_qualification_readers(self):
+        from director_orchestrator.langgraph_postgres import _projection_payload
+        from director_orchestrator.models import QualificationEvidenceReadback
+        from tests.test_provider_retry_four import five_attempt_readback
+        task_id = self.intake()
+        self.plan(task_id, "SUCCEEDED", [("a1", "SUCCEEDED", [])])
+        stamp = datetime.now(timezone.utc)
+        with self.handle.pool.connection() as connection:
+            projection = connection.execute(f"SELECT projection FROM {self.schema}.director_primary_task_projection"
+                                            " WHERE task_id=%s", (task_id,)).fetchone()["projection"]
+            connection.execute(f"UPDATE {self.schema}.director_primary_task_projection"
+                               " SET projection_digest=%s, projection_version=projection_version+1"
+                               " WHERE task_id=%s", (_projection_payload(projection)[1], task_id))
+            connection.execute(f"UPDATE {self.schema}.director_primary_parallel_assignment"
+                               " SET retry_limit=5 WHERE task_id=%s", (task_id,))
+            for event in five_attempt_readback()["provider_attempts"]:
+                event.update(assignment_id="a1", recorded_at=stamp.isoformat())
+                outcome = (None if event["event_sequence"] == 1
+                           else evidence.outcome_evidence_digest(task_id, event))
+                connection.execute(
+                    f"INSERT INTO {self.schema}.director_primary_provider_attempt"
+                    " (task_id, assignment_id, attempt_ordinal, event_sequence, provider_id, format_id, transport_id,"
+                    " idempotency_key_digest, attempt_digest, status, result_digest, outcome_evidence_digest,"
+                    " reason_code, budget_evidence_digest, recorded_at)"
+                    " VALUES (%s, 'a1', %s, %s, 'claude', 'v1', 'native-cli', %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (task_id, event["attempt_ordinal"], event["event_sequence"], event["idempotency_key_digest"],
+                     event["attempt_digest"], event["status"], event["result_digest"], outcome,
+                     event["reason_code"], event["budget_evidence_digest"], stamp))
+        readback = self.handle.claim_store.read_primary_qualification_evidence(task_id)
+        readback.pop("projection")
+        typed = QualificationEvidenceReadback.model_validate(readback).model_dump(mode="json")
+        self.assertEqual(typed["assignments"][0]["retry_limit"], 5)
+        self.assertIsNone(evidence.validate_attempt_history(
+            typed["assignments"], typed["provider_attempts"], task_id=task_id)[1])
+        self.assertEqual(self.report()["counts"]["provider_attempts_invalid"], 0)
+        with self.handle.pool.connection() as connection:
+            connection.execute(f"UPDATE {self.schema}.director_primary_parallel_assignment"
+                               " SET retry_limit=3 WHERE task_id=%s", (task_id,))
+        self.assertEqual(self.report()["counts"]["provider_attempts_invalid"], 1)
+
     def test_every_tasks_attempt_history_is_validated_by_the_collectors_rule(self):
         """Review 4102375074: provider_attempts_invalid applies validate_attempt_history (the collector's own rule)
         to every task's attempts: first event STARTED, one identity per attempt, contiguous ordinals, times in

@@ -40,7 +40,10 @@ an admissible failure, remaining resources and the original authority.</p>
 <code>MAX_PROVIDER_ATTEMPTS = 5</code>. Prospective planners explicitly freeze the
 new value. Historical model defaults retain three, preventing an old omitted
 field from silently widening authority. The primary dispatcher and Postgres
-admission use the assignment's stored limit, including after restart.</p>
+admission use the assignment's stored limit, including after restart. Qualification
+and scorecard readers carry that same stored three-or-five limit through their
+typed readback and retry validation. Missing or coerced limits fail closed;
+reacquire an older readback rather than inventing authority.</p>
 <p>SQLite schema widening copies existing attempt and outcome rows in one
 transaction and restores append-only guards. Postgres setup widens only the
 numeric constraints; it does not change stored grant values or reset ordinals.

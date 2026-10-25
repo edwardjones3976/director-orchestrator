@@ -1,7 +1,9 @@
 """Exercise the owner-authorized budget through real consumers, without providers."""
 from contextlib import closing
+from copy import deepcopy
 import asyncio
 from dataclasses import replace
+from datetime import datetime, timedelta
 import sqlite3
 import tempfile
 import unittest
@@ -12,17 +14,106 @@ from director_orchestrator.engineering_workload_ledger import EngineeringWorkloa
 from director_orchestrator.approvals import reserve_task_effect, task_effect_key
 from director_orchestrator.config import Settings
 from director_orchestrator.engine import OrchestrationEngine
-from director_orchestrator.models import SlackIntake, TaskRecord, TaskStatus
+from director_orchestrator.models import QualificationAssignmentRow, SlackIntake, TaskRecord, TaskStatus
 from director_orchestrator.store import StaleTaskWrite, TaskStore
 from director_orchestrator.primary_default import _execute_three_attempt_roster
 from director_orchestrator.primary_parallel import (
     ParallelAssignmentStatus, ProviderAttemptReservation, ProviderTransientDispatchError,
 )
-from director_orchestrator.workload_policy import FailureKind, RetryRequest, evaluate_retry
-from tests.test_engineering_workload_ledger import manifest, request, result
+from director_orchestrator.workload_policy import FailureKind, RetryRequest, Transport, evaluate_retry
+from tests.test_engineering_workload_ledger import evidence, manifest, request, result
+from tests.test_collect_offline_slack_trials import readback_fixture
+
+
+def five_attempt_readback():
+    readback = readback_fixture()
+    readback["assignments"][0]["retry_limit"] = 5
+    templates = readback["provider_attempts"]
+    events = []
+    from director_orchestrator.primary_scorecard_evidence import outcome_evidence_digest
+    from director_orchestrator.primary_parallel import PROVIDER_TRANSIENT_TRANSPORT_FAILURE
+    for ordinal in range(1, 6):
+        for sequence, template in enumerate(templates, 1):
+            event = {**template, "attempt_ordinal": ordinal, "attempt_digest": "sha256:" + str(ordinal) * 64,
+                     "recorded_at": (datetime.fromisoformat(templates[0]["recorded_at"])
+                                     + timedelta(seconds=2 * (ordinal - 1) + sequence)).isoformat()}
+            if sequence == 2 and ordinal < 5:
+                event.update(status="FAILED", result_digest=None, reason_code=PROVIDER_TRANSIENT_TRANSPORT_FAILURE)
+            event["outcome_evidence_digest"] = None if sequence == 1 else outcome_evidence_digest(readback["task_id"], event)
+            events.append(event)
+    readback["provider_attempts"] = events
+    return readback
 
 
 class FourRetryTests(unittest.TestCase):
+    def test_scorecard_accepts_stored_five_and_preserves_legacy_authority(self):
+        from director_orchestrator.primary_scorecard_evidence import validate_attempt_history
+        readback = five_attempt_readback()
+        row = QualificationAssignmentRow.model_validate(readback["assignments"][0]).model_dump(mode="json")
+        self.assertIsNone(validate_attempt_history([row], readback["provider_attempts"], task_id=readback["task_id"])[1])
+        legacy = {**row, "retry_limit": 3}
+        self.assertIsNotNone(validate_attempt_history([legacy], readback["provider_attempts"])[1])
+        self.assertIsNotNone(validate_attempt_history([legacy], readback["provider_attempts"][:6])[1])
+        self.assertIsNone(validate_attempt_history([legacy], readback["provider_attempts"][:4])[1])
+        sixth = {**readback["provider_attempts"][0], "attempt_ordinal": 6}
+        self.assertIsNotNone(validate_attempt_history([row], readback["provider_attempts"] + [sixth])[1])
+
+    def test_scorecard_refuses_missing_or_coerced_stored_limits(self):
+        from pydantic import ValidationError
+        from director_orchestrator.primary_scorecard_evidence import validate_attempt_history
+        row = five_attempt_readback()["assignments"][0]
+        for value in (None, True, 3.0, 4, "5"):
+            invalid = {**row, "retry_limit": value}
+            with self.subTest(value=value):
+                with self.assertRaises(ValidationError):
+                    QualificationAssignmentRow.model_validate(invalid)
+                self.assertIsNotNone(validate_attempt_history([invalid], [])[1])
+        missing = deepcopy(row)
+        del missing["retry_limit"]
+        with self.assertRaises(ValidationError):
+            QualificationAssignmentRow.model_validate(missing)
+        self.assertIsNotNone(validate_attempt_history([missing], [])[1])
+
+    def test_nontransient_current_retry_requires_actual_correction_evidence(self):
+        for ordinal in range(2, 6):
+            values = dict(attempt_number=ordinal, retry_limit=5,
+                          previous_failure=FailureKind.TERMINAL)
+            with self.subTest(ordinal=ordinal):
+                self.assertFalse(evaluate_retry(RetryRequest(**values)).allowed)
+                self.assertFalse(evaluate_retry(RetryRequest(
+                    **values, positive_expected_information_gain=True)).allowed)
+                self.assertFalse(evaluate_retry(RetryRequest(
+                    **values, previous_transport=Transport.LOCAL_CLI,
+                    transport=Transport.DIRECTOR_ADAPTER)).allowed)
+                for proof in ("materially_new_information", "corrected_approach"):
+                    self.assertTrue(evaluate_retry(RetryRequest(**values, **{proof: True})).allowed)
+                    for gate in ("token_budget_remaining", "cost_budget_remaining", "timeout_budget_remaining"):
+                        self.assertFalse(evaluate_retry(RetryRequest(
+                            **values, **{proof: True, gate: False})).allowed)
+                    self.assertFalse(evaluate_retry(RetryRequest(
+                        **values, **{proof: True}, cancellation_requested=True)).allowed)
+        self.assertFalse(evaluate_retry(RetryRequest(
+            attempt_number=2, retry_limit=3, previous_failure=FailureKind.TERMINAL,
+            materially_new_information=True, corrected_approach=True)).allowed)
+
+    def test_failed_ledger_attempt_can_use_evidence_within_current_grant_after_reload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ledger.sqlite3"
+            ledger = EngineeringWorkloadLedger(path)
+            ledger.bootstrap(manifest())
+            candidate = request(1)
+            candidate["bounds"]["call_limit"] = 5
+            ledger.reserve(candidate)
+            ledger.begin_attempt("test-1", transport="local_cli")
+            ledger.record_outcome("test-1", 1, result("failed"))
+            ledger = EngineeringWorkloadLedger(path)
+            with self.assertRaises(LedgerError):
+                ledger.begin_attempt("test-1", transport="local_cli")
+            proof = evidence("corrected-request")
+            permit = ledger.begin_attempt("test-1", transport="local_cli", new_information_evidence=proof)
+            self.assertEqual(2, permit["attempt_number"])
+            self.assertEqual(proof, permit["new_information_evidence"])
+
     def test_five_attempts_share_resource_and_ambiguity_gates(self):
         for ordinal in range(2, 6):
             values = dict(attempt_number=ordinal, retry_limit=5,

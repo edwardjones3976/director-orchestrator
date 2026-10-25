@@ -1208,11 +1208,19 @@ class QualificationAssignmentRow(BaseModel):
     provider_id: str
     deployment_id: str
     status: str
+    retry_limit: Literal[3, 5]
     reservation_digest: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
     result_digest: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
     reason_code: str | None = None
     reserved_at: datetime | None = None
     completed_at: datetime | None = None
+
+    @field_validator("retry_limit", mode="before")
+    @classmethod
+    def strict_retry_limit(cls, value):
+        if type(value) is not int:
+            raise ValueError("stored retry limit must be an integer")
+        return value
 
 
 class QualificationAttemptRow(BaseModel):

@@ -1954,7 +1954,7 @@ def _validated_result_packet(
 # (primary_scorecard_evidence.task_evidence_errors) the same shapes.
 _QUALIFICATION_SECTIONS = {
     "assignments": (
-        """assignment_id, sequence, provider_id, deployment_id, status,
+        """assignment_id, sequence, provider_id, deployment_id, status, retry_limit,
                reservation_digest, result_digest, reason_code, reserved_at, completed_at""",
         "{schema}.director_primary_parallel_assignment", "task_id", "sequence, assignment_id"),
     "provider_attempts": (
