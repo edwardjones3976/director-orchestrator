@@ -59,6 +59,7 @@ from .config import Settings
 from .models import Assignment, AssignmentKind, DiscussionPhase, ProviderName, ProviderRun
 from .policy import antigravity_assignment_errors, canonical_repository
 from .process_isolation import ProcessContainmentError, launch_contained_process
+from .workload_policy import MAX_PROVIDER_ATTEMPTS
 
 _CURSOR_WORKING_REF_PREFIX = "cursor/"
 _MISSING_STARTING_REF_STATUSES = {400, 404, 409, 422}
@@ -740,10 +741,12 @@ class CursorAdapter(ProviderAdapter):
 
     async def dispatch(self, assignment: Assignment, context: str) -> ProviderRun:
         body = self._dispatch_body(assignment, context)
-        attempts = max(1, self.settings.cursor_dispatch_max_attempts)
+        attempts = max(1, min(self.settings.cursor_dispatch_max_attempts,
+                              assignment.retry_limit, MAX_PROVIDER_ATTEMPTS))
         fallback_used = False
         attempt = 0
         while True:
+            attempt += 1
             async with httpx.AsyncClient(timeout=60) as client:
                 response = await client.post(
                     f"{self.settings.cursor_api_base}/v1/agents",
@@ -754,16 +757,16 @@ class CursorAdapter(ProviderAdapter):
                 break
             if (
                 not fallback_used
+                and attempt < attempts
                 and _is_missing_starting_ref_error(response)
                 and self._apply_starting_ref_fallback(body)
             ):
                 fallback_used = True
                 continue
             delay = self._retry_delay(response, attempt)
-            if delay is None or attempt + 1 >= attempts:
+            if delay is None or attempt >= attempts:
                 response.raise_for_status()
             await asyncio.sleep(delay)
-            attempt += 1
         payload = response.json()
         return ProviderRun(
             provider=self.name,
@@ -772,6 +775,7 @@ class CursorAdapter(ProviderAdapter):
             status=payload["run"]["status"],
             url=payload["agent"].get("url"),
             raw=payload,
+            attempt_count=attempt,
         )
 
     async def poll(self, run: ProviderRun) -> ProviderRun:

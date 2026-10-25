@@ -686,7 +686,7 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
         self.assertEqual(limits.duplicate_validation_reduction_target_percent, 70)
         self.assertEqual(limits.total_action_reduction_target_percent, 60)
 
-    def test_assignment_retry_limit_is_canonicalized_to_exactly_three(self) -> None:
+    def test_invalid_assignment_retry_limit_fails_before_dispatch(self) -> None:
         plan = self._valid_plan()
         plan.prestage = plan.prestage.model_copy(
             update={"retry_limit": 1, "digest": None}
@@ -695,7 +695,7 @@ class WorkloadPlanEnforcementTests(unittest.TestCase):
         guarded = enforce_plan(plan, "bounded implementation", self.settings)
 
         self.assertIn(
-            "pre-stage packet is invalid: prestage attempt budget must be exactly 3",
+            "pre-stage packet is invalid: prestage attempt budget must be exactly 3 (legacy) or 5",
             execution_policy_errors(guarded, self.settings),
         )
 

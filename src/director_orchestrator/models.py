@@ -47,7 +47,7 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -60,7 +60,7 @@ from pydantic import (
 )
 
 from .interactions import DirectorIdentity, ProviderInteractionEvent
-from .workload_policy import WorkSize
+from .workload_policy import LEGACY_PROVIDER_ATTEMPTS, MAX_PROVIDER_ATTEMPTS, WorkSize
 
 
 def canonical_opaque_identifier_digest(value: str) -> str:
@@ -388,7 +388,7 @@ class Assignment(BaseModel):
     # pre-stage packet; deterministic policy validates the resulting route.
     workload_size: WorkSize = WorkSize.SIMPLE
     effort_points: int = Field(default=1, ge=1, le=100)
-    retry_limit: int = Field(default=3, ge=3, le=3)
+    retry_limit: Literal[3, 5] = LEGACY_PROVIDER_ATTEMPTS
     # Live LangGraph-primary plans may bind a transport lane that is broader than
     # the historical Director agent enum. Model-authored plans leave this unset;
     # the deterministic primary planner supplies it after policy normalization.
@@ -573,7 +573,7 @@ class PlanPrestageRecord(BaseModel):
     required_security_evidence: tuple[str, ...] = Field(min_length=1, max_length=100)
     budget_units: int = Field(ge=1, le=100_000)
     timeout_seconds: int = Field(ge=1, le=604_800)
-    retry_limit: int = Field(ge=3, le=3)
+    retry_limit: Literal[3, 5]
     merge_eligibility_conditions: tuple[str, ...] = Field(
         min_length=1, max_length=50
     )
@@ -905,7 +905,7 @@ class ProviderContactAttempt(BaseModel):
 
     assignment_sequence: int = Field(ge=1, le=20)
     provider: ProviderName
-    ordinal: int = Field(ge=1, le=3)
+    ordinal: int = Field(ge=1, le=MAX_PROVIDER_ATTEMPTS)
     phase: Literal["dispatch", "revision", "poll", "callback", "reconciliation"]
     outcome: Literal[
         "no_response",
@@ -1018,7 +1018,7 @@ class OracleRecoveryState(BaseModel):
     )
     artifact_id: str | None = Field(default=None, min_length=1, max_length=255)
     retry_not_before: datetime | None = None
-    ordinal: int = Field(default=1, ge=1, le=3)
+    ordinal: int = Field(default=1, ge=1, le=MAX_PROVIDER_ATTEMPTS)
     decision_digest: str = Field(
         min_length=71, max_length=71, pattern=r"^sha256:[0-9a-f]{64}$"
     )
@@ -1114,6 +1114,10 @@ class TaskRecord(BaseModel):
     collaboration_thread_opened: bool = False
     collaboration_turns: list[CollaborationTurn] = Field(default_factory=list, max_length=50)
     collaboration_delivery_errors: list[str] = Field(default_factory=list, max_length=20)
+    collaboration_delivery_attempts: dict[
+        Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")],
+        Annotated[int, Field(strict=True, ge=0, le=MAX_PROVIDER_ATTEMPTS)],
+    ] = Field(default_factory=dict, max_length=1000)
     collaboration_fallback_active: bool = False
     collaboration_fallback_reason: str | None = Field(default=None, max_length=1_000)
     debate_tally: dict[str, Any] | None = None
@@ -1204,11 +1208,19 @@ class QualificationAssignmentRow(BaseModel):
     provider_id: str
     deployment_id: str
     status: str
+    retry_limit: Literal[3, 5]
     reservation_digest: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
     result_digest: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
     reason_code: str | None = None
     reserved_at: datetime | None = None
     completed_at: datetime | None = None
+
+    @field_validator("retry_limit", mode="before")
+    @classmethod
+    def strict_retry_limit(cls, value):
+        if type(value) is not int:
+            raise ValueError("stored retry limit must be an integer")
+        return value
 
 
 class QualificationAttemptRow(BaseModel):
@@ -1216,7 +1228,7 @@ class QualificationAttemptRow(BaseModel):
 
     assignment_id: str
     assignment_sequence: int = Field(ge=1)
-    attempt_ordinal: int = Field(ge=1, le=3)
+    attempt_ordinal: int = Field(ge=1, le=MAX_PROVIDER_ATTEMPTS)
     event_sequence: int = Field(ge=1, le=3)
     provider_id: str
     format_id: str

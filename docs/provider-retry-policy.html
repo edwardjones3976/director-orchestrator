@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Director provider retry policy</title>
+<style>
+body{max-width:70ch;margin:2rem auto;padding:0 1rem;font:1rem/1.6 system-ui,sans-serif;color:#17202a;background:#fff}
+table{border-collapse:collapse;width:100%}th,td{border:1px solid #aab;padding:.6rem;text-align:left;vertical-align:top}a{color:#0645ad}code{overflow-wrap:anywhere}
+</style>
+</head>
+<body>
+<header><p><a href="../README.html">Director-Orchestrator</a> · <a href="site-coordination.html">Foreman guidance</a></p>
+<h1>Provider messages and jobs: four retries</h1>
+<p>Owner amendment, 24 October 2026. Director-Orchestrator only.</p></header>
+<main>
+<p><strong>One initial attempt plus at most four retries means five total attempts.</strong>
+This is a ceiling. A successful operation stops immediately. A retry still needs
+an admissible failure, remaining resources and the original authority.</p>
+<table>
+<caption>Where the budget applies</caption>
+<thead><tr><th scope="col">Surface</th><th scope="col">Rule</th></tr></thead>
+<tbody>
+<tr><th scope="row">New provider messages and jobs</th><td>Freeze five total attempts in the assignment and pre-stage packet before approval or dispatch. Record each actual attempt under the same message or assignment identity.</td></tr>
+<tr><th scope="row">Existing signed grants</th><td>Retain their stricter limits and original recovery conditions. Legacy three-attempt packets and recorded digests are not rewritten. Missing historical authority does not become five attempts.</td></tr>
+<tr><th scope="row">Fallback and changed transport</th><td>Use the same consumed counters, absolute deadline and remaining resources. A new session or route alias does not renew an exhausted assignment.</td></tr>
+<tr><th scope="row">Native clients and SDKs</th><td>Keep nested retries disabled when the Director owns the outer attempt budget. Independent retry layers must not multiply five into twenty-five. A transport's stricter no-repost or reconciliation gate remains binding.</td></tr>
+<tr><th scope="row">Repairs and revisions</th><td>Their separate limits remain unchanged. Four provider retries do not authorize four source edits, CI reruns, reviews, merges or deployments.</td></tr>
+</tbody></table>
+<h2>Before each retry</h2>
+<ol>
+<li>Read the persisted attempt and effect history. Stop on success. An active or ambiguous paid request requires authenticated reconciliation before any replay.</li>
+<li>Classify the failure. A definite transient refusal can retry within the bound. A nontransient later attempt requires new evidence or a materially corrected approach; unchanged permission and authentication refusals are not temporary failures.</li>
+<li>Recheck cancellation, deadline, token and cost bounds, provider eligibility and required approval. Unknown cost or missing accounting is not zero.</li>
+<li>Reserve the next ordinal before I/O. Never reset history, change a packet digest to obtain a fresh allowance, or hide fallback calls outside the count.</li>
+<li>Read back and retain the result. On exhaustion, mark unavailable for that assignment and follow the authorized fallback or explicit blocker path.</li>
+</ol>
+<h2>Implementation and installation boundaries</h2>
+<p>The shared policy constants are <code>MAX_PROVIDER_RETRIES = 4</code> and
+<code>MAX_PROVIDER_ATTEMPTS = 5</code>. Prospective planners explicitly freeze the
+new value. Historical model defaults retain three, preventing an old omitted
+field from silently widening authority. The primary dispatcher and Postgres
+admission use the assignment's stored limit, including after restart. Qualification
+and scorecard readers carry that same stored three-or-five limit through their
+typed readback and retry validation. Missing or coerced limits fail closed;
+reacquire an older readback rather than inventing authority.</p>
+<p>SQLite schema widening copies existing attempt and outcome rows in one
+transaction and restores append-only guards. Postgres setup widens only the
+numeric constraints; it does not change stored grant values or reset ordinals.
+These code paths are exercised with disposable test databases. Production
+migration or deployment still requires its existing release authority.</p>
+<p>Local provider wrappers that submit one bounded native call keep their hidden
+client retries at zero. The Foreman tracks additional authorized messages through
+the existing receipts and work order. A connection test, source merge or policy
+document alone does not prove that a long-running client has reloaded settings.</p>
+<h2>Related authority</h2>
+<ul>
+<li><a href="model-interoperability-contract.html">Packet contract</a></li>
+<li><a href="langgraph-primary-operations.html">Primary dispatch and recovery</a></li>
+<li><a href="engineering-workload-ledger.html">External workload journal</a></li>
+<li><a href="foreman-repair-work-orders.html">Foreman work orders</a></li>
+</ul>
+<p>Public research used for this amendment:
+<a href="https://docs.cloud.google.com/storage/docs/retry-strategy">Google retry and idempotency guidance</a>
+and <a href="https://developers.telnyx.com/docs/development/api-fundamentals/reliability/command-retries">Telnyx command retry guidance</a>.
+Research supplies context; owner authority and deterministic gates control execution.</p>
+</main>
+</body>
+</html>

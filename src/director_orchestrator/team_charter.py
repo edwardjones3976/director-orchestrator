@@ -28,6 +28,8 @@
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:04 UTC | BEGIN]]
 from __future__ import annotations
 
+from .workload_policy import MAX_PROVIDER_ATTEMPTS
+
 import hashlib
 import json
 from copy import deepcopy
@@ -252,7 +254,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "provider_or_committee_member": False,
             "workload_percentage": None,
             "trigger": "request_after_checks_green_and_exact_candidate_freeze",
-            "attempts": "conditional_maximum_three",
+            "attempts": "conditional_maximum_five",
             "automatic_every_push": False,
             "gating": False,
             "authority_granted": [],
@@ -412,12 +414,12 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "participation_source": "authenticated_provider_response_only",
         },
         "availability": {
-            "attempts": "conditional_maximum_three",
-            "format_roster": "conditional_roster_maximum_three",
+            "attempts": "conditional_maximum_five",
+            "format_roster": "conditional_roster_maximum_five",
             "attempt_ledger": "append_only_postgres_child_events",
             "additional_attempt_requires": [
-                "second_requires_temporary_failure",
-                "third_requires_new_information_or_different_transport",
+                "classified_transient_or_corrected_evidence_based_approach",
+                "legacy_signed_grants_remain_binding",
                 "stop_on_success",
                 "resource_budgets_remaining",
             ],
@@ -515,11 +517,11 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         },
     },
     "availability_policy": {
-        "nonresponse_attempt_limit": 3,
+        "nonresponse_attempt_limit": MAX_PROVIDER_ATTEMPTS,
         "requirements": [
-            "Every assignment has at most three conditional attempt slots.",
-            "Stop on success; second needs temporary failure; third needs new information or different transport.",
-            "Never duplicate an ambiguous paid dispatch.",
+            "New messages/jobs: five total attempts; retain stricter signed grants.",
+            "Retry transient failures or evidenced corrections within shared bounds; stop on success.",
+            "Never replay ambiguous paid dispatch.",
             "Ambiguous reconciliation binds IDs only; results need provider authentication, and owner recovery text cannot authorize exact-SHA review or merge.",
         ],
     },

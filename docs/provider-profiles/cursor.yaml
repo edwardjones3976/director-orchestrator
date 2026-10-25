@@ -116,7 +116,7 @@ models_and_effort:
 
 budgets_and_limits:
   variables:
-    - { variable: "CURSOR_DISPATCH_MAX_ATTEMPTS", kind: "max_attempts", settings_field: "cursor_dispatch_max_attempts", default: 4, documented_in_env_example: true, values_recorded: false }
+    - { variable: "CURSOR_DISPATCH_MAX_ATTEMPTS", kind: "max_attempts", settings_field: "cursor_dispatch_max_attempts", default: 5, documented_in_env_example: true, values_recorded: false }
     - { variable: "CURSOR_DISPATCH_MAX_RETRY_DELAY_SECONDS", kind: "retry_delay_seconds", settings_field: "cursor_dispatch_max_retry_delay_seconds", default: 60, documented_in_env_example: true, values_recorded: false }
   spend_ledger_member: false
   not_modeled_note: "Cursor has no provider daily spend ledger in this deployment; the task budget, provider timeout, and Cursor's own dashboard spend limits bound it."

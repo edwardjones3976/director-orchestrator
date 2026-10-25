@@ -91,13 +91,13 @@ class PrimaryProviderBudgetTests(unittest.TestCase):
         self.assertEqual(Decimal("13.65"), sum(Decimal(str(item.estimated_cost_usd))
                          for item in record.plan.assignments))
         router = packet_router(configuration)
-        for assignment, expected in zip(record.plan.assignments, (550000, 4000000)):
+        for assignment, expected in zip(record.plan.assignments, (330000, 2400000)):
             packet = router.planned_work_packet(record, assignment)
             amount = _live_assignment_attempt_budget(record, configuration, assignment, packet)
             limits = ProviderAttemptBudget.from_usd(project_id=packet["project"], attempt_usd=amount,
                 task_usd=16, daily_usd=16)
             self.assertEqual(expected, limits.attempt_microusd)
-            self.assertEqual(3, packet["limits"]["retry_limit"])
+            self.assertEqual(5, packet["limits"]["retry_limit"])
 
     def test_defaults_keep_equal_allocation_and_configuration_is_generation_bound(self):
         configured = settings()
@@ -107,7 +107,7 @@ class PrimaryProviderBudgetTests(unittest.TestCase):
         self.assertEqual([1, 1], [item.estimated_cost_usd for item in record.plan.assignments])
         assignment = record.plan.assignments[0]
         packet = packet_router(default).planned_work_packet(record, assignment)
-        self.assertEqual(1 / 3, _live_assignment_attempt_budget(record, default, assignment, packet))
+        self.assertEqual(1 / 5, _live_assignment_attempt_budget(record, default, assignment, packet))
         self.assertNotEqual(deployment_digest(configured), deployment_digest(replace(configured,
             langgraph_primary_provider_attempt_budgets_usd_json="{}")))
 
@@ -156,7 +156,7 @@ class _LiveDispatchHarness:
     """The real Default activation and dispatch closure over synthetic I/O."""
 
     budgets = '{"claude":4,"grok":0.55}'
-    reserved_microusd = (550000, 4000000)
+    reserved_microusd = (330000, 2400000)
     extra_settings: dict = {}
     delegation_ledger = None
 
@@ -257,7 +257,7 @@ class _LiveDispatchHarness:
 
 class LiveBudgetBoundaryTests(_LiveDispatchHarness, unittest.TestCase):
     def test_real_readiness_and_dispatch_use_identical_heterogeneous_limits(self):
-        for index, expected in enumerate((0.55, 4.0)):
+        for index, expected in enumerate((0.33, 2.4)):
             reservation, connection = self.request(index)
             self.dispatch.preflight(reservation, writer=self.writer, connection=connection, wave_budget_usage={})
             with patch("director_orchestrator.primary_default.live_provider_admissions", return_value={}) as admission:
@@ -278,7 +278,7 @@ class LiveBudgetBoundaryTests(_LiveDispatchHarness, unittest.TestCase):
         self.assertEqual([], self.dispatch_contexts)
 
     def test_signed_reservation_signature_and_cumulative_caps_still_gate_before_calls(self):
-        for changes in ({"reserved":3999999}, {"signature":"0" * 64}, {"spent":12_000_001}):
+        for changes in ({"reserved":2399999}, {"signature":"0" * 64}, {"spent":13_600_001}):
             with self.subTest(changes=changes):
                 reservation, connection = self.request(1, **changes)
                 with self.assertRaises(PaidSetupHold):

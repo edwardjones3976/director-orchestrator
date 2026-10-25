@@ -18,6 +18,8 @@
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]]
 from __future__ import annotations
 
+from .workload_policy import MAX_PROVIDER_ATTEMPTS
+
 import asyncio
 import hashlib
 import math
@@ -531,7 +533,7 @@ class UsageMonitor:
             "store": False,
         }
         async with httpx.AsyncClient(timeout=180) as client:
-            for attempt_count in range(1, 3):
+            for attempt_count in range(1, MAX_PROVIDER_ATTEMPTS + 1):
                 try:
                     response = await client.post(
                         "https://api.openai.com/v1/responses",
@@ -546,7 +548,7 @@ class UsageMonitor:
                     ) from exc
                 if response.status_code == 429:
                     retry_delay = self._openai_usage_retry_delay(response)
-                    if attempt_count == 2 or retry_delay is None:
+                    if attempt_count == MAX_PROVIDER_ATTEMPTS or retry_delay is None:
                         raise ProviderError(
                             "OpenAI usage check received HTTP 429 without a safe recovery window",
                             code="http_429",

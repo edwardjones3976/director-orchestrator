@@ -28,6 +28,8 @@ from typing import Any, Iterable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .workload_policy import MAX_PROVIDER_ATTEMPTS, SUPPORTED_ATTEMPT_LIMITS
+
 _DIGEST_PATTERN = r"^[0-9a-f]{64}$"
 
 
@@ -269,7 +271,7 @@ class ProviderTransportEvidence(BaseModel):
     result_digest: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
     error_code: str | None = Field(default=None, min_length=1, max_length=100)
     ambiguity_reason: str | None = Field(default=None, min_length=1, max_length=500)
-    contact_attempt_ordinal: int | None = Field(default=None, ge=1, le=3)
+    contact_attempt_ordinal: int | None = Field(default=None, ge=1, le=MAX_PROVIDER_ATTEMPTS)
     sanitized_excerpt_digest: str | None = Field(default=None, pattern=_DIGEST_PATTERN)
     evidence_digest: str = Field(pattern=_DIGEST_PATTERN)
 
@@ -688,9 +690,9 @@ def transition_interaction(
     ):
         raise CommunicationEvidenceFailure("UNKNOWN requires an ambiguity reason or error code")
     if next_state == ProviderInteractionState.UNAVAILABLE:
-        if transport_evidence.contact_attempt_ordinal != 3:
+        if transport_evidence.contact_attempt_ordinal not in SUPPORTED_ATTEMPT_LIMITS:
             raise CommunicationEvidenceFailure(
-                "UNAVAILABLE requires the third real contact attempt"
+                "UNAVAILABLE requires the final real contact attempt (legacy 3 or current 5)"
             )
         if not transport_evidence.error_code:
             raise CommunicationEvidenceFailure("UNAVAILABLE requires a failure code")

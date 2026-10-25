@@ -605,7 +605,7 @@ class OverTargetCommitteeDispatchTests(CommitteeBridgeDispatchTests):
 
     def test_budget_and_signature_refusals_still_gate_before_any_call(self):
         from director_orchestrator.primary_parallel import PaidSetupHold
-        for changes in ({"spent": 15_500_001}, {"reserved": 499_999}, {"signature": "0" * 64}):
+        for changes in ({"spent": 15_700_001}, {"reserved": 299_999}, {"signature": "0" * 64}):
             with self.subTest(changes=changes):
                 reservation, connection = self.request(2, **changes)
                 with self.assertRaises(PaidSetupHold):

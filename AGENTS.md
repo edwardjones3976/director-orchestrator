@@ -50,6 +50,15 @@ Follow [Foreman project maintenance](docs/site-coordination.html#project-mainten
 Preserve active owners, recoverable work, exact-candidate review and all existing
 access, budget, security and release gates; maintain other projects separately.
 
+## Provider retries — owner amendment, 2026-10-24
+
+For Director-Orchestrator, allow one primary attempt plus at most four retries
+(five total) for both provider messages and jobs. Preserve stricter signed legacy
+grants, recorded counters, cancellation, time, token, budget and approval gates.
+Stop on success and reconcile ambiguous effects before retrying. Fallback and
+transport changes do not reset the budget; keep nested native retries disabled.
+Repair/revision limits are separate. See [Provider retry policy](docs/provider-retry-policy.html).
+
 ## Foreman-controlled repairs
 
 All Director-Orchestrator repairs are routed to the acting Foreman. Only that

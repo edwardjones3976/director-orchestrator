@@ -83,6 +83,8 @@
 # [[Codex | GPT-5.6 | 2026-08-22 23:12 UTC | CHANGE]]
 from __future__ import annotations
 
+from .workload_policy import MAX_PROVIDER_ATTEMPTS
+
 import hmac
 import json
 import math
@@ -385,7 +387,7 @@ class Settings:
         ).strip()
     )
     # Owner-configured per-attempt USD ceilings; {} preserves equal allocation.
-    # A nonempty map must cover every selected lane; the three-attempt ceiling
+    # A nonempty map must cover every selected lane; the bound attempt ceiling
     # binds its pre-approval assignment budget, within MAX_TASK_BUDGET_USD.
     langgraph_primary_provider_attempt_budgets_usd_json: str = field(
         default_factory=lambda: os.getenv(
@@ -882,7 +884,7 @@ class Settings:
 
     cursor_api_key: str = os.getenv("CURSOR_API_KEY", "")
     cursor_api_base: str = os.getenv("CURSOR_API_BASE", "https://api.cursor.com")
-    cursor_dispatch_max_attempts: int = _int("CURSOR_DISPATCH_MAX_ATTEMPTS", 4)
+    cursor_dispatch_max_attempts: int = _int("CURSOR_DISPATCH_MAX_ATTEMPTS", MAX_PROVIDER_ATTEMPTS)
     cursor_dispatch_max_retry_delay_seconds: int = _int(
         "CURSOR_DISPATCH_MAX_RETRY_DELAY_SECONDS", 60
     )
@@ -904,7 +906,7 @@ class Settings:
     gemini_usage_model: str = os.getenv(
         "GEMINI_USAGE_MODEL", "gemini-3.5-flash-lite"
     )
-    gemini_usage_max_attempts: int = _int("GEMINI_USAGE_MAX_ATTEMPTS", 3)
+    gemini_usage_max_attempts: int = _int("GEMINI_USAGE_MAX_ATTEMPTS", MAX_PROVIDER_ATTEMPTS)
     gemini_usage_max_retry_delay_seconds: int = _int(
         "GEMINI_USAGE_MAX_RETRY_DELAY_SECONDS", 8
     )

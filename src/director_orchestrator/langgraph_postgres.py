@@ -1324,7 +1324,7 @@ def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
             deployment_id text NOT NULL,
             dependencies jsonb NOT NULL,
             write_surfaces jsonb NOT NULL,
-            retry_limit integer NOT NULL CHECK (retry_limit = 3),
+            retry_limit integer NOT NULL CHECK (retry_limit IN (3, 5)),
             status text NOT NULL CHECK (status IN (
                 'PENDING', 'ACTIVE', 'AMBIGUOUS', 'SUCCEEDED', 'FAILED'
             )),
@@ -1405,7 +1405,7 @@ def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
         CREATE TABLE IF NOT EXISTS {schema}.director_primary_provider_attempt (
             task_id text NOT NULL,
             assignment_id text NOT NULL,
-            attempt_ordinal integer NOT NULL CHECK (attempt_ordinal BETWEEN 1 AND 3),
+            attempt_ordinal integer NOT NULL CHECK (attempt_ordinal BETWEEN 1 AND 5),
             event_sequence integer NOT NULL CHECK (event_sequence IN (1, 2, 3)),
             provider_id text NOT NULL,
             format_id text NOT NULL,
@@ -1441,6 +1441,24 @@ def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
                     task_id, assignment_id
                 )
         )
+        """,
+        f"""
+        ALTER TABLE {schema}.director_primary_parallel_assignment
+        DROP CONSTRAINT IF EXISTS director_primary_parallel_assignment_retry_limit_check
+        """,
+        f"""
+        ALTER TABLE {schema}.director_primary_parallel_assignment
+        ADD CONSTRAINT director_primary_parallel_assignment_retry_limit_check
+        CHECK (retry_limit IN (3, 5))
+        """,
+        f"""
+        ALTER TABLE {schema}.director_primary_provider_attempt
+        DROP CONSTRAINT IF EXISTS director_primary_provider_attempt_attempt_ordinal_check
+        """,
+        f"""
+        ALTER TABLE {schema}.director_primary_provider_attempt
+        ADD CONSTRAINT director_primary_provider_attempt_attempt_ordinal_check
+        CHECK (attempt_ordinal BETWEEN 1 AND 5)
         """,
         f"""
         ALTER TABLE {schema}.director_primary_provider_attempt
@@ -1936,7 +1954,7 @@ def _validated_result_packet(
 # (primary_scorecard_evidence.task_evidence_errors) the same shapes.
 _QUALIFICATION_SECTIONS = {
     "assignments": (
-        """assignment_id, sequence, provider_id, deployment_id, status,
+        """assignment_id, sequence, provider_id, deployment_id, status, retry_limit,
                reservation_digest, result_digest, reason_code, reserved_at, completed_at""",
         "{schema}.director_primary_parallel_assignment", "task_id", "sequence, assignment_id"),
     "provider_attempts": (

@@ -322,7 +322,7 @@ carries scope, candidate, tests, stopping conditions and owner authorization.</l
 <li><code>transport</code>: one existing policy value: <code>local_cli</code>, <code>director_adapter</code>,
 <code>github_slack</code>, <code>provider_api</code>, or <code>browser</code>.</li>
 <li><code>bounds</code>: positive total <code>timeout_seconds</code>, <code>turn_limit</code>, <code>output_bytes_limit</code>,
-<code>call_limit</code> between 1 and 3; <code>usd_limit</code> is a positive number or <code>null</code>;
+<code>call_limit</code> between 1 and 5; <code>usd_limit</code> is a positive number or <code>null</code>;
 <code>hard_usd_cap_verified</code> is a required boolean. A verified cap requires
 <code>usd_cap_evidence</code>. Otherwise an <code>unverified_billing_authorization</code> evidence
 reference is mandatory. Unknown billing must never be written as zero.</li>
@@ -346,11 +346,13 @@ leaves an unknown outcome and cannot be retried as if no dispatch happened.</p>
 <code>turns</code>, and <code>output_bytes</code>. Each usage value can be <code>null</code> when unknown. Retain
 the actual observation even when it exceeds the bound; status flags overages.
 The outcome cannot subsequently be rewritten to a different result.</p>
-<p>One primary attempt is allowed. The second requires a recorded transient failure.
-The third requires a materially different transport or <code>--new-information &lt;evidence.json&gt;</code>. Total time, calls, turns, output and any declared dollar budget
+<p>New Director grants allow one initial attempt plus four retries, at most five total.
+A recorded transient failure permits retry; a nontransient later retry needs a materially
+different transport or <code>--new-information &lt;evidence.json&gt;</code>. Legacy grants of
+three calls retain their earlier conditions. Total time, calls, turns, output and any declared dollar budget
 are checked before each attempt. Unknown remaining metered cost or unknown output/
 turn usage blocks retry. An ambiguous dispatch never automatically retries, even
-with new information. Three recorded consecutive non-success outcomes make that
+with new information. Five recorded consecutive non-success outcomes make that
 enrolled route unavailable; select an eligible fallback, preserving the failed rows.
 Restoring that route requires a separately reviewed recovery migration; creating
 a new journal or changing the product's name is not a recovery.</p>

@@ -90,6 +90,7 @@ from .models import (
     WorkloadEnforcementRecord,
 )
 from .workload_policy import (
+    MAX_PROVIDER_ATTEMPTS,
     PREVIEW_PROHIBITED_SCOPE,
     AssignmentRequest,
     EnforcementMode,
@@ -2166,6 +2167,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
         else preview_repository
     )
     assignment = Assignment(
+        retry_limit=MAX_PROVIDER_ATTEMPTS,
         sequence=1,
         agent=provider,
         kind=assignment_kind,
@@ -2184,6 +2186,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
     if provider == ProviderName.GEMINI:
         assignments.append(
             Assignment(
+                retry_limit=MAX_PROVIDER_ATTEMPTS,
                 sequence=2,
                 agent=ProviderName.CLAUDE,
                 kind=AssignmentKind.IMPLEMENTATION,
@@ -2206,6 +2209,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
     reviewed_sequence = assignments[-1].sequence
     assignments.append(
         Assignment(
+            retry_limit=MAX_PROVIDER_ATTEMPTS,
             sequence=reviewed_sequence + 1,
             agent=reviewer,
             kind=AssignmentKind.INDEPENDENT_REVIEW,
@@ -2263,7 +2267,7 @@ def preview_plan(text: str, settings: Settings) -> DirectorPlan:
                 _trusted_v1_assignment(item).effort_points for item in assignments
             ),
             timeout_seconds=max(1, settings.provider_timeout_seconds),
-            retry_limit=3,
+            retry_limit=MAX_PROVIDER_ATTEMPTS,
             merge_eligibility_conditions=("A fresh exact-SHA plan is required",),
             stopping_conditions=("Stop before any provider dispatch",),
         ),

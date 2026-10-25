@@ -72,7 +72,7 @@ roles:
     provider_or_committee_member: false
     workload_percentage: null
     trigger: "request_after_checks_green_and_exact_candidate_freeze"
-    attempts: "conditional_maximum_three"
+    attempts: "conditional_maximum_five"
     automatic_every_push: false
     gating: false
     authority_granted: []
@@ -178,7 +178,7 @@ transports:
     config: ["LANGGRAPH_PRIMARY_LIVE_PROVIDER_DISPATCH_ENABLED", "COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]
     authority_note: "One requested hygiene observation bound to a frozen exact candidate. Advisory evidence only; it cannot approve, merge, deploy, publish, change permissions, or waive deterministic evidence."
     current_transport_constraints:
-      - "at most three conditional attempt slots; stop on success, recovery needs temporary failure, a third attempt needs materially new information or a different transport"
+      - "at most five total attempt slots; stop on success, preserve stricter signed grants and resource bounds, and reconcile ambiguous dispatch before retry"
       - "live dispatch stays off until the primary activation gates pass"
     route_id: "github-copilot-lite-review"
     browser_policy: null

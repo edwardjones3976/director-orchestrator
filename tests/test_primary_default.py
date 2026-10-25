@@ -3316,6 +3316,62 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
         self.assertTrue(readiness.writer_lease_ready)
         self.assertTrue(readiness.legacy_new_intake_disabled)
 
+    def test_five_and_legacy_three_attempt_grants_survive_restart_and_schema_upgrade(self):
+        for limit in (3, 5):
+            with self.subTest(limit=limit), patch(
+                "director_orchestrator.policy.MAX_PROVIDER_ATTEMPTS", limit
+            ):
+                record = self.application.create_intake(
+                    self.intake().model_copy(update={"source_event_id": f"retry-{limit}"}),
+                    intake_authentication=IntakeAuthentication.BEARER_DRY_RUN,
+                )
+            reservation = self.coordinator.reserve_parallel_ready(
+                task_id=record.task_id, policy=self.application._parallel_policy(),
+            )[0]
+            if limit == 3:
+                with self.handle.pool.connection() as connection:
+                    before = connection.execute(
+                        f"SELECT * FROM {self.schema}.director_primary_parallel_assignment "
+                        "WHERE task_id=%s ORDER BY sequence", (record.task_id,),
+                    ).fetchall()
+                    connection.execute(f"ALTER TABLE {self.schema}.director_primary_parallel_assignment "
+                        "DROP CONSTRAINT director_primary_parallel_assignment_retry_limit_check")
+                    connection.execute(f"ALTER TABLE {self.schema}.director_primary_parallel_assignment "
+                        "ADD CONSTRAINT director_primary_parallel_assignment_retry_limit_check CHECK (retry_limit=3)")
+                    connection.execute(f"ALTER TABLE {self.schema}.director_primary_provider_attempt "
+                        "DROP CONSTRAINT director_primary_provider_attempt_attempt_ordinal_check")
+                    connection.execute(f"ALTER TABLE {self.schema}.director_primary_provider_attempt "
+                        "ADD CONSTRAINT director_primary_provider_attempt_attempt_ordinal_check CHECK (attempt_ordinal BETWEEN 1 AND 3)")
+            with open_postgres_control_plane(TEST_DSN, schema=self.schema,
+                                            allow_insecure_local_transport=True) as restarted:
+                if limit == 3:
+                    with restarted.pool.connection() as connection:
+                        after = connection.execute(
+                            f"SELECT * FROM {self.schema}.director_primary_parallel_assignment "
+                            "WHERE task_id=%s ORDER BY sequence", (record.task_id,),
+                        ).fetchall()
+                    self.assertEqual(before, after)
+                writer = restarted.claim_store.current_task_writer(record.task_id)
+                self.assertIsNotNone(writer)
+
+                def reserve(ordinal):
+                    return PostgresParallelDispatch(restarted.claim_store).reserve_provider_attempt(
+                        reservation=reservation, writer=writer, attempt_ordinal=ordinal,
+                        format_roster=((("json", "api"), ("text", "cli"), ("third", "api"))
+                                       if limit == 3 else (("json", "api"),)),
+                        idempotency_key_digest=digest(f"retry-{limit}-{ordinal}"),
+                        budget_evidence_digest=digest("budget"),
+                    )
+
+                for ordinal in range(1, limit + 1):
+                    attempt = reserve(ordinal)
+                    PostgresParallelDispatch(restarted.claim_store).record_provider_attempt(
+                        attempt=attempt, writer=writer, status=ParallelAssignmentStatus.FAILED,
+                        result_digest=None, reason_code=PROVIDER_TRANSIENT_TRANSPORT_FAILURE,
+                    )
+                with self.assertRaises(ParallelDispatchError):
+                    reserve(limit + 1)
+
     def test_provider_attempt_ledger_orders_formats_and_restart_blocks_ambiguity(self):
         record = self.application.create_intake(
             self.intake().model_copy(update={"source_event_id": "attempt-ledger"}),
@@ -3396,7 +3452,7 @@ class DefaultPrimaryApplicationIntegrationTests(unittest.TestCase):
             ("terminal", "api", "cli", None, "authenticated_failure",
              "provider_retry_requires_transient_failure"),
             ("same-third", "api", "cli", "cli",
-             PROVIDER_TRANSIENT_TRANSPORT_FAILURE, "provider_retry_evidence_insufficient"),
+             PROVIDER_TRANSIENT_TRANSPORT_FAILURE, None),
             ("unknown-third", "api", "cli", "unknown-a",
              PROVIDER_TRANSIENT_TRANSPORT_FAILURE, "provider_retry_transport_unknown"),
             ("unknown-previous", "unknown-a", "cli", None,

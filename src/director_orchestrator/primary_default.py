@@ -266,7 +266,7 @@ from .primary_parallel import (
     completion_deadline,
     deterministic_format_roster,
 )
-from .workload_policy import FailureKind
+from .workload_policy import LEGACY_PROVIDER_ATTEMPTS, MAX_PROVIDER_ATTEMPTS, SUPPORTED_ATTEMPT_LIMITS, FailureKind
 from .primary_transports import (
     build_graph_native_packet_adapters,
     discover_local_primary_command_transports,
@@ -317,8 +317,9 @@ def _execute_three_attempt_roster(
     ],
     dispatch_attempt: Callable[[ProviderAttemptReservation], Mapping[str, Any]],
     retry_allowed: Callable[[], bool] | None = None,
+    retry_limit: int = LEGACY_PROVIDER_ATTEMPTS,
 ) -> tuple[ParallelAssignmentStatus, Mapping[str, Any] | None, str | None, str]:
-    """Run up to three bounded slots; stop after authenticated success.
+    """Run the bound attempt budget; retain the historical helper name.
 
     ``retry_allowed`` is asked before every retry is reserved; False stops the
     roster with ``small_task_review_tokens_exhausted`` and reserves nothing.
@@ -327,10 +328,12 @@ def _execute_three_attempt_roster(
     from .primary_parallel import PROVIDER_REFUSED_BEFORE_IO
     from .primary_workload import ProvenNoRunHold, WorkloadAdmissionHold
 
-    if not 1 <= len(format_roster) <= 3:
-        raise RuntimeError("provider format roster must contain one to three entries")
+    if type(retry_limit) is not int or retry_limit not in SUPPORTED_ATTEMPT_LIMITS:
+        raise RuntimeError("provider attempt budget must be exactly 3 (legacy) or 5")
+    if not 1 <= len(format_roster) <= retry_limit:
+        raise RuntimeError("provider format roster exceeds its attempt budget")
     last_digest: str | None = None
-    for attempt_ordinal in range(1, 4):
+    for attempt_ordinal in range(1, retry_limit + 1):
         if attempt_ordinal > 1 and retry_allowed is not None and not retry_allowed():
             return (
                 ParallelAssignmentStatus.FAILED,
@@ -391,7 +394,7 @@ def _execute_three_attempt_roster(
                     None,
                     PROVIDER_TRANSIENT_TRANSPORT_FAILURE,
                 )
-                if attempt_ordinal >= 3:
+                if attempt_ordinal >= retry_limit:
                     return (
                         ParallelAssignmentStatus.FAILED,
                         None,
@@ -404,6 +407,7 @@ def _execute_three_attempt_roster(
                     previous_failure=failure_kind,
                     transport_id=next_transport_id,
                     previous_transport_id=attempt.transport_id,
+                    retry_limit=retry_limit,
                 )
                 if not authorized:
                     return (
@@ -446,7 +450,7 @@ def _execute_three_attempt_roster(
             last_digest,
             "provider_reported_non_success",
         )
-        if attempt_ordinal >= 3:
+        if attempt_ordinal >= retry_limit:
             return (
                 ParallelAssignmentStatus.FAILED,
                 None,
@@ -466,6 +470,7 @@ def _execute_three_attempt_roster(
             previous_failure=failure_kind,
             transport_id=next_transport_id,
             previous_transport_id=attempt.transport_id,
+            retry_limit=retry_limit,
         )
         if not authorized:
             return (
@@ -810,7 +815,9 @@ def _typed_effect_binding(
     raise RuntimeError("external effect action is unsupported")
 
 
-def _live_assignment_budgets(settings: Settings, providers: tuple[str, ...]) -> tuple[float, ...]:
+def _live_assignment_budgets(
+    settings: Settings, providers: tuple[str, ...], *, retry_limits: tuple[int, ...] | None = None,
+) -> tuple[float, ...]:
     """Freeze deployment-controlled ceilings before the owner's plan approval."""
     task_budget = Decimal(str(settings.max_task_budget_usd))
     if not providers or not task_budget.is_finite() or task_budget <= 0:
@@ -820,7 +827,11 @@ def _live_assignment_budgets(settings: Settings, providers: tuple[str, ...]) -> 
         return (float(task_budget) / len(providers),) * len(providers)
     if any(provider not in configured for provider in providers):
         raise ValueError("primary provider budgets must cover every selected lane")
-    budgets = tuple(configured[provider] * 3 for provider in providers)
+    limits = retry_limits if retry_limits is not None else (MAX_PROVIDER_ATTEMPTS,) * len(providers)
+    if len(limits) != len(providers) or any(limit not in SUPPORTED_ATTEMPT_LIMITS for limit in limits):
+        raise ValueError("assignment retry limits must match the selected providers")
+    # More retry slots divide the existing whole-assignment money envelope.
+    budgets = tuple(configured[provider] * LEGACY_PROVIDER_ATTEMPTS for provider in providers)
     if sum(budgets) > task_budget:
         raise ValueError("primary provider assignment budgets exceed the configured task budget")
     return tuple(float(amount) for amount in budgets)
@@ -834,12 +845,12 @@ def _live_assignment_attempt_budget(
         raise ValueError("live provider budget requires a plan")
     assignments = record.plan.assignments
     providers = tuple(_assignment_provider_lane(item) for item in assignments)
-    expected = _live_assignment_budgets(settings, providers)
+    expected = _live_assignment_budgets(settings, providers, retry_limits=tuple(item.retry_limit for item in assignments))
     configured = settings.primary_provider_attempt_budgets_usd()
     amounts = tuple(Decimal(str(item.estimated_cost_usd)) for item in assignments)
     if (any(not amount.is_finite() or amount <= 0 for amount in amounts)
             or math.fsum(float(amount) for amount in amounts) > settings.max_task_budget_usd
-            or any(item.retry_limit != 3 for item in assignments)):
+            or any(item.retry_limit not in SUPPORTED_ATTEMPT_LIMITS for item in assignments)):
         raise ValueError("live provider plan exceeds its budget or retry ceiling")
     if configured and amounts != tuple(Decimal(str(amount)) for amount in expected):
         raise ValueError("live provider plan differs from configured assignment budgets")
@@ -847,13 +858,14 @@ def _live_assignment_attempt_budget(
         raise ValueError("live provider assignment is not in the approved plan")
     amount = Decimal(str(assignment.estimated_cost_usd))
     limits = packet["limits"]
-    if (Decimal(str(limits["budget_usd"])) != amount or limits["retry_limit"] != 3):
+    if (Decimal(str(limits["budget_usd"])) != amount or limits["retry_limit"] != assignment.retry_limit):
         raise ValueError("live provider packet budget or retry binding changed")
-    # The exact configured ceiling already binds three slots in this packet.
+    # The configured ceiling binds this packet's immutable attempt count.
     # Keep the historical arithmetic unchanged when no override was configured.
     if configured:
-        return float(configured[_assignment_provider_lane(assignment)])
-    return float(amount) / 3.0
+        return min(float(configured[_assignment_provider_lane(assignment)]),
+                   float(amount / assignment.retry_limit))
+    return float(amount / assignment.retry_limit)
 
 
 def _small_review_view_bytes(packet: Mapping[str, Any]) -> int:
@@ -1498,7 +1510,7 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
                     "depends_on": ([1] if selected.research and lane == selected.producer else []),
                     "requires_approval": is_research,
                     "allow_draft_pr": False,
-                    "retry_limit": 3,
+                    "retry_limit": MAX_PROVIDER_ATTEMPTS,
                     "estimated_cost_usd": lane_budgets[sequence - 1],
                 }
             )
@@ -1525,7 +1537,7 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
                 "depends_on": [],
                 "requires_approval": False,
                 "allow_draft_pr": False,
-                "retry_limit": 3,
+                "retry_limit": MAX_PROVIDER_ATTEMPTS,
                 "estimated_cost_usd": lane_budgets[len(first_wave)],
                 "discussion_phase": DiscussionPhase.POSITION,
                 "discussion_round": 0,
@@ -1552,7 +1564,7 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
             "depends_on": [item.sequence for item in first_wave],
             "requires_approval": False,
             "allow_draft_pr": False,
-            "retry_limit": 3,
+            "retry_limit": MAX_PROVIDER_ATTEMPTS,
             "estimated_cost_usd": lane_budgets[-1],
         }
     )
@@ -3030,7 +3042,7 @@ class DefaultPrimaryApplication:
                 allocation_profile=item.allocation_profile,
                 dependencies=tuple(identifiers[sequence] for sequence in item.depends_on),
                 write_surfaces=("repository-write",) if item.allow_draft_pr else (),
-                retry_limit=3,
+                retry_limit=item.retry_limit,
             )
             for item in sorted(record.plan.assignments, key=lambda value: value.sequence)
         )
@@ -4524,7 +4536,7 @@ class DefaultPrimaryActivation:
                         from .antigravity_team_routing import TEAM_FORMAT
                         format_roster=(TEAM_FORMAT,)
                     attempt_timeout_seconds = max(
-                        1, int(limits["timeout_seconds"]) // 3
+                        1, int(limits["timeout_seconds"]) // assignment.retry_limit
                     )
                     budget_evidence_digest = _digest(
                         {
@@ -4532,7 +4544,7 @@ class DefaultPrimaryActivation:
                             "assignment_timeout_seconds": int(limits["timeout_seconds"]),
                             "attempt_budget_usd": attempt_budget_usd,
                             "attempt_timeout_seconds": attempt_timeout_seconds,
-                            "attempt_limit": 3,
+                            "attempt_limit": assignment.retry_limit,
                         }
                     )
                     selection_key = (record.task_id, assignment_id)
@@ -4886,6 +4898,7 @@ class DefaultPrimaryActivation:
                         attempt_status, result, result_digest, attempt_reason = (
                             _execute_three_attempt_roster(
                                 format_roster=format_roster,
+                                retry_limit=assignment.retry_limit,
                                 reserve_attempt=reserve_attempt,
                                 record_attempt=record_attempt,
                                 dispatch_attempt=dispatch_attempt,

@@ -35,10 +35,11 @@ from .langgraph_runtime import ProviderAdapterContext
 from .native_acceptance_issuer import IssuerError
 from .packet_contracts import PacketContractError, document_digest, validate_packet
 from .zai_trial import ENDPOINT, TRIAL_END, build_zai_trial_adapter
+from .workload_policy import MAX_PROVIDER_ATTEMPTS
 
 LEDGER_VERSION = "zai-trial-ledger/v1"
-# Welcome packet rule: after three recorded failures the route is unavailable.
-MAX_RECORDED_FAILURES = 3
+# Owner amendment: the initial attempt plus four retries share one limit.
+MAX_RECORDED_FAILURES = MAX_PROVIDER_ATTEMPTS
 # SUCCEEDED / FAILED / AMBIGUOUS describe an attempt that reached the provider.
 # REFUSED means a deterministic check stopped it before any provider contact (the
 # attempt is not consumed). BLOCKED means Z.ai answered OWNER_DECISION_REQUIRED:
@@ -323,7 +324,7 @@ class ZaiTrialLedger:
         attempt_id = attempt_id_for(idempotency_key)
         with self._lock, self._connect() as connection:
             if self._recorded_failures(connection) >= MAX_RECORDED_FAILURES:
-                raise ZaiTrialLedgerError("zai_route_unavailable_after_three_failures")
+                raise ZaiTrialLedgerError("zai_route_unavailable_after_five_failures")
             if connection.execute(
                 "SELECT 1 FROM zai_trial_attempts WHERE attempt_id = ?", (attempt_id,)
             ).fetchone():

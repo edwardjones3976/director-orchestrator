@@ -2092,7 +2092,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 notifier.posts[1]["thread_ts"], "1700000000.000001"
             )
 
-    async def test_three_slack_failures_fall_back_without_repeating_paid_work(self):
+    async def test_five_slack_failures_fall_back_without_repeating_paid_work(self):
         class CountingDirector:
             def __init__(self):
                 self.review_calls = 0
@@ -2176,19 +2176,19 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(adapter.calls, 1)
             self.assertEqual(director.review_calls, 1)
             self.assertEqual(len(completed.assignment_outcomes), 1)
-            self.assertEqual(len(notifier.result_attempt_ids), 3)
+            self.assertEqual(len(notifier.result_attempt_ids), 5)
             self.assertEqual(len(set(notifier.result_attempt_ids)), 1)
-            self.assertEqual(len(completed.collaboration_delivery_errors), 3)
+            self.assertEqual(len(completed.collaboration_delivery_errors), 5)
             self.assertEqual(
                 [
                     error.split(" ", 2)[1]
                     for error in completed.collaboration_delivery_errors
                 ],
-                ["attempt=1/3", "attempt=2/3", "attempt=3/3"],
+                [f"attempt={ordinal}/5" for ordinal in range(1, 6)],
             )
             self.assertTrue(completed.collaboration_fallback_active)
             self.assertIn(
-                "Slack was unavailable after three bounded idempotent attempts",
+                "Slack was unavailable after five bounded idempotent attempts",
                 completed.collaboration_fallback_reason,
             )
             self.assertEqual(
@@ -2214,7 +2214,7 @@ class SlackDebateRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(resumed.status, TaskStatus.DONE)
             self.assertEqual(adapter.calls, 1)
             self.assertEqual(director.review_calls, 1)
-            self.assertEqual(len(notifier.result_attempt_ids), 3)
+            self.assertEqual(len(notifier.result_attempt_ids), 5)
             self.assertEqual(len(notifier.posts), post_count)
 
     async def test_runtime_uses_one_thread_structured_turns_and_deterministic_tally(self):

@@ -511,10 +511,9 @@ class EngineeringWorkloadLedgerTests(unittest.TestCase):
         third = self.ledger.begin_attempt("test-1", transport="browser")
         self.assertEqual(third["attempt_number"], 3)
         self.ledger.record_outcome("test-1", 3, result("failed"))
-        with self.assertRaisesRegex(LedgerError, "route_unavailable"):
+        with self.assertRaisesRegex(LedgerError, "call_budget_exhausted"):
             self.ledger.begin_attempt("test-1", transport="provider_api")
-        with self.assertRaisesRegex(LedgerError, "route_unavailable"):
-            self.ledger.reserve(request(2))
+        self.ledger.reserve(request(2))  # New assignment does not reset the shared failure history.
 
     def test_third_attempt_may_use_actual_new_information_evidence(self):
         self.bootstrap()

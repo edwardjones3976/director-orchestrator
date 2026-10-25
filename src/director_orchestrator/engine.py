@@ -216,6 +216,7 @@ from .store import (
 )
 from .team_charter import AdvisoryVote, tally_advisory_votes, team_operating_charter
 from .workload_policy import (
+    MAX_PROVIDER_ATTEMPTS,
     DirectProductionRecord,
     EnforcementMode as WorkloadEnforcementMode,
     FailureKind as WorkloadFailureKind,
@@ -4070,7 +4071,7 @@ class OrchestrationEngine:
     async def _deliver_collaboration_message(
         self, record: TaskRecord, message: str, **kwargs
     ) -> tuple[bool, str | None]:
-        """Try Slack three times, then permanently use the durable fallback path.
+        """Try Slack within one persisted five-attempt budget, then use fallback.
 
         The same client message ID is reused for every attempt so a lost Slack
         response cannot create duplicate posts. Falling back never repeats paid
@@ -4110,6 +4111,10 @@ class OrchestrationEngine:
                     "plan_generation": record.plan_generation,
                 },
             )
+            prior_intent = any(
+                item.effect_key == slack_effect_key and item.kind == "slack_intent"
+                for item in record.task_effect_ledger
+            )
             reserve_task_effect(
                 record,
                 effect_key=slack_effect_key,
@@ -4142,11 +4147,23 @@ class OrchestrationEngine:
                     self.store.save(record)
                     return True, None
                 return True, record.collaboration_thread_ts
+            if prior_intent and slack_effect_key not in record.collaboration_delivery_attempts:
+                record.collaboration_fallback_active = True
+                record.collaboration_fallback_reason = (
+                    "Legacy Slack intent has no authoritative attempt count; "
+                    "delivery requires reconciliation before retry."
+                )
+                self.store.save(record)
+                return True, None
             # Slack's stable client_msg_id is the transport idempotency key. A
             # restart may retry the same key, but cannot create a second
             # externally visible message. Persist the opaque intent first.
             self.store.save(record)
-        for attempt in range(1, 4):
+        assert slack_effect_key is not None
+        used = record.collaboration_delivery_attempts.get(slack_effect_key, 0)
+        for attempt in range(used + 1, MAX_PROVIDER_ATTEMPTS + 1):
+            record.collaboration_delivery_attempts[slack_effect_key] = attempt
+            self.store.save(record)
             try:
                 timestamp = await self.notifier.post(record, message, **kwargs)
                 if self.settings.slack_bot_token and not timestamp:
@@ -4168,14 +4185,14 @@ class OrchestrationEngine:
                 return True, timestamp
             except Exception as exc:
                 error = (
-                    f"event={event_id} attempt={attempt}/3 "
+                    f"event={event_id} attempt={attempt}/{MAX_PROVIDER_ATTEMPTS} "
                     f"{type(exc).__name__}"
                 )[:500]
                 record.collaboration_delivery_errors = (
                     record.collaboration_delivery_errors + [error]
                 )[-20:]
                 self.store.save(record)
-                if attempt < 3:
+                if attempt < MAX_PROVIDER_ATTEMPTS:
                     await asyncio.sleep(0)
 
         if slack_effect_key is not None:
@@ -4189,7 +4206,7 @@ class OrchestrationEngine:
             )
         record.collaboration_fallback_active = True
         record.collaboration_fallback_reason = (
-            "Slack was unavailable after three bounded idempotent attempts; continuing through "
+            "Slack was unavailable after five bounded idempotent attempts; continuing through "
             "the prior durable SQLite/API state and provider-native run evidence paths."
         )
         self.store.save(record)

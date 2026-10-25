@@ -393,7 +393,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             directive["copilot_lite_hygiene_review"]["attempts"],
-            "conditional_maximum_three",
+            "conditional_maximum_five",
         )
         self.assertTrue(
             directive["pre_staging"]["required_before_provider_dispatch"]

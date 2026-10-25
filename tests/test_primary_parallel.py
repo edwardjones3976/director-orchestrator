@@ -167,7 +167,7 @@ class ParallelPlanValidationTests(unittest.TestCase):
         self.assertEqual(("json", "api"), format_for_attempt(roster, 3))
         with self.assertRaisesRegex(ParallelDispatchError, "exceeds"):
             deterministic_format_roster(
-                (("a", "api"), ("b", "api"), ("c", "api"), ("d", "api"))
+                (("a", "api"), ("b", "api"), ("c", "api"), ("d", "api"), ("e", "api"), ("f", "api"))
             )
 
     def test_plan_size_and_sequence_have_no_parallel_workload_ceiling(self) -> None:

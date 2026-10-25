@@ -203,6 +203,7 @@ def readback_fixture():
         "bounds": {"row_limit": 200, "byte_limit": 262144, "wall_seconds": 5.0, "elapsed_seconds": 0.01},
         "truncated": [], "absent": [], "complete": True,
         "assignments": [{"assignment_id": assignment, "sequence": 1, "provider_id": "claude",
+                         "retry_limit": 3,
                          "deployment_id": "dep-1", "status": "SUCCEEDED", "reservation_digest": "sha256:" + "a" * 64,
                          "result_digest": "sha256:" + "2" * 64, "reason_code": "completed",
                          "reserved_at": "2026-09-12T10:00:05+00:00", "completed_at": "2026-09-12T10:00:25+00:00"}],
