@@ -1738,14 +1738,14 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
     def test_command_child_receives_only_the_remaining_carried_bound_through_the_constructor(self):
         """The real `NativeCommandPacketTransport` at the end of the real dispatch path.
 
-        Readiness fixes this assignment's bound six seconds out, from a packet
-        whose own timeout is six, so each attempt's relative timeout is two.
+        Readiness fixes this assignment's bound fifteen seconds out, from a packet
+        whose own timeout is fifteen, so each attempt's relative timeout is three.
         Dispatch is then delayed: only the transport module's clock is
-        advanced four seconds, so every dispatcher-side check has passed on
+        advanced thirteen seconds, so every dispatcher-side check has passed on
         the real clock and the transport is the one to notice that under two
         seconds of the carried bound remain - the case readiness's own
         refusal cannot cover. The child must be given that remainder, less
-        than the two-second relative timeout, and the attempt still settles
+        than the three-second relative timeout, and the attempt still settles
         normally. The launch is synthetic; readiness, admission, the
         coordinator, the context, the transport and its cutoff arithmetic
         are real.
@@ -1753,7 +1753,7 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             transport = NativeCommandPacketTransport(
                 "openai", ("native-cli.exe", "--print"), cwd=directory, prompt_mode="stdin")
-            wave = self._ready_wave(transport=transport, provider_timeout_seconds=6)
+            wave = self._ready_wave(transport=transport, provider_timeout_seconds=15)
             launch = _FakeLaunch(stdout=NATIVE_ENVELOPE)
             contexts = []
             original_send = transport.send
@@ -1765,12 +1765,12 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
             transport.send = observed_send
             with patch(LAUNCH_SEAM, launch), \
                  patch("director_orchestrator.primary_transports.monotonic",
-                       lambda: real_monotonic() + 4.0):
+                       lambda: real_monotonic() + 13.0):
                 outcome = wave.activation.application._parallel_dispatcher(wave.reservation)
         self.assertEqual(1, len(launch.calls))
         [context] = contexts
         self.assertIsNotNone(context.deadline, "the constructor carried the readiness bound")
-        self.assertEqual(2, context.timeout_seconds, "the packet's six seconds, one third per attempt")
+        self.assertEqual(3, context.timeout_seconds, "the packet's fifteen seconds, one fifth per attempt")
         self.assertGreater(launch.waits[0], 1.0, "the carried remainder after the delay")
         self.assertLess(launch.waits[0], context.timeout_seconds,
                         "never the relative timeout the delay would otherwise restart")
@@ -1845,13 +1845,13 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
     def test_responses_requests_receive_only_the_remaining_carried_bound_through_the_constructor(self):
         """The narrow Responses counterpart: both requests are bounded by the carried remainder.
 
-        The same six-second bound and four-second delayed dispatch. The count
+        The same fifteen-second bound and thirteen-second delayed dispatch. The count
         and generation requests each carry an HTTPX timeout of what is left
-        of the carried bound - under the two-second relative timeout - and
+        of the carried bound - under the three-second relative timeout - and
         the attempt then settles through the real meter. With the transport's
         clock advanced past the bound instead, no request is made at all.
         """
-        wave = self._enrolled_wave(provider_timeout_seconds=6)
+        wave = self._enrolled_wave(provider_timeout_seconds=15)
         timeouts, contexts = [], []
         original_send = wave.transport.send
 
@@ -1881,12 +1881,12 @@ class RealResponsesTransportCompositionTests(unittest.TestCase):
         self.addCleanup(lambda: asyncio.run(client.aclose()))
         with patch("director_orchestrator.primary_transports.httpx.AsyncClient", return_value=client), \
              patch("director_orchestrator.primary_transports.monotonic",
-                   lambda: real_monotonic() + 4.0):
+                   lambda: real_monotonic() + 13.0):
             outcome = wave.activation.application._parallel_dispatcher(wave.reservation)
         self.assertEqual(ParallelAssignmentStatus.SUCCEEDED, outcome.status,
                          f"dispatch outcome: {outcome.status} / {outcome.reason_code}")
         [context] = contexts
-        self.assertEqual(2, context.timeout_seconds)
+        self.assertEqual(3, context.timeout_seconds)
         self.assertEqual(2, len(timeouts), "one count and one generation request")
         for observed in timeouts:
             self.assertGreater(observed, 0.0)

@@ -107,6 +107,15 @@ class PacketContractTests(unittest.TestCase):
 
         self.assertEqual(verified.document, build_replay_run(self.work, self.result))
 
+    def test_new_five_attempt_packet_does_not_rewrite_the_historical_replay(self):
+        self.assertEqual(3, self.work["limits"]["retry_limit"])
+        work = copy.deepcopy(self.work)
+        work["limits"]["retry_limit"] = 5
+        validate_packet("work", work)
+        work["limits"]["retry_limit"] = 6
+        with self.assertRaises(PacketContractError):
+            validate_packet("work", work)
+
     def test_json_round_trip_does_not_change_digest(self):
         replay = build_replay_run(self.work, self.result)
         reparsed = json.loads(json.dumps(replay))

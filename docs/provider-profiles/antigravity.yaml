@@ -161,7 +161,7 @@ budgets_and_limits:
     - { variable: "GEMINI_DAILY_REQUEST_LIMIT", kind: "daily_request_limit", settings_field: "gemini_daily_request_limit", default: 50, documented_in_env_example: true, values_recorded: false }
     - { variable: "GEMINI_USAGE_PROBE_COST_CEILING_USD", kind: "per_request_cost_floor_usd", settings_field: "gemini_usage_probe_cost_ceiling_usd", default: null, documented_in_env_example: true, values_recorded: false }
     - { variable: "GEMINI_MAX_TOTAL_TOKENS", kind: "token_ceiling", settings_field: "gemini_max_total_tokens", default: 20000, documented_in_env_example: true, values_recorded: false }
-    - { variable: "GEMINI_USAGE_MAX_ATTEMPTS", kind: "max_attempts", settings_field: "gemini_usage_max_attempts", default: 3, documented_in_env_example: true, values_recorded: false }
+    - { variable: "GEMINI_USAGE_MAX_ATTEMPTS", kind: "max_attempts", settings_field: "gemini_usage_max_attempts", default: 5, documented_in_env_example: true, values_recorded: false }
     - { variable: "GEMINI_USAGE_MAX_RETRY_DELAY_SECONDS", kind: "retry_delay_seconds", settings_field: "gemini_usage_max_retry_delay_seconds", default: 8, documented_in_env_example: true, values_recorded: false }
   spend_ledger_member: true
   not_modeled_note: "Managed Gemini cannot honor a finite per-request monetary ceiling, even with configured token prices or GEMINI_MAX_TOTAL_TOKENS. Work and probes serialize, holding all remaining daily capacity; an unresolved non-legacy request blocks admission across UTC days until authoritative cost settlement or reconciliation. Serialization is not a provider-enforced spend ceiling."
