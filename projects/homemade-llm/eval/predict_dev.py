@@ -177,7 +177,26 @@ def parse_output(text: str) -> Optional[Dict[str, List[str]]]:
 
 def _default_constraint_factory(tokenizer: Any, schema: Dict[str, Any]) -> Any:
     from lmformatenforcer import JsonSchemaParser
-    from lmformatenforcer.integrations.transformers import build_transformers_prefix_allowed_tokens_fn
+    # Released lm-format-enforcer (through 0.11.3) imports PreTrainedTokenizerBase from
+    # transformers.tokenization_utils, which transformers 5 no longer re-exports; the class
+    # lives in transformers.tokenization_utils_base (upstream fix PR 175, unreleased).
+    # Bridge the legacy attribute with the canonical class only while the integration
+    # module imports; an already available legacy attribute is never replaced, and the
+    # temporary alias is removed afterwards even when the import fails.
+    import transformers.tokenization_utils as legacy_tokenization
+    import transformers.tokenization_utils_base as canonical_tokenization
+    missing = object()
+    previous = getattr(legacy_tokenization, "PreTrainedTokenizerBase", missing)
+    if previous is missing:
+        legacy_tokenization.PreTrainedTokenizerBase = canonical_tokenization.PreTrainedTokenizerBase
+    try:
+        from lmformatenforcer.integrations.transformers import build_transformers_prefix_allowed_tokens_fn
+    finally:
+        if previous is missing:
+            try:
+                del legacy_tokenization.PreTrainedTokenizerBase
+            except AttributeError:
+                pass
     return build_transformers_prefix_allowed_tokens_fn(tokenizer, JsonSchemaParser(schema))
 
 
