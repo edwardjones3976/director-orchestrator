@@ -39,6 +39,7 @@ param(
     [int]$ProbeRowsTotal,
     [string]$ProbeContextInputs,
     [int]$ProbeContextLimit,
+    [switch]$ProbeHandoff,
     [int]$ProbeSeqLen = 2048,
     [double]$TimeoutMinutes = 90
 )
@@ -92,6 +93,10 @@ if ($PSBoundParameters.ContainsKey('ProbeContextInputs') -or $PSBoundParameters.
     if (-not (Test-Path -LiteralPath $ProbeContextInputs -PathType Leaf)) { Write-Error 'context probe input file is missing' }
 }
 if ($Probe -and -not $PSBoundParameters.ContainsKey('TimeoutMinutes')) { $TimeoutMinutes = 150 }
+if ($ProbeHandoff -and (-not $Probe -or -not $Student4Bit -or [string]::IsNullOrWhiteSpace($ProbeContextInputs) -or
+        $ProbeContextLimit -le 2048 -or $ProbeSeqLen -ne 2048 -or $PSBoundParameters.ContainsKey('ProbeRowsTotal'))) {
+    Write-Error 'handoff diagnostic requires -Student4Bit -Probe, context inputs/limit, sequence 2048 and no row projection'
+}
 if ([double]::IsNaN($TimeoutMinutes) -or [double]::IsInfinity($TimeoutMinutes) -or $TimeoutMinutes -le 0) {
     Write-Error '-TimeoutMinutes must be finite and positive'
 }
@@ -208,7 +213,7 @@ $runId = 'm2-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
 $mounts = @()
 if ($Epochs) {
     $mounts = New-TrainerCommonMounts -HotRoot $HotRoot -RowsDir (Split-Path $Rows -Parent) `
-        -ExpectedDigests $ExpectedDigests -TrustedDigestRoot $TrustedDigestRoot -EpochMode:([bool]$Epochs) -ContextProbe:(-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) -RunId $runId
+        -ExpectedDigests $ExpectedDigests -TrustedDigestRoot $TrustedDigestRoot -EpochMode:([bool]$Epochs) -ContextProbe:((-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) -and -not $ProbeHandoff) -RunId $runId
 }
 $code = (Resolve-Path (Join-Path $PSScriptRoot '..\train')).Path
 $evalCode = (Resolve-Path (Join-Path $PSScriptRoot '..\eval')).Path
@@ -294,7 +299,7 @@ try {
     # and preflight admission. Epoch staging retains its separate early check.
     if (-not $Epochs) {
         $mounts = New-TrainerCommonMounts -HotRoot $HotRoot -RowsDir (Split-Path $Rows -Parent) `
-            -ExpectedDigests $ExpectedDigests -TrustedDigestRoot $TrustedDigestRoot -EpochMode:([bool]$Epochs) -ContextProbe:(-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) -RunId $runId
+            -ExpectedDigests $ExpectedDigests -TrustedDigestRoot $TrustedDigestRoot -EpochMode:([bool]$Epochs) -ContextProbe:((-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) -and -not $ProbeHandoff) -RunId $runId
         if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) {
             $mounts += @('-v', "${ProbeContextInputs}:/workspace/context-inputs.jsonl:ro")
             # Stage the exact admitted renderer blob (commit/blob/SHA pinned in the stage helper) and bind it
@@ -303,11 +308,18 @@ try {
             $rendererStage = New-StageTree -HotRoot $HotRoot -RunId $runId
             [void](Write-StageFile -DirLabel Train -Dir $rendererStage.Train -Name 'prompt_template.py' -Bytes $rendererBytes -ExpectedSha256 $AdmittedRendererSHA256)
             $stagedRenderer = Join-Path $rendererStage.Train 'prompt_template.py'
+            if ($ProbeHandoff) {
+                $predictorSha256 = '3a0d0f2265293091f538d72cf50cf1091b2d7ccf8e92f09b77aac59bb9e2d468'
+                $predictorBytes = Get-GitBlobBytes -RepoRoot $repoRoot -Commit 'bae4383101a27e8454430ca53a82103b5196a1ef' -Path 'projects/homemade-llm/eval/predict_dev.py' -ExpectedOid 'aed628b5c97f4e029570ad95442bd2234dda2820' -ExpectedSha256 $predictorSha256
+                [void](Write-StageFile -DirLabel Eval -Dir $rendererStage.Eval -Name 'predict_dev.py' -Bytes $predictorBytes -ExpectedSha256 $predictorSha256)
+                $stagedPredictor = Join-Path $rendererStage.Eval 'predict_dev.py'
+            }
         }
         $locations = Get-ProductionLocations
         Assert-TrainerMountIsolation -Mounts $mounts -ProtectedPaths @(
             (Join-Path $HotRoot 'runs\stage'), $Rows, $code, $evalCode, $locations.PinFile, $locations.CustodyRoot;
-            if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) { $ProbeContextInputs; $stagedRenderer })
+            if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) { $ProbeContextInputs; $stagedRenderer }
+            if ($ProbeHandoff) { $stagedPredictor })
     }
     if (Get-Command lms -ErrorAction SilentlyContinue) {
         $r = @(Invoke-Bounded 'lms' @('unload', '--all') 60)
@@ -321,7 +333,8 @@ try {
         $d = @('run', '--rm', '--name', $name, '--gpus', 'all', '--shm-size', '4g') + $mounts + @(
             '-v', "${code}:/code:ro"
             if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) { '-v', "${stagedRenderer}:/code/prompt_template.py:ro" }
-            if ([string]::IsNullOrWhiteSpace($ProbeContextInputs)) { '-v', "${evalCode}:/eval:ro" }
+            if ([string]::IsNullOrWhiteSpace($ProbeContextInputs) -or $ProbeHandoff) { '-v', "${evalCode}:/eval:ro" }
+            if ($ProbeHandoff) { '-v', "${stagedPredictor}:/eval/predict_dev.py:ro" }
             '-e', "ADAPTER_BASE=$Base", '-e', "ADAPTER_REVISION=$Revision",
             '-e', "ADAPTER_STEPS=$Steps",
             '-e', 'HF_HOME=/workspace/hf', '-e', 'HF_TOKEN_PATH=/nonexistent/hf-token')
@@ -343,6 +356,7 @@ try {
         }
         if ($Probe) {
             $d += @('--probe', '--probe-seq-len', "$ProbeSeqLen")
+            if ($ProbeHandoff) { $d += '--probe-handoff' }
             if (-not [string]::IsNullOrWhiteSpace($ProbeContextInputs)) {
                 $d += @('--probe-context-inputs', '/workspace/context-inputs.jsonl', '--probe-context-limit', "$ProbeContextLimit")
             }
