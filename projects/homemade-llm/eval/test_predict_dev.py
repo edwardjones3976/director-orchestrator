@@ -1,5 +1,6 @@
 """Offline mocked tests for predict_dev (no torch, no network, no real model)."""
 import hashlib
+import importlib.abc
 import importlib.util
 import json
 import random
@@ -536,6 +537,78 @@ class TestPredictDev(OfflinePredictorTestCase):
             else:
                 sys.modules["lmformatenforcer"] = saved
         self.assertEqual(model.generate_calls, [])
+
+    def _constraint_factory_modules(self, *, legacy_has_class, integration_fails):
+        """Fake transformers + lmformatenforcer modules; the integration module is executed on
+        import so the bridge is observed exactly when lmformatenforcer reads the legacy name."""
+        canonical_class = type("CanonicalPreTrainedTokenizerBase", (), {})
+        legacy_class = type("LegacyPreTrainedTokenizerBase", (), {})
+        transformers_pkg = types.ModuleType("transformers")
+        transformers_pkg.__path__ = []
+        legacy = types.ModuleType("transformers.tokenization_utils")
+        if legacy_has_class:
+            legacy.PreTrainedTokenizerBase = legacy_class
+        canonical = types.ModuleType("transformers.tokenization_utils_base")
+        canonical.PreTrainedTokenizerBase = canonical_class
+        lmfe = types.ModuleType("lmformatenforcer")
+        lmfe.__path__ = []
+        lmfe.JsonSchemaParser = lambda schema: ("parser", schema)
+        integrations = types.ModuleType("lmformatenforcer.integrations")
+        integrations.__path__ = []
+        source = ("from transformers.tokenization_utils import PreTrainedTokenizerBase\n"
+                  "OBSERVED = PreTrainedTokenizerBase\n"
+                  + ("raise ImportError('synthetic integration failure')\n" if integration_fails else "")
+                  + "def build_transformers_prefix_allowed_tokens_fn(tokenizer, parser):\n"
+                  "    return ('built', tokenizer, parser, OBSERVED)\n")
+        name = "lmformatenforcer.integrations.transformers"
+
+        class Loader(importlib.abc.Loader):
+            def create_module(self, spec):
+                return None
+
+            def exec_module(self, module):
+                exec(compile(source, "<synthetic lmfe integration>", "exec"), module.__dict__)
+
+        class Finder(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, path, target=None):
+                return importlib.util.spec_from_loader(name, Loader()) if fullname == name else None
+
+        modules = {"transformers": transformers_pkg, "transformers.tokenization_utils": legacy,
+                   "transformers.tokenization_utils_base": canonical,
+                   "lmformatenforcer": lmfe, "lmformatenforcer.integrations": integrations}
+        return modules, Finder(), legacy, legacy_class, canonical_class
+
+    def test_default_factory_preserves_available_legacy_tokenizer_class(self):
+        modules, finder, legacy, legacy_class, canonical_class = self._constraint_factory_modules(
+            legacy_has_class=True, integration_fails=False)
+        with patch.dict(sys.modules, modules), patch.object(sys, "meta_path", [finder] + sys.meta_path):
+            sys.modules.pop("lmformatenforcer.integrations.transformers", None)
+            tok = FakeTokenizer()
+            built = predict_dev._default_constraint_factory(tok, predict_dev.OUTPUT_SCHEMA)
+            self.assertEqual(built, ("built", tok, ("parser", predict_dev.OUTPUT_SCHEMA), legacy_class))
+            self.assertIs(legacy.PreTrainedTokenizerBase, legacy_class)
+            self.assertIsNot(legacy.PreTrainedTokenizerBase, canonical_class)
+
+    def test_default_factory_bridges_missing_legacy_class_only_during_import(self):
+        modules, finder, legacy, _, canonical_class = self._constraint_factory_modules(
+            legacy_has_class=False, integration_fails=False)
+        with patch.dict(sys.modules, modules), patch.object(sys, "meta_path", [finder] + sys.meta_path):
+            sys.modules.pop("lmformatenforcer.integrations.transformers", None)
+            tok = FakeTokenizer()
+            built = predict_dev._default_constraint_factory(tok, predict_dev.OUTPUT_SCHEMA)
+            self.assertEqual(built, ("built", tok, ("parser", predict_dev.OUTPUT_SCHEMA), canonical_class))
+            self.assertFalse(hasattr(legacy, "PreTrainedTokenizerBase"))
+
+    def test_default_factory_removes_temporary_alias_when_integration_import_fails(self):
+        modules, finder, legacy, _, canonical_class = self._constraint_factory_modules(
+            legacy_has_class=False, integration_fails=True)
+        with patch.dict(sys.modules, modules), patch.object(sys, "meta_path", [finder] + sys.meta_path):
+            sys.modules.pop("lmformatenforcer.integrations.transformers", None)
+            with self.assertRaises(ImportError) as cm:
+                predict_dev._default_constraint_factory(FakeTokenizer(), predict_dev.OUTPUT_SCHEMA)
+            self.assertIn("synthetic integration failure", str(cm.exception))
+            self.assertFalse(hasattr(legacy, "PreTrainedTokenizerBase"))
+            self.assertNotIn("lmformatenforcer.integrations.transformers", sys.modules)
 
     def test_feeds_evaluate_primary_score(self):
         import dev_selection

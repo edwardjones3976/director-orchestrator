@@ -309,7 +309,7 @@ try {
             [void](Write-StageFile -DirLabel Train -Dir $rendererStage.Train -Name 'prompt_template.py' -Bytes $rendererBytes -ExpectedSha256 $AdmittedRendererSHA256)
             $stagedRenderer = Join-Path $rendererStage.Train 'prompt_template.py'
             if ($ProbeHandoff) {
-                $predictorSha256 = '3a0d0f2265293091f538d72cf50cf1091b2d7ccf8e92f09b77aac59bb9e2d468'
+                $predictorSha256 = '1d351e793a5b73c40eba065a1c38292ab300801c3355068c96965da1a0efadd9'
                 $predictorBytes = Get-GitBlobBytes -RepoRoot $repoRoot -Commit 'bae4383101a27e8454430ca53a82103b5196a1ef' -Path 'projects/homemade-llm/eval/predict_dev.py' -ExpectedOid 'aed628b5c97f4e029570ad95442bd2234dda2820' -ExpectedSha256 $predictorSha256
                 [void](Write-StageFile -DirLabel Eval -Dir $rendererStage.Eval -Name 'predict_dev.py' -Bytes $predictorBytes -ExpectedSha256 $predictorSha256)
                 $stagedPredictor = Join-Path $rendererStage.Eval 'predict_dev.py'
