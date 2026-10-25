@@ -452,7 +452,7 @@ class InteractionEvidenceTests(unittest.TestCase):
             contact_attempt_ordinal=2,
         )
         with self.assertRaisesRegex(
-            CommunicationEvidenceFailure, "third real contact attempt"
+            CommunicationEvidenceFailure, "final real contact attempt"
         ):
             transition_interaction(
                 events,

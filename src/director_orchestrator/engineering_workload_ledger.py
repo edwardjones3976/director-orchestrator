@@ -32,7 +32,7 @@ from .allocation_profiles import (
     pre_zai_allocation_profile_digest,
 )
 from .workload_policy import (
-    DirectProductionProvider, FailureKind, RetryRequest, Transport,
+    LEGACY_PROVIDER_ATTEMPTS, MAX_PROVIDER_ATTEMPTS, DirectProductionProvider, FailureKind, RetryRequest, Transport,
     WorkloadPolicy, direct_assignment_capacity_violation, evaluate_retry,
 )
 
@@ -159,6 +159,8 @@ class EngineeringWorkloadLedger:
         try:
             # One atomic read/check/append across processes; no provider I/O in this lock.
             db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
+            if write and not create:
+                self._widen_attempt_schema(db)
             yield db
             db.commit()
         except Exception:
@@ -166,6 +168,26 @@ class EngineeringWorkloadLedger:
             raise
         finally:
             db.close()
+
+    @staticmethod
+    def _widen_attempt_schema(db) -> None:
+        """Retain every old row while widening the generated SQLite constraint."""
+        row = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='attempts'").fetchone()
+        if row is None or not re.search(r"\bBETWEEN\s+1\s+AND\s+3\b", row[0], re.IGNORECASE):
+            return
+        # Both related tables move in the same transaction; old payloads and
+        # identities are copied verbatim, and foreign keys never point at a drop.
+        db.execute(f"CREATE TABLE attempts_retry_v2(assignment_id TEXT NOT NULL REFERENCES assignments(assignment_id), number INTEGER NOT NULL CHECK(number BETWEEN 1 AND {MAX_PROVIDER_ATTEMPTS}), payload TEXT NOT NULL, PRIMARY KEY(assignment_id,number))")
+        db.execute("CREATE TABLE outcomes_retry_v2(assignment_id TEXT NOT NULL, number INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(assignment_id,number), FOREIGN KEY(assignment_id,number) REFERENCES attempts_retry_v2(assignment_id,number))")
+        db.execute("INSERT INTO attempts_retry_v2 SELECT assignment_id,number,payload FROM attempts")
+        db.execute("INSERT INTO outcomes_retry_v2 SELECT assignment_id,number,payload FROM outcomes")
+        db.execute("DROP TABLE outcomes")
+        db.execute("DROP TABLE attempts")
+        db.execute("ALTER TABLE attempts_retry_v2 RENAME TO attempts")
+        db.execute("ALTER TABLE outcomes_retry_v2 RENAME TO outcomes")
+        for table in ("attempts", "outcomes"):
+            for verb in ("UPDATE", "DELETE"):
+                db.execute(f"CREATE TRIGGER immutable_{table}_{verb} BEFORE {verb} ON {table} BEGIN SELECT RAISE(ABORT, 'ledger_is_append_only'); END")
 
     @staticmethod
     def _meta(db) -> dict:
@@ -260,7 +282,7 @@ class EngineeringWorkloadLedger:
                 "CREATE TABLE metadata(id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL)",
                 "CREATE TABLE routes(route_id TEXT PRIMARY KEY, product_id TEXT NOT NULL, actor_id TEXT UNIQUE NOT NULL, payload TEXT NOT NULL)",
                 "CREATE TABLE assignments(seq INTEGER PRIMARY KEY AUTOINCREMENT, assignment_id TEXT UNIQUE NOT NULL, route_id TEXT NOT NULL REFERENCES routes(route_id), product_id TEXT NOT NULL, bucket TEXT NOT NULL, kind TEXT NOT NULL, packet_sha TEXT NOT NULL, created_at TEXT NOT NULL, payload TEXT NOT NULL, UNIQUE(product_id,kind,packet_sha))",
-                "CREATE TABLE attempts(assignment_id TEXT NOT NULL REFERENCES assignments(assignment_id), number INTEGER NOT NULL CHECK(number BETWEEN 1 AND 3), payload TEXT NOT NULL, PRIMARY KEY(assignment_id,number))",
+                f"CREATE TABLE attempts(assignment_id TEXT NOT NULL REFERENCES assignments(assignment_id), number INTEGER NOT NULL CHECK(number BETWEEN 1 AND {MAX_PROVIDER_ATTEMPTS}), payload TEXT NOT NULL, PRIMARY KEY(assignment_id,number))",
                 "CREATE TABLE outcomes(assignment_id TEXT NOT NULL, number INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(assignment_id,number), FOREIGN KEY(assignment_id,number) REFERENCES attempts(assignment_id,number))",
                 "CREATE TABLE completions(assignment_id TEXT PRIMARY KEY REFERENCES assignments(assignment_id), payload TEXT NOT NULL)",
                 "CREATE INDEX assignment_window ON assignments(kind,seq)",
@@ -306,7 +328,7 @@ class EngineeringWorkloadLedger:
             raise LedgerError("bounds_required")
         for key in ("timeout_seconds", "turn_limit", "output_bytes_limit"):
             _positive(bounds.get(key), key)
-        _positive(bounds.get("call_limit"), "call_limit", 3)
+        _positive(bounds.get("call_limit"), "call_limit", MAX_PROVIDER_ATTEMPTS)
         if type(bounds.get("hard_usd_cap_verified")) is not bool:
             raise LedgerError("usd_enforcement_declaration_required")
         cap = bounds.get("usd_limit")
@@ -415,8 +437,8 @@ class EngineeringWorkloadLedger:
             if db.execute("SELECT 1 FROM assignments WHERE product_id=? AND kind=? AND packet_sha=?", (request["product_id"], request["kind"], request["packet_evidence"]["sha256"])).fetchone():
                 raise LedgerError("same_packet_cannot_create_another_assignment")
             if request["kind"] != "coordination":
-                if self._route_failure_count(db, request["route_id"]) >= 3:
-                    raise LedgerError("route_unavailable_after_three_failures")
+                if self._route_failure_count(db, request["route_id"]) >= MAX_PROVIDER_ATTEMPTS:
+                    raise LedgerError("route_unavailable_after_five_failures")
                 violation = self._capacity(meta, bucket, self._window(db, 19))
                 if violation:
                     raise LedgerError(violation)
@@ -442,8 +464,8 @@ class EngineeringWorkloadLedger:
                 raise LedgerError("coordination_is_record_only_no_provider_dispatch")
             if db.execute("SELECT 1 FROM completions WHERE assignment_id=?", (assignment_id,)).fetchone():
                 raise LedgerError("assignment_already_terminal")
-            if self._route_failure_count(db, row["route_id"]) >= 3:
-                raise LedgerError("route_unavailable_after_three_failures")
+            if self._route_failure_count(db, row["route_id"]) >= MAX_PROVIDER_ATTEMPTS:
+                raise LedgerError("route_unavailable_after_five_failures")
             attempts = db.execute("SELECT * FROM attempts WHERE assignment_id=? ORDER BY number", (assignment_id,)).fetchall()
             outcomes = [json.loads(r[0]) for r in db.execute("SELECT payload FROM outcomes WHERE assignment_id=? ORDER BY number", (assignment_id,))]
             if len(outcomes) != len(attempts):
@@ -464,7 +486,8 @@ class EngineeringWorkloadLedger:
                        "ambiguous": FailureKind.AMBIGUOUS_PAID_DISPATCH}
             previous = outcomes[-1] if outcomes else None
             decision = evaluate_retry(RetryRequest(
-                attempt_number=len(attempts) + 1, retry_limit=3,
+                attempt_number=len(attempts) + 1, retry_limit=(MAX_PROVIDER_ATTEMPTS
+                    if bounds["call_limit"] > LEGACY_PROVIDER_ATTEMPTS else LEGACY_PROVIDER_ATTEMPTS),
                 previous_failure=failure[previous["outcome"]] if previous else FailureKind.NONE,
                 transport=Transport(transport), previous_transport=Transport(json.loads(attempts[-1]["payload"])["transport"]) if attempts else None,
                 materially_new_information=new_information_evidence is not None,
@@ -547,7 +570,7 @@ class EngineeringWorkloadLedger:
     @staticmethod
     def _route_failure_count(db, route_id: str) -> int:
         # Arrival order records what the operator knew before the next admission.
-        rows = db.execute("SELECT o.payload FROM outcomes o JOIN assignments a USING(assignment_id) WHERE a.route_id=? AND a.kind!='coordination' ORDER BY o.rowid DESC LIMIT 3", (route_id,)).fetchall()
+        rows = db.execute("SELECT o.payload FROM outcomes o JOIN assignments a USING(assignment_id) WHERE a.route_id=? AND a.kind!='coordination' ORDER BY o.rowid DESC LIMIT ?", (route_id, MAX_PROVIDER_ATTEMPTS)).fetchall()
         count = 0
         for row in rows:
             if json.loads(row[0])["outcome"] == "succeeded":
@@ -601,8 +624,8 @@ class EngineeringWorkloadLedger:
                     reason = reason or "route_not_enrolled"
                 elif not route["eligible"]:
                     reason = "route_not_eligible"
-                if self._route_failure_count(db, route["route_id"]) >= 3:
-                    reason = "route_unavailable_after_three_failures"
+                if self._route_failure_count(db, route["route_id"]) >= MAX_PROVIDER_ATTEMPTS:
+                    reason = "route_unavailable_after_five_failures"
                 eligibility.append({"product_id": product, "route_id": route["route_id"],
                     "actor_id": route.get("actor_id"), "allocation_bucket": bucket,
                     "workload_eligible": reason is None, "hold": reason,

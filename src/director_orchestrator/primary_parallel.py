@@ -63,7 +63,10 @@ from .langgraph_postgres import (
 )
 
 
-from .workload_policy import FailureKind, RetryRequest, Transport, evaluate_retry
+from .workload_policy import (
+    LEGACY_PROVIDER_ATTEMPTS, MAX_PROVIDER_ATTEMPTS, SUPPORTED_ATTEMPT_LIMITS,
+    FailureKind, RetryRequest, Transport, evaluate_retry,
+)
 
 
 # One bounded window for durably recording what has already happened - an
@@ -174,6 +177,7 @@ def authorize_provider_retry(
     previous_failure: FailureKind,
     transport_id: str,
     previous_transport_id: str | None,
+    retry_limit: int = LEGACY_PROVIDER_ATTEMPTS,
 ) -> tuple[bool, str]:
     """Fail closed unless typed evidence authorizes the next roster slot."""
 
@@ -198,7 +202,7 @@ def authorize_provider_retry(
     decision = evaluate_retry(
         RetryRequest(
             attempt_number=attempt_number,
-            retry_limit=3,
+            retry_limit=retry_limit,
             previous_failure=previous_failure,
             transport=transport,
             previous_transport=previous_transport,
@@ -346,7 +350,7 @@ class ParallelAssignment:
     deployment_id: str
     dependencies: tuple[str, ...] = ()
     write_surfaces: tuple[str, ...] = ()
-    retry_limit: int = 3
+    retry_limit: int = LEGACY_PROVIDER_ATTEMPTS
     allocation_profile: str = "engineering"
 
     def __post_init__(self) -> None:
@@ -356,8 +360,8 @@ class ParallelAssignment:
         _require_id(self.deployment_id, "deployment_id")
         if type(self.sequence) is not int or self.sequence < 1:
             raise ParallelDispatchError("sequence must be a positive integer")
-        if type(self.retry_limit) is not int or self.retry_limit != 3:
-            raise ParallelDispatchError("retry_limit must be exactly 3")
+        if type(self.retry_limit) is not int or self.retry_limit not in SUPPORTED_ATTEMPT_LIMITS:
+            raise ParallelDispatchError("retry_limit must be exactly 3 (legacy) or 5")
         if len(set(self.dependencies)) != len(self.dependencies):
             raise ParallelDispatchError("dependencies must be unique")
         canonical_surfaces = tuple(
@@ -498,13 +502,13 @@ class ProviderAttemptReservation:
 
 
 def deterministic_format_roster(formats: Iterable[tuple[str, str]]) -> tuple[tuple[str, str], ...]:
-    """Canonicalize configured format/transport pairs and fail closed above three."""
+    """Canonicalize format/transport pairs within the global attempt ceiling."""
 
     roster = tuple(sorted(set(formats)))
     if not roster:
         raise ParallelDispatchError("provider format roster is empty")
-    if len(roster) > 3:
-        raise ParallelDispatchError("provider format roster exceeds three-attempt budget")
+    if len(roster) > MAX_PROVIDER_ATTEMPTS:
+        raise ParallelDispatchError("provider format roster exceeds five-attempt budget")
     for format_id, transport_id in roster:
         if _CODE.fullmatch(format_id) is None or _CODE.fullmatch(transport_id) is None:
             raise ParallelDispatchError("provider format roster contains an invalid identity")
@@ -517,8 +521,8 @@ def format_for_attempt(
     """Use every configured format once before deterministic reuse."""
 
     canonical = deterministic_format_roster(roster)
-    if type(attempt_ordinal) is not int or not 1 <= attempt_ordinal <= 3:
-        raise ParallelDispatchError("attempt ordinal must be between one and three")
+    if type(attempt_ordinal) is not int or not 1 <= attempt_ordinal <= MAX_PROVIDER_ATTEMPTS:
+        raise ParallelDispatchError("attempt ordinal must be between one and five")
     return canonical[(attempt_ordinal - 1) % len(canonical)]
 
 
@@ -1284,6 +1288,21 @@ class PostgresParallelDispatch:
                     owner_token=writer.owner_token,
                     fencing_generation=writer.fencing_generation,
                 )
+                binding = self._row(
+                    connection,
+                    f"""SELECT provider_id, reservation_digest, status, allocation_profile, retry_limit
+                    FROM {schema}.director_primary_parallel_assignment
+                    WHERE task_id = %(task_id)s AND assignment_id = %(assignment_id)s
+                    FOR UPDATE""",
+                    {"task_id": reservation.task_id,
+                     "assignment_id": reservation.assignment_id},
+                )
+                if (binding is None or binding["status"] != "ACTIVE"
+                        or binding["provider_id"] != reservation.provider_id
+                        or binding["reservation_digest"] != reservation.reservation_digest):
+                    raise ParallelDispatchError("workload parallel reservation binding changed")
+                if attempt_ordinal > binding["retry_limit"]:
+                    raise ParallelDispatchError("retry_limit_exceeded")
                 held = self._row(
                     connection,
                     f"""
@@ -1339,24 +1358,12 @@ class PostgresParallelDispatch:
                         previous_failure=previous_failure,
                         transport_id=transport_id,
                         previous_transport_id=str(held["transport_id"]),
+                        retry_limit=binding["retry_limit"],
                     )
                     if not authorized:
                         raise ParallelDispatchError(reason)
                 elif attempt_ordinal != 1:
                     raise ParallelDispatchError("first provider attempt ordinal must be one")
-                binding = self._row(
-                    connection,
-                    f"""SELECT provider_id, reservation_digest, status, allocation_profile
-                    FROM {schema}.director_primary_parallel_assignment
-                    WHERE task_id = %(task_id)s AND assignment_id = %(assignment_id)s
-                    FOR UPDATE""",
-                    {"task_id": reservation.task_id,
-                     "assignment_id": reservation.assignment_id},
-                )
-                if (binding is None or binding["status"] != "ACTIVE"
-                        or binding["provider_id"] != reservation.provider_id
-                        or binding["reservation_digest"] != reservation.reservation_digest):
-                    raise ParallelDispatchError("workload parallel reservation binding changed")
                 # The same kill switch `reserve_ready` honours, read here under
                 # this transaction's own lock. A cancellation ordered while
                 # this admission was waiting must stop it: an ACTIVE slot with

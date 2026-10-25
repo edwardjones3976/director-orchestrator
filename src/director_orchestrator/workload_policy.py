@@ -60,6 +60,12 @@ _SHA1 = re.compile(r"^[0-9a-f]{40}$")
 FABLE_MODEL_FLOOR = "FABLE 5 ULTRA/MAX"
 COPILOT_LITE_NORMAL_BAND = (0, 4)
 
+# Owner amendment, 2026-10-24: four retries after the initial message/job attempt.
+MAX_PROVIDER_RETRIES = 4
+MAX_PROVIDER_ATTEMPTS = MAX_PROVIDER_RETRIES + 1
+LEGACY_PROVIDER_ATTEMPTS = 3
+SUPPORTED_ATTEMPT_LIMITS = frozenset({LEGACY_PROVIDER_ATTEMPTS, MAX_PROVIDER_ATTEMPTS})
+
 
 class WorkloadPolicyError(ValueError):
     """Raised when owner policy or evidence is structurally invalid."""
@@ -1070,8 +1076,8 @@ class RetryRequest:
     def __post_init__(self) -> None:
         _positive_int(self.attempt_number, "attempt number")
         _positive_int(self.retry_limit, "assignment retry limit")
-        if self.retry_limit != 3:
-            raise WorkloadPolicyError("assignment attempt budget must be exactly 3")
+        if self.retry_limit not in SUPPORTED_ATTEMPT_LIMITS:
+            raise WorkloadPolicyError("assignment attempt budget must be exactly 3 (legacy) or 5")
         if not isinstance(self.previous_failure, FailureKind):
             raise WorkloadPolicyError("previous failure must be a FailureKind")
         if not isinstance(self.transport, Transport):
@@ -1099,7 +1105,7 @@ def evaluate_retry(
     policy: WorkloadPolicy = DEFAULT_POLICY,
     mode: EnforcementMode = EnforcementMode.ENFORCED,
 ) -> DecisionResult:
-    """Enforce the three-attempt budget, resource gates, and ambiguity safety."""
+    """Enforce the bound request budget without widening persisted legacy grants."""
 
     violations: list[str] = []
     advisories: list[str] = []
@@ -1124,6 +1130,9 @@ def evaluate_retry(
             violations.append("primary_attempt_must_not_have_previous_failure")
     elif request.previous_failure is FailureKind.AMBIGUOUS_PAID_DISPATCH:
         violations.append("ambiguous_paid_dispatch_must_not_be_repeated")
+    elif (request.retry_limit == MAX_PROVIDER_ATTEMPTS
+          and request.previous_failure is FailureKind.TRANSIENT):
+        pass
     elif request.attempt_number == 2:
         if request.previous_failure is not FailureKind.TRANSIENT:
             violations.append("recovery_requires_transient_failure")
@@ -1316,8 +1325,8 @@ class PrestagePacket:
         _positive_int(self.budget_units, "prestage budget units")
         _positive_int(self.timeout_seconds, "prestage timeout seconds")
         _positive_int(self.retry_limit, "prestage retry limit")
-        if self.retry_limit != 3:
-            raise WorkloadPolicyError("prestage attempt budget must be exactly 3")
+        if self.retry_limit not in SUPPORTED_ATTEMPT_LIMITS:
+            raise WorkloadPolicyError("prestage attempt budget must be exactly 3 (legacy) or 5")
 
     def canonical_payload(self) -> dict[str, Any]:
         """Return a fresh JSON-compatible representation, excluding its digest."""

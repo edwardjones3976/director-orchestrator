@@ -97,6 +97,7 @@ from .productive_work import (
     ExternalOpenAIProductionEvidence,
 )
 from .workload_policy import (
+    MAX_PROVIDER_ATTEMPTS, SUPPORTED_ATTEMPT_LIMITS,
     DEFAULT_POLICY,
     WorkloadPolicy,
     AssignmentRequest,
@@ -2715,6 +2716,11 @@ class TaskStore:
                     "Task changed after this snapshot was loaded; stale write rejected"
                 )
             self._validate_director_generation_write(row["record_json"], record)
+            old_attempts = json.loads(row["record_json"]).get("collaboration_delivery_attempts", {})
+            attempts = record.collaboration_delivery_attempts
+            if (any(type(value) is not int or not 0 <= value <= MAX_PROVIDER_ATTEMPTS for value in attempts.values())
+                    or any(attempts.get(key, -1) < value for key, value in old_attempts.items())):
+                raise StaleTaskWrite("Message attempt history cannot be reset or exceed its bound")
             record.updated_at = datetime.now(timezone.utc)
             replacement_json = self._record_json_without_effect_projection(record)
             self._mark_cleanup_for_rewrite(
@@ -3987,7 +3993,7 @@ class TaskStore:
                 raise ValueError("Persisted current assignment omits retry authority")
             if has_retry_limit:
                 retry_limit = assignment["retry_limit"]
-                if type(retry_limit) is not int or retry_limit != 3:
+                if type(retry_limit) is not int or retry_limit not in SUPPORTED_ATTEMPT_LIMITS:
                     raise ValueError("Persisted assignment retry limit is not authoritative")
             else:
                 assignment["retry_limit"] = legacy_authority["total_route_attempt_limit"]

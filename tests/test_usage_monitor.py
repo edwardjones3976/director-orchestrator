@@ -280,7 +280,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(run.attempt_count, 2)
             self.assertEqual(run.run_id, "resp_recovered")
 
-    async def test_openai_rate_limit_is_recorded_after_one_bounded_recovery(self):
+    async def test_openai_rate_limit_is_recorded_after_four_bounded_retries(self):
         with tempfile.TemporaryDirectory() as directory:
             store = TaskStore(str(Path(directory) / "tasks.sqlite3"))
             settings = replace(
@@ -296,8 +296,7 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             monitor = UsageMonitor(settings, store, adapters={})
             client = SequentialOpenAIUsageClient(
                 [
-                    self._openai_response(429, headers={"Retry-After": "0"}),
-                    self._openai_response(429, headers={"Retry-After": "0"}),
+                    *[self._openai_response(429, headers={"Retry-After": "0"}) for _ in range(5)],
                 ]
             )
 
@@ -310,15 +309,15 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             ):
                 records = await monitor.run_once(force=True)
 
-            self.assertEqual(client.calls, 2)
+            self.assertEqual(client.calls, 5)
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0].status, UsageCheckStatus.ERROR)
-            self.assertEqual(records[0].attempt_count, 2)
+            self.assertEqual(records[0].attempt_count, 5)
             self.assertEqual(records[0].provider_error_code, "http_429")
             self.assertIsNone(records[0].response_text)
             accounting = monitor.health()["daily_accounting"]["openai"]
-            self.assertEqual(accounting["request_count"], 2)
-            self.assertEqual(accounting["retry_count"], 1)
+            self.assertEqual(accounting["request_count"], 5)
+            self.assertEqual(accounting["retry_count"], 4)
             self.assertEqual(accounting["quota_failure_count"], 1)
 
     async def test_openai_does_not_retry_a_non_rate_limit_error(self):

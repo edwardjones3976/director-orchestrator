@@ -879,17 +879,15 @@ the configured task, provider, deployment, and write-surface caps. A dependent
 packet is built only after all named upstream result packets are durably accepted.
 Unknown provider exceptions are ambiguous and are never resent. Only the trusted
 transport's typed pre-dispatch temporary failure permits recovery. Each assignment
-has at most three attempts and stops immediately on authenticated success. Attempt
-two may reuse a transport after that temporary failure. Attempt three requires a
-different underlying transport category; format changes and HTTP bridge wrappers
-around the same native command do not qualify. The live path has no trusted new
-information input and therefore cannot use that alternative as retry authority.
-The writer-fenced Postgres reservation rechecks the stored prior outcome and
-transport before inserting the next STARTED event, before provider I/O. A prior
-success, active or ambiguous attempt cannot be redispatched after restart. Three
-recorded failures exhaust the assignment route; the assignment fails closed for
-configured fallback or owner routing rather than silently selecting another paid
-provider. An ambiguous paid dispatch stops immediately for reconciliation.
+has at most five attempts under new grants (one initial plus four retries) and
+stops immediately on authenticated success. A classified temporary failure may
+retry within this single budget; a format, transport or fallback change does not
+reset it. Legacy three-attempt grants keep their original conditions, including
+a different underlying transport category for a third attempt. The writer-fenced
+Postgres reservation rechecks the stored grant and prior outcome before inserting
+the next STARTED event, before provider I/O. Success, active or ambiguous attempts
+cannot be redispatched after restart. Exhaustion fails closed for configured
+fallback or owner routing. An ambiguous paid dispatch stops immediately for reconciliation.
 The graph task is successful only when the deterministic aggregate proves every
 assignment succeeded; a pending, active, ambiguous, failed, or dependency-blocked
 member cannot be reported as successful completion.</p>

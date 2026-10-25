@@ -47,16 +47,18 @@
 <li>acceptance checks and evidence requirements</li>
 <li>approval requirements</li>
 <li>budget, timeout, hop, and revision ceilings, including an immutable
-assignment retry limit of exactly 3</li>
+assignment retry limit: five total attempts for new grants, or the preserved legacy limit of three</li>
 <li>idempotency key and correlation identifiers</li>
 </ul>
 <p>A packet missing its authority snapshot, acceptance checks, or repository boundary is invalid and must not dispatch.
-The retry limit is a ceiling of three total attempts, never a requirement to
-perform three calls. Stop on success. Attempt two requires a classified temporary
-failure. Attempt three requires materially new information or a substantially
-different underlying transport; a corrected approach alone is insufficient.
-Every attempt remains subject to resource and authority gates. After three
-recorded failures the assignment route is unavailable. An ambiguous paid dispatch
+Owner amendment, 2026-10-24: new provider messages and jobs allow one initial
+attempt plus four retries (five total). This is a ceiling, never a requirement
+to perform five calls. Stop on success. Retry only a classified transient failure
+or an evidence-based corrected approach, preserving one shared attempt history
+across fallback and transport changes. Keep stricter immutable legacy grants
+and their original recovery conditions. Every attempt remains subject to the
+same resource, deadline, cancellation and authority gates. Exhausting the bound
+makes the assignment route unavailable. An ambiguous paid dispatch
 is never repeated, including through a fallback; reconcile it first.
 For v1 paid revisions, the additional attempt also requires authenticated,
 durable assignment token accounting; primary attempts are unaffected. The

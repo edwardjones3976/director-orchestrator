@@ -757,7 +757,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         )
         self.assertEqual(
             copilot["attempts"],
-            "conditional_maximum_three",
+            "conditional_maximum_five",
         )
         self.assertFalse(copilot["automatic_every_push"])
         self.assertFalse(copilot["gating"])
@@ -770,10 +770,10 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         availability = self.directive["availability"]
         self.assertEqual(
             availability["attempts"],
-            "conditional_maximum_three",
+            "conditional_maximum_five",
         )
         self.assertIn(
-            "second_requires_temporary_failure",
+            "classified_transient_or_corrected_evidence_based_approach",
             availability["additional_attempt_requires"],
         )
         self.assertEqual(availability["ambiguous"], "no_duplicate_dispatch")
@@ -916,10 +916,10 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
 
         self.assertEqual(
             self.directive["availability"]["attempts"],
-            "conditional_maximum_three",
+            "conditional_maximum_five",
         )
         self.assertEqual(
-            self.charter["availability_policy"]["nonresponse_attempt_limit"], 3
+            self.charter["availability_policy"]["nonresponse_attempt_limit"], 5
         )
         self.assertEqual(self.directive["availability"]["partial"], "untrusted")
         self.assertEqual(

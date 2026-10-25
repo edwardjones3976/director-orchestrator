@@ -202,7 +202,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
             Settings(),
             cursor_api_key="test-cursor",
             allowed_starting_refs=("main",),
-            cursor_dispatch_max_attempts=1,
+            cursor_dispatch_max_attempts=2,
         )
         assignment = Assignment(
             sequence=1,

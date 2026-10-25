@@ -52,6 +52,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from .workload_policy import MAX_PROVIDER_ATTEMPTS
 import hashlib
 import hmac
 import json
@@ -287,7 +288,7 @@ def validate_attempt_history(assignments, attempts, *, task_id=None):
         assignment = by_assignment.get(row.get("assignment_id"))
         if assignment is None:
             return None, "attempt does not join a listed assignment"
-        if (not _is_count(row.get("attempt_ordinal")) or not 1 <= row["attempt_ordinal"] <= 3
+        if (not _is_count(row.get("attempt_ordinal")) or not 1 <= row["attempt_ordinal"] <= MAX_PROVIDER_ATTEMPTS
                 or not _is_count(row.get("event_sequence")) or not 1 <= row["event_sequence"] <= 3
                 or not _is_count(row.get("assignment_sequence"))
                 or row.get("status") not in ATTEMPT_STATUSES

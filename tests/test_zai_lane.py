@@ -387,7 +387,7 @@ class LedgerTests(unittest.TestCase):
         self.assertIsNone(status["mean_latency_ms"])
         self.assertTrue(status["route_available"])
 
-    def test_route_closes_after_three_recorded_failures(self):
+    def test_route_closes_after_five_recorded_failures(self):
         for index in range(MAX_RECORDED_FAILURES):
             attempt = self.reserve(assignment=f"A-{index}", key=f"k-{index}")
             self.ledger.record_outcome(attempt, status="FAILED" if index % 2 else "AMBIGUOUS",
@@ -396,7 +396,7 @@ class LedgerTests(unittest.TestCase):
         self.assertFalse(self.ledger.status(moment=BEFORE_END)["route_available"])
         with self.assertRaises(ZaiTrialLedgerError) as caught:
             self.reserve(assignment="A-next", key="k-next")
-        self.assertIn("three_failures", str(caught.exception))
+        self.assertIn("five_failures", str(caught.exception))
 
     def test_rows_are_append_only_and_can_never_carry_credit_or_authority(self):
         attempt = self.reserve()
@@ -641,7 +641,7 @@ class LaneDispatchTests(unittest.TestCase):
         self.assertEqual((status["failed"], status["blocked"], status["recorded_failures"]), (1, 1, 1))
 
     def test_exceptions_map_to_failed_ambiguous_or_refused_and_propagate(self):
-        # Two refusals consume nothing; the three contacted failures then close the route.
+        # Two refusals consume nothing; three contacted failures leave two slots.
         cases = {
             "A-v": (ValueError("Trial packet exceeds input limit"), False, "REFUSED"),
             "A-c": (PacketContractError("bad result"), False, "REFUSED"),
@@ -659,7 +659,7 @@ class LaneDispatchTests(unittest.TestCase):
         self.assertEqual(statuses, {a: expected for a, (_, _, expected) in cases.items()})
         status = self.ledger.status(moment=BEFORE_END)
         self.assertEqual((status["refused"], status["recorded_failures"]), (2, 3))
-        self.assertFalse(status["route_available"])
+        self.assertTrue(status["route_available"])
 
     def test_refused_pre_io_attempt_keeps_the_primary_attempt_available(self):
         with self.assertRaises(ValueError):
