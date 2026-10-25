@@ -988,7 +988,7 @@ def resolve_commit(config_commit: str | None, repo: str, revision: str, snapshot
     return commit
 
 
-def load_training_rows(path: Path) -> list[dict[str, Any]]:
+def load_training_rows(path: Path, *, template=None) -> list[dict[str, Any]]:
     """Read the validator's ``accepted.jsonl`` and return only its ``train`` rows.
 
     ``validate_rows.py`` writes train and dev into that one file, plus ``report.json``
@@ -1019,7 +1019,7 @@ def load_training_rows(path: Path) -> list[dict[str, Any]]:
             fail(f"line {line_number}: not JSON ({exc.msg})")
         if not isinstance(row, dict):
             fail(f"line {line_number}: row is not an object")
-        _require_accepted_row(row, line_number)
+        _require_accepted_row(row, line_number, template=template)
         if row["split"] == "train":
             trainable.append(row)
     if seen != int(report.get("n_accepted", -1)):
@@ -1062,7 +1062,7 @@ def load_dev_rows(path: Path) -> list[dict[str, Any]]:
         fail("validator dev evidence is not usable: " + type(exc).__name__)
 
 
-def _require_accepted_row(row: dict[str, Any], line_number: int) -> None:
+def _require_accepted_row(row: dict[str, Any], line_number: int, *, template=None) -> None:
     """A row the validator kept: clear leak checks, a real target, and train or dev."""
     split = row.get("split")
     if split not in ("train", "dev"):
@@ -1080,14 +1080,14 @@ def _require_accepted_row(row: dict[str, Any], line_number: int) -> None:
     if not isinstance(source, dict):
         fail(f"line {line_number}: input is not an object")
     try:
-        _prompt_template().input_contract(source)
+        (template if template is not None else _prompt_template()).input_contract(source)
     except (KeyError, TypeError, ValueError) as exc:
         fail(f"line {line_number}: {exc}")
 
 
-def messages_for(row: dict[str, Any]) -> list[dict[str, str]]:
+def messages_for(row: dict[str, Any], *, template=None) -> list[dict[str, str]]:
     """Training chat through the shared template, using the row's input block as written. Thinking stays off at the call site (D-M1-3)."""
-    return _prompt_template().render_messages(row["input"], row["target"])
+    return (template if template is not None else _prompt_template()).render_messages(row["input"], row["target"])
 
 
 def labels_for_token_ids(prompt_ids: list[int], full_ids: list[int]) -> list[int]:
@@ -1278,11 +1278,11 @@ def probe_time_pass(contingency_wall_seconds: float, *, limit_seconds: float = P
     return contingency_wall_seconds < limit_seconds
 
 
-def encode_rows(rows: list[dict[str, Any]], tokenize) -> list[dict[str, list[int]]]:
+def encode_rows(rows: list[dict[str, Any]], tokenize, *, template=None) -> list[dict[str, list[int]]]:
     """tokenize(messages, add_generation_prompt) -> token ids. Dev rows are not in ``rows``."""
     encoded: list[dict[str, list[int]]] = []
     for row in rows:
-        messages = messages_for(row)
+        messages = messages_for(row, template=template)
         prompt = list(tokenize(messages[:-1], add_generation_prompt=True))
         full = list(tokenize(messages, add_generation_prompt=False))
         labels = labels_for_token_ids(prompt, full)
@@ -1340,7 +1340,7 @@ def extend_probe_example_to_seq_len(example: dict[str, list[int]], seq_len: int)
     return {"input_ids": input_ids, "attention_mask": attention, "labels": labels}
 
 
-def build_synthetic_row_from_context(row: dict[str, Any], seq_len: int, tokenize) -> dict[str, list[int]]:
+def build_synthetic_row_from_context(row: dict[str, Any], seq_len: int, tokenize, *, template=None) -> dict[str, list[int]]:
     """Lengthen context text by repetition until tokenization reaches ``seq_len``."""
     context_items = row["input"].get("context")
     if not isinstance(context_items, list) or not context_items:
@@ -1352,13 +1352,13 @@ def build_synthetic_row_from_context(row: dict[str, Any], seq_len: int, tokenize
     repeated_input = dict(row["input"])
     repeated_context = [dict(context_items[0])]
     text = base_text
-    encoded = encode_rows([repeated], tokenize)[0]
+    encoded = encode_rows([repeated], tokenize, template=template)[0]
     while len(encoded["input_ids"]) < seq_len:
         text = text + "\n" + base_text
         repeated_context[0] = dict(repeated_context[0], text=text)
         repeated_input["context"] = repeated_context
         repeated["input"] = repeated_input
-        encoded = encode_rows([repeated], tokenize)[0]
+        encoded = encode_rows([repeated], tokenize, template=template)[0]
         if len(text) > seq_len * 200:
             fail("context repetition did not reach the probe sequence length")
     return encoded
@@ -1369,6 +1369,7 @@ def prepare_probe_examples(
     encoded: list[dict[str, list[int]]],
     seq_len: int,
     tokenize,
+    *, template=None,
 ) -> tuple[list[dict[str, list[int]]], str]:
     """Ensure exercise rows reach ``seq_len`` with attended prompt-token fill or context repetition."""
     method = "attended_prompt_repeat"
@@ -1376,7 +1377,7 @@ def prepare_probe_examples(
         try:
             return [extend_probe_example_to_seq_len(example, seq_len) for example in encoded], method
         except SystemExit:
-            synthetic = build_synthetic_row_from_context(rows[0], seq_len, tokenize)
+            synthetic = build_synthetic_row_from_context(rows[0], seq_len, tokenize, template=template)
             return [extend_probe_example_to_seq_len(synthetic, seq_len)], "context_repetition"
     return [extend_probe_example_to_seq_len(example, seq_len) for example in encoded], method
 
@@ -2095,6 +2096,7 @@ def build_report(
 
 
 ADMITTED_TEMPLATE_SHA256 = "6ee4833fbce2b0f38f37b5cd51f5424cd154a78cbfc9d9ae3643359a709908ea"
+HANDOFF_PREDICTOR_SHA256 = "3a0d0f2265293091f538d72cf50cf1091b2d7ccf8e92f09b77aac59bb9e2d468"
 EPOCH_AUTHORITY_SHA256 = "bd201f2f0d7c67f5c179f9071391a8518ec24629a7ef867ae2e5c94ab34b009d"
 
 
@@ -2111,13 +2113,16 @@ def _epoch_authority():
                                    'epoch authority source differs from trainer pin')
 
 
-def _verified_source_module(data: bytes, path: Path, expected_sha256: str, name: str, mismatch: str):
+def _verified_source_module(data: bytes, path: Path, expected_sha256: str, name: str, mismatch: str,
+                            *, template_bytes: bytes | None = None):
     """Hash and execute the same source buffer; never import a later path read."""
     import types
     if hashlib.sha256(data).hexdigest() != expected_sha256:
         fail(mismatch)
     module = types.ModuleType(name)
     module.__file__ = str(path)
+    if template_bytes is not None:
+        module.__dict__['_EPOCH_TEMPLATE_BYTES'] = template_bytes
     exec(compile(data, str(path), "exec"), module.__dict__)
     return module
 
@@ -2839,7 +2844,7 @@ def run_context_probe(inputs_path: Path, base: str, revision: str, report_path: 
         raise
 
 
-def run_handoff_probe(rows: list[dict[str, Any]], inputs_path: Path, base: str, revision: str,
+def run_handoff_probe(rows_path: Path, inputs_path: Path, base: str, revision: str,
                       report_path: Path, *, context_limit: int,
                       expected_digests_path: Path | None = None,
                       trusted_digest_root_path: Path | None = None) -> dict[str, Any]:
@@ -2861,9 +2866,16 @@ def run_handoff_probe(rows: list[dict[str, Any]], inputs_path: Path, base: str, 
             template_bytes = handle.read(64 * 1024 + 1)
         template = _verified_source_module(template_bytes, template_path, ADMITTED_TEMPLATE_SHA256,
                                            "handoff_prompt_template", "handoff template digest mismatch")
+        rows = load_training_rows(rows_path, template=template)
         inputs, input_sha256 = _read_context_probe_inputs(inputs_path, template)
+        predictor_path = Path(__file__).parent.parent / "eval" / "predict_dev.py"
+        with predictor_path.open("rb") as handle:
+            predictor_bytes = handle.read(64 * 1024 + 1)
+        predict_dev = _verified_source_module(predictor_bytes, predictor_path, HANDOFF_PREDICTOR_SHA256,
+            "handoff_predict_dev", "handoff predictor digest mismatch", template_bytes=template_bytes)
         report.update(inputs_sha256=input_sha256, input_count=len(inputs),
-                      template_sha256=ADMITTED_TEMPLATE_SHA256, fixture_rows=len(rows))
+                      template_sha256=ADMITTED_TEMPLATE_SHA256, predictor_sha256=HANDOFF_PREDICTOR_SHA256,
+                      fixture_rows=len(rows))
         resolved_paths: list[Path] = []
         verification = digest_verification_before_load(base, revision, expected_digests_path,
             trusted_digest_root_path, resolved=resolved_paths,
@@ -2895,18 +2907,13 @@ def run_handoff_probe(rows: list[dict[str, Any]], inputs_path: Path, base: str, 
             return list(tokenizer.apply_chat_template(messages, tokenize=True,
                 add_generation_prompt=add_generation_prompt, enable_thinking=False, truncation=False))
 
-        encoded = encode_rows(rows, tokenize)
-        examples, method = prepare_probe_examples(rows, encoded, SEQ, tokenize)
+        encoded = encode_rows(rows, tokenize, template=template)
+        examples, method = prepare_probe_examples(rows, encoded, SEQ, tokenize, template=template)
         report["sequence_length_method"] = method
         item = inputs[position]
         row_id, group = _canonical_sha(item), "diagnostic-public-input"
         dev_rows = [{"row_id": row_id, "source_group": group, "input": item}]
         packets = {group: [row_id]}
-        eval_dir = str(Path(__file__).parent.parent / "eval")
-        if eval_dir not in sys.path:
-            sys.path.insert(0, eval_dir)
-        import predict_dev
-
         def generate(optimizer):
             if not optimizer.state:
                 raise ValueError("handoff optimizer has no initialized state")
@@ -3199,7 +3206,7 @@ def main(argv: list[str] | None = None) -> None:
                 or args.probe_context_limit <= SEQ):
             fail("context probe requires --probe, --probe-context-inputs and explicit --probe-context-limit > 2048")
         if args.probe_handoff:
-            report = run_handoff_probe(load_training_rows(args.rows), args.probe_context_inputs,
+            report = run_handoff_probe(args.rows, args.probe_context_inputs,
                 args.base, args.revision, args.report, context_limit=args.probe_context_limit,
                 expected_digests_path=args.expected_digests, trusted_digest_root_path=args.trusted_digest_root)
         else:

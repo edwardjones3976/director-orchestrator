@@ -213,6 +213,29 @@ def admitted_probe_template():
             yield path
 
 
+@contextlib.contextmanager
+def admitted_handoff_sources():
+    root = Path(__file__).resolve().parents[1]
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = {}
+        for directory, name in (("train", "prompt_template"), ("eval", "predict_dev")):
+            path = Path(tmp) / directory / (name + ".py")
+            path.parent.mkdir(exist_ok=True)
+            path.write_bytes((root / directory / path.name).read_bytes().replace(b"\r\n", b"\n"))
+            paths[name] = path
+        cached = types.ModuleType("prompt_template")
+        cached.__file__ = str(paths["prompt_template"])
+        cached.input_contract = mock.Mock(side_effect=AssertionError("cached contract used"))
+        cached.render_messages = mock.Mock(side_effect=AssertionError("cached renderer used"))
+        predictor = types.SimpleNamespace(run_predictions=mock.Mock(side_effect=AssertionError("cached predictor used")))
+        with mock.patch.object(train_adapter, "__file__", str(Path(tmp) / "train" / "train_adapter.py")), \
+             mock.patch.dict(sys.modules, {"prompt_template": cached, "predict_dev": predictor}):
+            yield paths
+        cached.input_contract.assert_not_called()
+        cached.render_messages.assert_not_called()
+        predictor.run_predictions.assert_not_called()
+
+
 class ContextTokenizer:
     def __init__(self, prompt=2, full=3, truncate=False):
         self.prompt, self.full, self.truncate = prompt, full, truncate
@@ -1289,9 +1312,16 @@ Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
             self.assertIn("dummy-eval:/eval:ro", args)
             self.assertIn(f"{tmp.as_posix()}:/workspace/rows:ro", [value.replace("\\", "/") for value in args])
             self.assertTrue(any(value.endswith(":/code/prompt_template.py:ro") for value in args))
+            source = tmp / "runs" / "stage" / "m2-0123abcd" / "Eval" / "predict_dev.py"
+            staged = source.read_bytes()
+            self.assertEqual(hashlib.sha256(staged).hexdigest(), train_adapter.HANDOFF_PREDICTOR_SHA256)
+            self.assertNotIn(b"\r\n", staged)
+            self.assertIn(f"{source.as_posix()}:/eval/predict_dev.py:ro", [value.replace("\\", "/") for value in args])
+            self.assertLess(args.index("dummy-eval:/eval:ro"), next(i for i, value in enumerate(args)
+                if value.endswith(":/eval/predict_dev.py:ro")))
             self.assertFalse(any(":/workspace/models" in value and "/m2-0123abcd" not in value.replace("\\", "/") for value in args))
 
-    def test_handoff_cli_reuses_validated_rows_and_refuses_incomplete_or_epoch_modes(self):
+    def test_handoff_cli_defers_rows_until_authentication_and_refuses_incomplete_or_epoch_modes(self):
         base = ["--rows", "fixtures/accepted.jsonl", "--report", "out.json", "--probe",
                 "--base", train_adapter.STUDENT_BASE, "--revision", train_adapter.STUDENT_REVISION,
                 "--probe-context-inputs", "inputs.jsonl", "--probe-context-limit", "4096", "--probe-handoff"]
@@ -1300,9 +1330,9 @@ Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
              mock.patch.object(train_adapter, "run_context_probe") as context, \
              contextlib.redirect_stdout(io.StringIO()):
             train_adapter.main(base)
-            self.assertEqual(probe.call_args.args[0], [row()])
+            self.assertEqual(probe.call_args.args[0], Path("fixtures/accepted.jsonl"))
             self.assertEqual(probe.call_args.kwargs["context_limit"], 4096)
-            rows.assert_called_once()
+            rows.assert_not_called()
             context.assert_not_called()
         for extra in (["--epochs", "1"], ["--check-only"], ["--probe-rows-total", "96"],
                       ["--probe-seq-len", "1536"], ["--probe-context-limit", "2048"]):
@@ -1365,15 +1395,89 @@ Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
                     timed_microsteps=40, gradient_accumulation=8, between_updates=generate)
             torch.optim.AdamW.assert_not_called()
 
-    @admitted_probe_template()
+    def test_handoff_refuses_modified_sources_and_ignores_path_swaps_and_cached_modules(self):
+        for fault in ("template", "predictor", "swap_template", "swap_predictor", "cache_only"):
+            with self.subTest(fault=fault), admitted_handoff_sources() as sources, tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                rows_path = write_accepted(root, [row()])
+                inputs, report, sentinel = root / "inputs.jsonl", root / "report.json", root / "executed"
+                inputs.write_text(json.dumps(synthetic_kep_input(row()["input"])["input"]) + "\n", encoding="utf-8")
+                bad = f"from pathlib import Path\nPath({str(sentinel)!r}).touch()\n".encode()
+                path = sources["predict_dev" if "predictor" in fault else "prompt_template"]
+                original = path.read_bytes()
+                if fault in ("template", "predictor"):
+                    path.write_bytes(bad)
+                real_open, load_source = Path.open, train_adapter._verified_source_module
+                modules = {}
+
+                class SwapAfterRead(io.BytesIO):
+                    def read(self, size=-1):
+                        data = super().read(size)
+                        path.write_bytes(bad)
+                        return data
+
+                def open_source(current, *args, **kwargs):
+                    if current == path and args == ("rb",) and fault.startswith("swap_"):
+                        return SwapAfterRead(original)
+                    return real_open(current, *args, **kwargs)
+
+                def verified_source(*args, **kwargs):
+                    module = load_source(*args, **kwargs)
+                    modules[args[3]] = module
+                    return module
+
+                with mock.patch.object(Path, "open", open_source), \
+                     mock.patch.object(train_adapter, "_verified_source_module", side_effect=verified_source), \
+                     mock.patch.object(train_adapter, "load_training_rows", wraps=train_adapter.load_training_rows) as rows, \
+                     mock.patch.object(train_adapter, "digest_verification_before_load", side_effect=RuntimeError("weight boundary")) as weights, \
+                     mock.patch.object(train_adapter, "load_verified_model") as model:
+                    expected = "digest mismatch" if fault in ("template", "predictor") else "weight boundary"
+                    with self.assertRaisesRegex((SystemExit, RuntimeError), expected):
+                        train_adapter.run_handoff_probe(rows_path, inputs, train_adapter.STUDENT_BASE,
+                            train_adapter.STUDENT_REVISION, report, context_limit=4096)
+                    model.assert_not_called()
+                    if fault == "template":
+                        rows.assert_not_called()
+                    else:
+                        rows.assert_called_once_with(rows_path, template=modules["handoff_prompt_template"])
+                    if fault in ("template", "predictor"):
+                        weights.assert_not_called()
+                    else:
+                        weights.assert_called_once()
+                        template, predictor = modules["handoff_prompt_template"], modules["handoff_predict_dev"]
+                        self.assertEqual(predictor.render_messages(row()["input"]), template.render_messages(row()["input"]))
+                        self.assertEqual(hashlib.sha256(predictor._TEMPLATE_SOURCE).hexdigest(), train_adapter.ADMITTED_TEMPLATE_SHA256)
+                        if fault == "swap_template":
+                            with self.assertRaisesRegex(predictor.UnsupportedRuntime, "changed after renderer load"):
+                                predictor._default_template_source()
+                self.assertFalse(sentinel.exists())
+                self.assertFalse(json.loads(report.read_bytes())["handoff_pass"])
+
+    def test_handoff_verified_template_reaches_context_repetition_fallback(self):
+        with admitted_handoff_sources() as sources:
+            path = sources["prompt_template"]
+            template = train_adapter._verified_source_module(path.read_bytes(), path,
+                train_adapter.ADMITTED_TEMPLATE_SHA256, "handoff_prompt_template", "mismatch")
+            def tokenize(messages, add_generation_prompt):
+                prompt = messages if add_generation_prompt else messages[:-1]
+                ids = list(range(2 + len(json.dumps(prompt)) // 200))
+                return ids if add_generation_prompt else ids + [99999]
+            # No prompt tokens forces the real context-repetition fallback.
+            encoded = [{"input_ids": [99999], "labels": [99999], "attention_mask": [1]}]
+            examples, method = train_adapter.prepare_probe_examples([row()], encoded, 40, tokenize, template=template)
+            self.assertEqual(method, "context_repetition")
+            self.assertEqual(len(examples[0]["input_ids"]), 40)
+            self.assertEqual(examples[0]["labels"][-1], 99999)
+
+    @admitted_handoff_sources()
     def test_handoff_probe_identity_save_restore_memory_and_error_reporting(self):
-        import predict_dev
         for fault in (None, "context", "generation", "schema", "memory", "generation_memory", "empty_state"):
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 inputs, report_path = root / "inputs.jsonl", root / "report.json"
                 item = synthetic_kep_input(row()["input"])["input"]
                 inputs.write_text(json.dumps(item) + "\n", encoding="utf-8")
+                rows_path = write_accepted(root, [row()])
                 model = mock.Mock(config=types.SimpleNamespace(_commit_hash=None))
 
                 def save(path):
@@ -1415,19 +1519,23 @@ Write-Output 'binary, nonzero, empty, default text, pipe-holder cleanup: PASS'
                     return 1.0, 11.0 if fault == "memory" else 3.0
 
                 with contextlib.ExitStack() as stack:
+                    load_source = train_adapter._verified_source_module
+                    def verified_source(*args, **kwargs):
+                        module = load_source(*args, **kwargs)
+                        if args[3] == "handoff_predict_dev":
+                            module.run_predictions = mock.Mock(side_effect=predict)
+                        return module
                     for name, value in [("FastLanguageModel", api), ("set_seed", mock.Mock()),
                         ("load_verified_model", mock.Mock(return_value=(model, ContextTokenizer()))),
                         ("resolve_commit", mock.Mock(return_value=train_adapter.STUDENT_REVISION)),
                         ("local_snapshot_dir", mock.Mock(return_value=root)),
                         ("digest_verification_before_load", mock.Mock(return_value={"upstream_digest_list_sha256": "a" * 64})),
-                        ("encode_rows", mock.Mock(return_value=[{}])),
-                        ("prepare_probe_examples", mock.Mock(return_value=([{}], "synthetic"))),
+                        ("_verified_source_module", mock.Mock(side_effect=verified_source)),
                         ("run_probe_microsteps", mock.Mock(side_effect=steps))]:
                         stack.enter_context(mock.patch.object(train_adapter, name, value))
                     stack.enter_context(mock.patch.object(train_adapter.torch, "cuda", cuda, create=True))
                     stack.enter_context(mock.patch.object(train_adapter.torch, "is_tensor", return_value=True, create=True))
-                    stack.enter_context(mock.patch.object(predict_dev, "run_predictions", side_effect=predict))
-                    call = lambda: train_adapter.run_handoff_probe([row()], inputs, train_adapter.STUDENT_BASE,
+                    call = lambda: train_adapter.run_handoff_probe(rows_path, inputs, train_adapter.STUDENT_BASE,
                         train_adapter.STUDENT_REVISION, report_path, context_limit=2049 if fault == "context" else 4096)
                     if fault:
                         with self.assertRaises((ValueError, RuntimeError)):
