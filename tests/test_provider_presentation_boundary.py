@@ -150,8 +150,8 @@ def _allocation_copy(text, path=""):
     parser.feed(text)
     parser.close()
     flattened = " ".join(" ".join(parser.parts).split())
-    if re.search(PROVIDER + r"[\s:=\"'|,-]*" + PERCENT, flattened, re.I) or re.search(
-        PERCENT + r"[\s:=\"'|,-]*" + PROVIDER, flattened, re.I
+    if re.search(PROVIDER + r"[\s:=\"'|,\u2013\u2014-]*" + PERCENT, flattened, re.I) or re.search(
+        PERCENT + r"[\s:=\"'|,\u2013\u2014-]*" + PROVIDER, flattened, re.I
     ):
         return "provider percentage"
     if re.search(r'["\'](?:allocation_profiles|weights|targets|provider_percentages)["\']\s*:\s*[{\[]', flattened, re.I) and re.search(PROVIDER, flattened, re.I):
@@ -252,8 +252,9 @@ class ProviderPresentationBoundaryTests(unittest.TestCase):
                 self.assertFalse(field in text, (name, field))
 
     def test_docs_contain_no_matrix_or_hidden_copies(self):
-        paths = [ROOT / "AGENTS.md", *sorted(ROOT.glob("README*")),
-                 *(path for path in sorted((ROOT / "docs").rglob("*"))
+        paths = [ROOT / "AGENTS.md", ROOT / "CLAUDE.md", *sorted(ROOT.glob("README*")),
+                 *(path for directory in ("docs", "prompts", ".github")
+                   for path in sorted((ROOT / directory).rglob("*"))
                    if path.suffix.lower() in {".html", ".md", ".yaml", ".yml", ".json", ".txt"})]
         for path in paths:
             text = path.read_text(encoding="utf-8")
@@ -313,3 +314,10 @@ class ProviderPresentationBoundaryTests(unittest.TestCase):
                      "No policy changes revive a quota-limited route or attest an underlying managed model family."):
             with self.subTest(copy=copy):
                 self.assertIsNone(_allocation_copy(copy))
+
+    def test_generic_provider_percent_table_with_prose_dashes(self):
+        for separator in ("\u2013", "\u2014"):
+            table = "<table><tr><th>Provider</th><th>Percent</th></tr><tr><td>PROVIDER_A</td><td>" + separator + "NN%</td></tr></table>"
+            with self.subTest(separator=separator):
+                self.assertIsNotNone(_allocation_copy(table))
+        self.assertIsNone(_allocation_copy("<p>PROVIDER_A — ready.</p><p>Ordinary prose – no figures.</p>"))
