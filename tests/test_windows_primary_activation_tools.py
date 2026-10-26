@@ -1910,9 +1910,10 @@ Write-Output 'slot-checks-passed'
         self.assertIn("@AGENTS.md", visible)
         normalized = " ".join(claude.replace("**", "").split())
         self.assertIn("Claude is administrator #2", normalized)
-        self.assertIn("Claude the Director for completing Director-Orchestrator", normalized)
-        self.assertIn("including while Codex is available", normalized)
-        self.assertIn("This appointment excludes Homemade LLM and every other project", normalized)
+        # Owner directive 2026-10-26: Claude is the sole Foreman for Director-Orchestrator only.
+        self.assertIn("Claude is the full-time and sole Foreman for all Director-Orchestrator work", normalized)
+        self.assertIn("even when Codex is available", normalized)
+        self.assertIn("Other projects keep their own appointments", normalized)
         self.assertNotIn("no standing director role", normalized.lower())
         self.assertIn("docs/project-leadership.html", claude)
 
