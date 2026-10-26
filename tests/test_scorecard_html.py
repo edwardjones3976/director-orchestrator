@@ -177,7 +177,7 @@ class ScorecardHtmlTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("scorecard_html_cli", ROOT / "scripts/director-scorecard.py")
         cli = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cli)
-        output = Path(self.folder) / "output"
+        output = (Path(self.folder) / "output").resolve()
         env = {self.launcher.NONCE_ENV: self.fields["nonce"], self.launcher.SHA_ENV: self.fields["evaluator_sha"],
                self.launcher.DESCRIPTOR_ENV: self.fields["descriptor_sha256"],
                "DIRECTOR_SCORECARD_RESULT": str(Path(self.folder) / "private-result.json")}
@@ -192,6 +192,7 @@ class ScorecardHtmlTests(unittest.TestCase):
             self.assertEqual(cli.main(), 0)
         metadata = json.loads(stdout.getvalue().splitlines()[-1])
         self.assertEqual(Path(metadata["html"]), output / "completion-scorecard.html")
+        self.assertEqual(Path(metadata["json"]), output / "completion-scorecard.json")
         self.assertNotIn("markdown", metadata)
         self.assertFalse((output / "completion-scorecard.md").exists())
         saved = json.loads((output / "completion-scorecard.json").read_bytes())

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grok scoped coding route — 23 October 2026</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1a1a1a;
+      --paper: #f7f4ee;
+      --accent: #1f4b8f;
+      --rule: #c9c2b4;
+    }
+    body {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      line-height: 1.5;
+      color: var(--ink);
+      background: var(--paper);
+    }
+    main {
+      max-width: 46rem;
+      margin: 0 auto;
+      padding: 1.5rem 1.25rem 3rem;
+    }
+    h1, h2 {
+      font-family: Arial, Helvetica, sans-serif;
+      line-height: 1.25;
+    }
+    h1 { font-size: 1.75rem; }
+    h2 {
+      margin-top: 1.75rem;
+      font-size: 1.2rem;
+      color: var(--accent);
+    }
+    p, li { font-size: 1.05rem; }
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.95em;
+    }
+    header, footer {
+      border-bottom: 1px solid var(--rule);
+      padding-bottom: 1rem;
+    }
+    footer {
+      border-bottom: 0;
+      border-top: 1px solid var(--rule);
+      margin-top: 2rem;
+      padding-top: 1rem;
+      font-size: 0.95rem;
+    }
+    .meta {
+      color: #333;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 0.95rem;
+    }
+  </style>
+</head>
+<body>
+<main>
+<!-- [[Assistant | Grok 4.6 | 2026-10-23 | 14:50 UTC | BEGIN]] -->
+<header>
+  <p class="meta">Director-Orchestrator · ISSUE-299 · WO-FRM-20261023-CAP01 · CAPABILITY_VERIFICATION</p>
+  <h1>Grok scoped coding route</h1>
+  <p>This offline note records how the <strong>grok</strong> provider route works as a bounded Director-Orchestrator worker. It is an implementation qualification file only. Later commit SHA, draft PR URL, and ACK comment URL cannot live here because this file is written before those tools return.</p>
+</header>
+
+<section aria-labelledby="route">
+  <h2 id="route">Actual route</h2>
+  <p>The accountable native author for this assignment is the xAI Grok Build worker on the <code>grok</code> route. Director hands a single scoped JSON work order with an explicit <code>allowed_paths</code> list and a start time. For this qualification the worker may use only the <code>director_git</code> MCP tools: status, read, write, commit, draft publish, and bound PR comment. Native shell, other MCP servers, other providers, browsers, permission-file edits, self-review, merge, and deployment are out of scope. A tool refusal is final: the worker reports it and stops.</p>
+</section>
+
+<section aria-labelledby="task">
+  <h2 id="task">Scoped JSON task from Director</h2>
+  <p>Director or Foreman issues one work order object. The worker treats that object as the whole assignment. Typical fields are the task narrative, <code>allowed_paths</code>, start timestamp, and hard stops (no workaround, no extra project, no source ACCEPT). The worker first calls <code>worker_git_status</code> and reads the named file, then writes only inside the allowed path. Expected file hash is the live SHA256 from the read, or the token <code>ABSENT</code> when the file does not yet exist. Effects are claimed only after the matching tool returns them.</p>
+</section>
+
+<section aria-labelledby="publish">
+  <h2 id="publish">Draft-only GitHub publication</h2>
+  <p>Publication for this route is <code>worker_git_publish_draft</code> against <code>main</code>. The result is a draft pull request. The worker does not open a merge request, retarget another branch, approve, or merge. Independent review, CI, and merge remain later gates owned by other roles. This worker cannot review or accept its own implementation.</p>
+</section>
+
+<section aria-labelledby="hooks">
+  <h2 id="hooks">Normal hooks</h2>
+  <p>Commits go through <code>worker_git_commit</code> with the exact allowed path list and an accurate docs message. Repository hooks run normally. Hook bypass is not authorized on this route. If a hook fails, the worker stops and reports the returned error instead of retrying through another interpreter.</p>
+</section>
+
+<section aria-labelledby="stop">
+  <h2 id="stop">Error and UNKNOWN stop-and-reconcile</h2>
+  <p>On refusal, ambiguous effect, missing receipt, or an UNKNOWN that would change the next step, the worker stops and reconciles with Director. It does not invent a second path, claim a completion stage without the tool receipt, or fill identity fields by guessing from a launcher executable. Model and session stay UNKNOWN unless the native client actually exposes them. Shared-host facts that are not required for the route note stay out of the file.</p>
+</section>
+
+<section aria-labelledby="gates">
+  <h2 id="gates">Independent review, CI, and merge</h2>
+  <p>Writing, committing, drafting a PR, and posting an ACK comment are worker actions. They are not source review, owner approval, CI green, or merge. A later independent reviewer and the existing CI/merge process decide those stages. The ACK on the bound PR is receipt of the assignment only.</p>
+</section>
+
+<section aria-labelledby="identity">
+  <h2 id="identity">Authorship, sender, and communication</h2>
+  <p>Provider authorship is the grok/xAI Grok Build worker. GitHub writes on this host are sent by the shared account <code>edwardjones3976</code>. Those are different facts: the worker owns the text; the shared account is the transport sender. GitHub comments returned by <code>worker_git_comment</code> are the verified communication channel for this qualification. Native Slack is not verified on this route and is not used as proof of delivery.</p>
+</section>
+
+<footer>
+  <p>Commit, tree, draft PR, and comment URLs belong in the PR ACK after those tools return. This file does not claim those stages. Native session identity is UNKNOWN in this client unless separately recorded by Foreman metadata.</p>
+</footer>
+<!-- [[Assistant | Grok 4.6 | 2026-10-23 | 14:50 UTC | END]] -->
+</main>
+</body>
+</html>

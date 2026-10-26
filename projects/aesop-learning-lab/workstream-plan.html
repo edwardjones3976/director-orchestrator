@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Aesop Learning Lab M1 workstream plan</title>
+<link rel="stylesheet" href="../../docs/assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="../../docs/index.html">Director Orchestrator</a></header>
+<main id="content">
+<h1>Aesop Learning Lab M1 workstream plan</h1>
+<p>Goal: replace the three-question, in-memory fixture with a persistent five-concept practice loop. Learners may continue practice while delayed independent checks wait until due. The 24-hour rule governs evidence credit, not access.</p>
+<p>Current state: <a href="https://github.com/edwardjones3976/aesop-learning-lab/pull/12">draft content PR #12</a> has candidate keys and no human review receipts; <a href="https://github.com/edwardjones3976/aesop-learning-lab/pull/15">draft self-review PR #15</a> passes CI but lacks independent review. Both remain separate from learner release.</p>
+<h2>Modular assignments</h2>
+<table>
+<thead><tr><th>ID</th><th>Provider</th><th>Owned surface</th><th>Acceptance and handoff</th></tr></thead>
+<tbody>
+<tr><td>C3a</td><td>Codex</td><td>Pure scheduler and learner-state rules in Python</td><td>Injected-clock tests prove continued practice, due checks, distinct item families, and no premature mastery credit. Different provider reviews the exact candidate.</td></tr>
+<tr><td>L1a</td><td>Claude</td><td>Five-concept content pack, keys, rubrics, and source receipts</td><td>Independent human or qualified reviewer checks answer keys, examples, held-out families, and versioned receipts before learner use. Codex validates contract and tests; Claude does not approve its own content.</td></tr>
+<tr><td>C3b</td><td>Codex</td><td>Local application API and SQLite integration</td><td>Session, attempt, self-review, revision, export, and delete work against durable records. Browser can refresh without losing attempts. Different provider reviews.</td></tr>
+<tr><td>U1a</td><td>Cursor</td><td>Injected HTTP browser adapter and continued-practice controls</td><td>Fixture tests remain; browser shows more-practice choice and next due time without implying lockout. Claude or eligible independent provider reviews.</td></tr>
+<tr><td>Q1</td><td>Grok or Z.ai, only if a verified route is ready</td><td>Independent bounded QA or exact-candidate review</td><td>Record actual provider identity, run evidence, and exact SHA. No self-review, invented readiness, or inferred approval. Otherwise use another eligible verified reviewer.</td></tr>
+</tbody>
+</table>
+<h2>Contract gate</h2>
+<p>Before C3b and U1a work concurrently, agree on <code>GET /api/v1/session/next</code> practice mode and due metadata. The API owns selection and reasons; the browser displays them. Self-review records remain separate from mastery credit. Keep one writer per module and use isolated branches.</p>
+<h2>Integration and mending</h2>
+<ol>
+<li>Review PR #15 and the five-concept content candidate independently. Record findings in the exact PR, return corrections to the producer, and recheck the changed SHA.</li>
+<li>Integrate scheduler, content, API, and browser adapter in dependency order. Run focused tests and the full affected CI checks on each merge candidate.</li>
+<li>Run the local browser journey: finish the first three items, choose more practice, refresh, see persisted progress, return for a delayed check, and export/delete all learner records.</li>
+<li>Keep the runtime Director, Slack, paid dispatch, merge, and publication gates separate. Silence or absent provider evidence is not approval.</li>
+</ol>
+<p>Stop the M1 slice when the local journey passes on reviewed content and a different eligible provider accepts the exact candidate, or when a required review, transport, or deterministic gate blocks further integration.</p>
+</main>
+</body>
+</html>

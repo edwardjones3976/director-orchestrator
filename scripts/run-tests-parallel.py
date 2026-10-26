@@ -29,6 +29,31 @@ DSN_VARIABLE = "LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN"
 # Eight shards retain at most this much stdout each. Past the cap the rest is
 # discarded and the shard cannot pass.
 OUTPUT_LIMIT = 1 << 20
+# Fixed director-release refusal codes; a tail line consisting of exactly
+# one of these after a canonical ReleaseError class carries no private value.
+RELEASE_REFUSAL_CODES = (
+    "platform_check_failed",
+    "doctor_deadline_exhausted",
+    "untrusted_executable",
+    "command_output_exceeded",
+    "system_directory_unavailable",
+)
+_RELEASE_REFUSAL = re.compile(
+    r"((?:director_release_under_test\.)?ReleaseError): (" + "|".join(RELEASE_REFUSAL_CODES) + ")")
+# Two fixed-format Windows diagnostic notes attached by test fixtures. A tail
+# line survives only as an exact whole-line match: closed tokens and bounded
+# ASCII decimal integers (-1 marks an unknown code), never a path or message.
+WINDIAG_MS_MAX = 3_600_000
+WINDIAG_LENGTH_MAX = 1 << 30
+WINDIAG_CODE_MAX = 0xFFFFFFFF
+WINDIAG_ERRNO_MAX = 0xFFFF
+_COUNT = r"(0|[1-9][0-9]{0,9})"
+_CODE = r"(-1|0|[1-9][0-9]{0,9})"
+_WINDIAG_NODE = re.compile(
+    rf"WINDIAG node_timeout alive=([01]) code={_CODE} spawn_ms={_COUNT} wait_ms={_COUNT} "
+    rf"drain_ms={_COUNT} out={_COUNT} err={_COUNT}")
+_WINDIAG_CLEANUP = re.compile(
+    rf"WINDIAG tmp_cleanup root=([01]) entry=(git\.exe|candidate-executed|other) winerror={_CODE} errno={_CODE}")
 _LIVE_PROCESSES = set()
 _LIVE_LOCK = threading.Lock()
 
@@ -272,6 +297,16 @@ def parse_output(output):
     return counts, failures, durations, bool(ran and summaries)
 
 
+def windiag_note(line):
+    node = _WINDIAG_NODE.fullmatch(line)
+    if node:
+        alive, code, spawn, wait, drain, out, err = map(int, node.groups())
+        return (code <= WINDIAG_CODE_MAX and (code == -1 or not alive)
+                and max(spawn, wait, drain) <= WINDIAG_MS_MAX and max(out, err) <= WINDIAG_LENGTH_MAX)
+    cleanup = _WINDIAG_CLEANUP.fullmatch(line)
+    return bool(cleanup) and int(cleanup[3]) <= WINDIAG_CODE_MAX and int(cleanup[4]) <= WINDIAG_ERRNO_MAX
+
+
 def sanitized_tail(output):
     # Allow only unittest structure and traceback locations. Arbitrary log,
     # source and assertion lines can contain secrets or database rows.
@@ -285,8 +320,11 @@ def sanitized_tail(output):
             lines.append((match or progress).group())
         elif frame:
             lines.append(f"  File {frame[1]}, line {frame[2]}, in {frame[3]}")
+        elif windiag_note(line):
+            lines.append(line)
         elif error:
-            lines.append(error[1] + ": [message redacted]")
+            refusal = _RELEASE_REFUSAL.fullmatch(line)
+            lines.append(f"{refusal[1]}: {refusal[2]}" if refusal else error[1] + ": [message redacted]")
         elif re.fullmatch(r"(?:Traceback \(most recent call last\):|[=\-]+|Ran \d+ tests? in [\d.]+s|(?:OK|FAILED)(?: \((?:(?:failures|errors|skipped|expected failures|unexpected successes)=\d+)(?:, (?:failures|errors|skipped|expected failures|unexpected successes)=\d+)*\))?|)", line):
             lines.append(line)
         else:
