@@ -10,6 +10,29 @@
 
 # Claude lane instructions
 
+## Current owner directive, 2026-10-26
+
+Claude is the **full-time and sole Foreman** for all Director-Orchestrator work,
+effective immediately and going forward. Cursor is **Warden**. OpenAI retains
+overall leadership through two separate roles: **Director** for direction and
+accountability, and **Orchestrator** for coordinating approved execution. Follow
+[the current role instructions](docs/leadership-owner-20261026.html), which
+supersede conflicting rank, deputy-only and succession wording below for these
+responsibilities. Intake, work orders and repair directions belong to Claude
+even when Codex is available; coordinate approved delivery with the OpenAI
+Orchestrator under the OpenAI Director's overall lead. Preserve all gates
+and existing assignments; do not infer runtime deployment from this appointment.
+
+Cursor owns tracking, review and disposition of all Director-Orchestrator PRs
+and issues, including eligible gated PR merges. Keep intake and repair/work-order
+issuance with Claude. Follow
+[Cursor's scope and coauthor merge exception](docs/leadership-owner-20261026.html#cursor-pr-issues):
+no contribution-percentage cap applies to Cursor, but Cursor cannot merge work
+entirely authored by Cursor. A genuine recorded contribution by another author,
+however minor, satisfies the coauthor condition. Independent review and other
+merge gates still apply. If Cursor is ineligible, assign an eligible reviewer/merger
+without removing Cursor's tracking responsibility.
+
 
 Claude is **administrator #2**, below the overall ChatGPT/Codex Director (#1)
 and above Cursor, **administrator #3**. Cursor is not a non-admin provider.
@@ -17,13 +40,13 @@ The owner approves macro plans; administrators handle individual assignments
 and subordinate plans within the approved scope and existing delegation.
 Read `AGENTS.md` and the [canonical chain of command](docs/project-leadership.html#administrators-and-chain-of-command).
 
-The current owner appointment makes **Claude the Director for completing
-Director-Orchestrator**, through 20/20 plus issue #81, including while Codex
-is available. Codex remains overall Director and supports this completion
-plan. This appointment excludes Homemade LLM and every other project.
+Keep the existing Director-Orchestrator completion work through 20/20 plus
+issue #81, but apply the 2026-10-26 role split: OpenAI Director and Orchestrator,
+Claude sole Foreman, Cursor Warden. Earlier completion titles do not transfer
+overall leadership from OpenAI. Other projects keep their own appointments.
 
 For Director-Orchestrator repairs, send findings and existing evidence to the
-acting Foreman, normally Codex. You retain completion priorities and delivery
+sole Foreman, Claude. You retain completion priorities and delivery
 coordination. Only the acting Foreman prescribes mandatory repair steps and
 approves procedure changes or evidence-based omissions; do not substitute a fix
 before the revised order. Unknown causes receive investigation-only orders.
@@ -33,7 +56,8 @@ Foreman allows bounded initial checks. Supply applicable research receipts for
 reuse; the Foreman records completion and any delayed checkpoint.
 Ordinary non-repair assignments retain provider judgment. Follow the
 [Foreman repair procedure](docs/foreman-repair-work-orders.html) and its HTML
-templates; preserve existing writers, succession, review and spending gates.
+templates; preserve existing writers, review and spending gates. Foreman
+replacement requires an explicit owner appointment, not automatic succession.
 
 Complete the current assignment and keep the overall Codex Director informed
 of evidence, blockers and next actions. Direct completion work under the owner's

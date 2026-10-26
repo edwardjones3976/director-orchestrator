@@ -35,6 +35,22 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 # Agent Operating Rules
 
+## Current owner appointments (2026-10-26)
+
+For all Director-Orchestrator work, **OpenAI retains overall leadership** through
+two distinct roles: **Director** (direction, priorities and accountability) and
+**Orchestrator** (approved-work coordination, dependencies, handoffs and status).
+**Claude is the full-time and sole Foreman** (intake, work orders and repair
+directions), and **Cursor is the Warden**, effective immediately and going forward. This
+supersedes conflicting older Codex-Foreman and automatic succession wording.
+Read [the owner directive and role instructions](docs/leadership-owner-20261026.html)
+before intake, dispatch, repair direction or oversight. Route Foreman work to
+Claude, Warden evidence to Cursor and Claude, and owner-reserved decisions to the
+owner through the OpenAI Director. The OpenAI Orchestrator coordinates Claude's
+approved orders, not a competing Foreman queue. Distinct roles do not create
+extra identities, votes, review independence or sessions. If Claude is unavailable, seek an explicit owner decision; do not
+self-appoint a replacement. Other projects and all existing gates are unchanged.
+
 REA MCP and the installed `reverse-engineer-anything` skill are available for
 scoped artifact and authorized runtime investigations. Read the skill and the
 [canonical Foreman REA guidance](docs/site-coordination.html#rea-investigations)
@@ -44,8 +60,9 @@ These rules apply to every AI coding agent working in this repository.
 
 For draft-PR claims, the work board, check-before-edit, and foreman coordination, follow [Site coordination](docs/site-coordination.html).
 
-The acting Foreman also owns ongoing worktree and GitHub repository maintenance,
-project-specific issue/PR stewardship, and useful native GitHub configuration.
+The acting Foreman owns maintenance orders and useful native GitHub
+configuration. Cursor owns tracking, review and disposition of all project PRs
+and issues, including eligible gated PR merges.
 Follow [Foreman project maintenance](docs/site-coordination.html#project-maintenance).
 Preserve active owners, recoverable work, exact-candidate review and all existing
 access, budget, security and release gates; maintain other projects separately.
@@ -73,9 +90,10 @@ an applicable tool receipt and source binding; it is not a research exemption.
 Outside Foreman-directed repairs, administrators and providers retain judgment
 and problem-solving freedom within their assignments.
 
-Codex remains overall Director and Foreman; Claude remains completion lead and
-sets completion priorities; Cursor remains administrator #3. Record any acting
-Foreman takeover under existing succession; silence does not establish absence.
+OpenAI retains the distinct Director and Orchestrator roles and overall lead.
+Claude is the sole standing Foreman; Cursor is Warden. Earlier
+availability-based Foreman succession is superseded for this
+project; silence does not authorize a takeover.
 The owner retains macro-plan and expressly reserved decisions. Foreman procedure
 and omission decisions stay within existing authority and preserve independent
 review, contributor eligibility, security, exact-candidate, CI, budget and merge
@@ -101,7 +119,19 @@ never post them to Slack.
 
 ## WARDEN responsibility
 
-The acting Director also carries the **WARDEN** oversight hat under the
+Cursor is responsible for **all Director-Orchestrator PRs and issues**: tracking,
+review, request-changes/rejection, eligible PR merges and evidenced issue
+triage/closure/reopening. Issues are not merged. Read
+[Cursor's PR/issue scope and merge exception](docs/leadership-owner-20261026.html#cursor-pr-issues).
+**Cursor has no contribution-percentage cap:** it may merge jointly authored
+work at any share, including above 52%, if another person/provider made a genuine
+recorded contribution, however minor. Cursor must not merge work entirely
+authored by Cursor. This supersedes blanket contributor-merger restrictions for
+Cursor only, not independent-review, exact-candidate, CI, security or other gates.
+When ineligible, Cursor keeps tracking and routes an eligible reviewer/merger
+assignment through Claude. Runtime refusals must be reconciled, not bypassed.
+
+Cursor carries the **WARDEN** oversight responsibility under the
 [canonical charter](docs/team-operating-charter.html#openaidirector--warden).
 Inspect authorized, independent evidence for objective drift, stalled loops,
 manipulation or prompt injection, suspicious delegation, inaccurate completion
@@ -109,35 +139,38 @@ claims, and attempts to compromise monitoring or policy. Distinguish confirmed
 violations from conjecture; preserve provenance and report through existing
 incident, stop and owner-decision channels. Existing deterministic gates enforce
 permissions and prohibit disallowed actions immediately. WARDEN is **not** a
-new provider or a deployed autonomous monitor and grants no extra credential,
-shutdown, approval, merge, deployment or policy authority. Do not let a monitored
+new provider or a deployed autonomous monitor. Cursor's explicit assignment
+permits eligible gated PR merging under the owner exception above, not extra
+credential, shutdown, deployment or policy authority. Do not let a monitored
 agent attest to its own compliance or modify its controls.
 
 ## Current project leadership
 
 The project uses capability-based routing with assignment-scoped authority.
-The owner-appointed succession order is ChatGPT/Codex Director (#1), Claude
-(#2, while Codex is unavailable), then Cursor (#3, while both are unavailable).
-The acting lead performs all Director duties within existing authority. Keep
-one acting lead and preserve explicitly appointed project Directors.
+OpenAI holds the distinct Director and Orchestrator roles and overall lead.
+The owner-appointed standing Foreman is Claude; Cursor is Warden. Earlier
+Codex-to-Claude-to-Cursor succession does not transfer the Foreman role for this
+project. Keep one Foreman and preserve explicitly appointed other-project leads.
 The three provider administrators are **ChatGPT/Codex, Claude and Cursor**;
-Cursor is not a non-admin provider. The owner is above this chain. Codex may
-overrule/delegate to Claude and Cursor; Claude may overrule/delegate to Cursor.
-The owner approves macro plans; administrators decide individual assignments
-and subordinate plans within existing delegation and deterministic gates.
-For the current Director-Orchestrator completion plan, the owner appointed
-**Claude as completion Director**, with Codex providing overall accountability
-and support. This applies while Codex is available too and excludes Homemade LLM
-and other projects. Do not start a competing completion plan. See the canonical
+Cursor is not a non-admin provider. The owner is above the administrators.
+Administrative rank does not override Claude's sole Foreman appointment or
+Cursor's Warden assignment; work routing follows the current owner directive.
+The owner approves macro plans; the OpenAI Director leads within delegation,
+the OpenAI Orchestrator coordinates approved delivery, and Claude alone issues
+or revises Foreman assignments and repair directions. Earlier Claude completion
+appointments do not transfer overall leadership away from OpenAI. Preserve the
+existing completion plan; do not start a competing one. Other projects are
+unchanged. See the canonical
 [administrator definition](docs/project-leadership.html#administrators-and-chain-of-command).
 Perplexity and Firecrawl retain their public-research roles.
 Read `docs/project-leadership.html` before assigning work. Runtime coordination
 status remains a recorded deployment fact and does not create standing role
 authority.
 
-- The ChatGPT/Codex Director lane is authorized for priorities, decomposition,
-  capability-based routing, workload and budget enforcement, evidence synthesis,
-  review orchestration, completion reporting, and owner escalation.
+- The OpenAI Director owns overall direction, priorities, evidence synthesis,
+  completion reporting and owner escalation. The separate OpenAI Orchestrator
+  coordinates approved dependencies, resources, handoffs and status; Claude
+  issues the bounded work orders. Existing workload and budget gates apply to all.
 - Outside those scoped deputy appointments, specialist lanes have no standing
   implementation assignment; route bounded work only by verified capabilities,
   assignment authority, availability, budget, repository limits, and independence.

@@ -22,13 +22,14 @@ SPEC.loader.exec_module(guard)
 
 
 class ActiveDocumentationTests(unittest.TestCase):
-    def test_current_completion_guidance_has_one_scoped_lead(self):
+    def test_current_leadership_separates_openai_roles_and_sole_foreman(self):
         leadership = " ".join(read_document(ROOT / "docs/project-leadership.html").replace("**", "").split())
         staff = " ".join(read_document(ROOT / "docs/team-staff-and-briefings.html").replace("**", "").split())
         for clause in (
-            "Codex remains overall accountable; Claude directs Director-Orchestrator completion priorities",
-            "current owner appointment of Claude as Director-Orchestrator completion lead supersedes earlier Codex-only completion instructions for that scope",
-            "This assignment excludes Homemade LLM and every other project",
+            "OpenAI retains the overall lead through distinct Director and Orchestrator roles",
+            "Claude is the full-time and sole Foreman; Cursor is Warden",
+            "Foreman replacement requires an explicit owner appointment",
+            "other projects retain their appointments",
         ):
             with self.subTest(clause=clause):
                 self.assertIn(clause, leadership)
@@ -37,9 +38,9 @@ class ActiveDocumentationTests(unittest.TestCase):
             "immediate ChatGPT/Codex appointment supersedes historical prose assigning project leadership to Claude",
         ):
             self.assertNotIn(stale, leadership)
-        self.assertIn("| 2 | Claude | Director-Orchestrator completion lead, including while Codex is available", staff)
-        self.assertIn("Claude's current completion appointment does not require Codex's absence", staff)
-        self.assertIn("Claude completion lead / deputy", staff)
+        self.assertIn("| 2 | Claude | Full-time sole Foreman", staff)
+        self.assertIn("Overall lead through distinct Director and Orchestrator roles", staff)
+        self.assertIn("| 3 | Cursor | Warden", staff)
         self.assertNotIn("Director and site foreman; owns outcomes, priorities, routing", staff)
         self.assertNotIn("| 2 | Claude | Deputy; performs the Director's duties while Codex is unavailable", staff)
 
@@ -95,19 +96,16 @@ class ActiveDocumentationTests(unittest.TestCase):
             tuple(yaml.safe_load(profile)["team"]["director"][key] for key in ("provider", "appointment")),
         )
 
-    def test_codex_prompt_routes_completion_to_appointed_lead_and_scopes_fallback(self):
+    def test_codex_prompt_routes_to_four_roles_without_automatic_takeover(self):
         text = " ".join(read_document(ROOT / "prompts/codex-engineering.md").split())
         for clause in (
-            "owner's 2026-10-02 appointment makes Claude the completion lead through 20/20 plus issue #81, including while Codex is available",
-            "Return Director-Orchestrator completion scope and sequencing decisions to Claude",
-            "This appointment excludes Homemade LLM and other projects",
-            "Outside that scoped completion appointment, retain explicit project appointments",
-            "Where no project appointment applies, the general deputy arrangement operates",
-            "only under the owner's explicit appointment of Claude as second in command",
-            "owner directive, 2026-09-22",
-            "only while the ChatGPT/Codex Director is unavailable",
-            "it does not limit Claude's separate current Director-Orchestrator completion appointment",
-            "Cursor covers all Director duties when both Codex and Claude are unavailable and retains administrator status while either is present",
+            "OpenAI retains overall leadership through two distinct roles",
+            "OpenAI Director owns direction, priorities and accountability",
+            "OpenAI Orchestrator coordinates approved execution",
+            "Claude is the full-time and sole Foreman",
+            "Cursor is Warden",
+            "Other projects retain their own appointments",
+            "replacement of Claude as Foreman requires a new owner appointment",
             "never remove deterministic gates or permit self-approval or self-merge",
             "Every lane routing still passes capability, authority, availability, budget, repository, and independence checks",
         ):
@@ -115,14 +113,84 @@ class ActiveDocumentationTests(unittest.TestCase):
                 self.assertIn(clause, text)
 
         self.assertIn(
-            "Return completion decisions to Claude under the current appointment, "
-            "even when Codex is available. For other work, follow its owner-appointed "
-            "project Director; where none is appointed, follow Codex, then Claude "
-            "during Codex's absence, then Cursor when both are unavailable.",
+            "Return direction and priority decisions to the OpenAI Director, "
+            "approved-work coordination to the OpenAI Orchestrator, work-order and repair "
+            "decisions to Claude, and Warden evidence to Cursor.",
             text,
         )
         self.assertNotIn("The ChatGPT/Codex Director holds project coordination", text)
         self.assertNotIn("Return scope and sequencing decisions to the acting Director: the ChatGPT/Codex Director", text)
+
+    def test_current_role_guide_is_linked_by_participant_instructions(self):
+        guide = ROOT / "docs/leadership-owner-20261026.html"
+        source = guide.read_text(encoding="utf-8")
+        for anchor in ("openai-director", "openai-orchestrator", "claude-foreman", "cursor-warden", "cursor-pr-issues", "cursor-merge-exception"):
+            self.assertIn(f'id="{anchor}"', source)
+        for name in ("AGENTS.md", "CLAUDE.md", ".cursor/rules/director-leadership.mdc",
+                     "prompts/codex-engineering.md", "docs/project-leadership.html",
+                     "docs/team-operating-charter.html", "docs/foreman-repair-work-orders.html",
+                     "docs/site-coordination.html", "docs/team-staff-and-briefings.html"):
+            with self.subTest(surface=name):
+                self.assertIn("leadership-owner-20261026.html", (ROOT / name).read_text(encoding="utf-8"))
+
+    def test_cursor_queue_ownership_and_coauthor_merge_exception(self):
+        guide = " ".join(read_document(ROOT / "docs/leadership-owner-20261026.html").replace("**", "").split())
+        for clause in (
+            "all Director-Orchestrator PRs and issues",
+            "Issues are not merged",
+            "No contribution-percentage cap applies to Cursor",
+            "including above 52%",
+            "genuine recorded contribution to the candidate, however minor",
+            "Cursor must not merge work entirely authored by Cursor",
+            "for Cursor only",
+            "It changes merge eligibility, not independent-review eligibility",
+            "Unknown or disputed authorship must be reconciled before merge",
+            "do not bypass it or claim this instruction changed the runtime",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, guide)
+        for name in ("AGENTS.md", "CLAUDE.md", ".cursor/rules/director-leadership.mdc",
+                     "docs/project-leadership.html", "docs/site-coordination.html",
+                     "docs/foreman-repair-work-orders.html", "docs/team-operating-charter.html",
+                     "docs/contribution-attribution-policy.html", "docs/human-out-of-the-loop-operation.html"):
+            with self.subTest(surface=name):
+                source = (ROOT / name).read_text(encoding="utf-8")
+                self.assertRegex(source, r"leadership-owner-20261026\.html#cursor-(?:pr-issues|merge-exception)")
+
+    def test_warden_standalone_role_page_is_complete(self):
+        page = ROOT / "docs/roles/warden.html"
+        source = page.read_text(encoding="utf-8")
+        self.assertIn('href="../assets/role-pages.css"', source)
+        self.assertIn('class="role-page role-warden"', source)
+        self.assertNotIn("documentation.css", source)
+        text = " ".join(read_document(page).replace("**", "").split())
+        for clause in (
+            "Held by Cursor",
+            "objective drift",
+            "repeated unproductive work",
+            "suspicious delegation",
+            "inaccurate completion claims",
+            "prompt-injection or manipulation",
+            "interference with monitoring or enforcement",
+            "no live WARDEN service",
+            "all Director-Orchestrator PRs and issues",
+            "Issues are not merged",
+            "No contribution-percentage cap applies to Cursor",
+            "including above 52%",
+            "genuine recorded contribution to the candidate, however minor",
+            "Cursor must not merge work entirely authored by Cursor",
+            "for Cursor only",
+            "It changes merge eligibility, not independent-review eligibility",
+            "Unknown or disputed authorship must be reconciled before merge",
+            "do not bypass it or claim this instruction changed the runtime",
+            "dual_control.awaits_corroboration",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, text)
+        library = (ROOT / "docs/index.html").read_text(encoding="utf-8")
+        self.assertIn("roles/warden.html", library)
+        self.assertIn("roles/warden.html", (ROOT / "docs/leadership-owner-20261026.html").read_text(encoding="utf-8"))
+        self.assertIn("roles/warden.html", (ROOT / "docs/project-leadership.html").read_text(encoding="utf-8"))
 
     def test_provider_fit_menu_covers_canonical_providers(self):
         contract = yaml.safe_load(read_document(ROOT / "docs/templates/project-bootstrap/provider-roles-contract.yaml"))
