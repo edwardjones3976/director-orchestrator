@@ -4,10 +4,13 @@ import ast
 import hashlib
 import inspect
 import json
+from html import unescape
+from html.parser import HTMLParser
 from pathlib import Path
 import re
 import unittest
 
+import yaml
 from jsonschema import Draft202012Validator
 
 from director_orchestrator import _retry_constants, allocation_profiles, provider_profiles, workload_policy
@@ -47,6 +50,116 @@ PRESENTATION_FIELDS = (
     "allocation_module", "direct_workload_percent", "overall_effort_percent",
     "workload_enforcement", "workload_percentage", "effort_band_percent",
 )
+
+# These exact non-numeric tables describe runtime identities, never target shares.
+RUNTIME_IDENTITY_TABLES = {
+    ("docs/engineering-workload-ledger.html", ("product id", "canonical allocation bucket", "identity constraint")):
+        "Runtime product-to-lane identities; no percentages or target values.",
+    ("docs/grok-lanes-separation-2026-09-09.html", ("name", "what it actually is", "whose quota it spends", "present in this repository")):
+        "Transport funding and identity boundaries; no allocation targets.",
+}
+RUNTIME_RECORDS = {
+    "docs/examples/offline-slack-trial-observations-v1.json": "Existing serialized trial input retains its intake field names.",
+    "docs/schemas/director-slack-trial-observations-v1.example.json": "Frozen trial-record schema example retains its intake field names.",
+}
+PROVIDER = r"\b(?:openai|codex|claude|cursor|(?:direct\s+)?grok|gemini|antigravity|perplexity|firecrawl|(?:github\s+)?copilot|z\.ai|provider_[a-z]+)\b"
+PERCENT = r"(?:\d+(?:\.\d+)?|NN)\s*%"
+ALLOCATION_TERM = r"\b(?:allocation|bucket|targets?|shares?|ceilings?|quotas?|budget)\b"
+RUNTIME_ALIAS = "Gemini and Antigravity share one lane."
+RUNTIME_ALIAS_PATHS = {
+    "docs/provider-profiles/antigravity.yaml": "The verified Gemini-to-Antigravity runtime alias is not an allocation share.",
+    "docs/provider-profiles/antigravity.profile.html": "Generated presentation of the same runtime alias; no target exception.",
+}
+
+
+class _DocumentText(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+        self.blocks = []
+        self.pending = []
+
+    def _flush(self):
+        block = " ".join(" ".join(self.pending).split())
+        if block:
+            self.blocks.append(block)
+        self.pending.clear()
+
+    def handle_data(self, data):
+        self.parts.append(data)
+        self.pending.append(data)
+
+    def handle_comment(self, data):
+        self._flush()
+        self.parts.append(data)
+        self.blocks.append(" ".join(data.split()))
+
+    def handle_starttag(self, tag, attrs):
+        if tag in {"td", "th", "li", "p", "dt", "dd", "div", "section", "pre", "script", "template"} or re.fullmatch(r"h[1-6]", tag):
+            self._flush()
+        for key, value in attrs:
+            if key.startswith("data-") and value:
+                self.parts.append(value)
+                self.blocks.append(" ".join(value.split()))
+
+    def handle_endtag(self, tag):
+        if tag in {"td", "th", "li", "p", "dt", "dd", "div", "section", "pre", "script", "template"} or re.fullmatch(r"h[1-6]", tag):
+            self._flush()
+
+    def close(self):
+        super().close()
+        self._flush()
+
+
+def _yaml_scalars(value):
+    if isinstance(value, dict):
+        for child in value.values():
+            yield from _yaml_scalars(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _yaml_scalars(child)
+    elif isinstance(value, str):
+        yield " ".join(value.split())
+
+
+def _allocation_copy(text, path=""):
+    for _ in range(3):
+        text = unescape(text)
+    for table in re.findall(r"<table\b[^>]*>.*?</table>", text, re.S | re.I):
+        headers = tuple(" ".join(re.sub(r"<[^>]*>", " ", header).lower().split())
+                        for header in re.findall(r"<th\b[^>]*>(.*?)</th>", table, re.S | re.I))
+        percentage = re.search(PERCENT, table, re.I)
+        if (path, headers) in RUNTIME_IDENTITY_TABLES and not percentage:
+            continue
+        if any(re.search(ALLOCATION_TERM, header, re.I) for header in headers) and (
+            percentage or re.search(PROVIDER, table, re.I)
+        ):
+            return "allocation table"
+    parser = _DocumentText()
+    parser.feed(text)
+    parser.close()
+    flattened = " ".join(" ".join(parser.parts).split())
+    if re.search(PROVIDER + r"[\s:=\"'|,-]*" + PERCENT, flattened, re.I) or re.search(
+        PERCENT + r"[\s:=\"'|,-]*" + PROVIDER, flattened, re.I
+    ):
+        return "provider percentage"
+    if re.search(r'["\'](?:allocation_profiles|weights|targets|provider_percentages)["\']\s*:\s*[{\[]', flattened, re.I) and re.search(PROVIDER, flattened, re.I):
+        return "inline allocation data"
+    blocks = list(_yaml_scalars(yaml.safe_load(text))) if path.endswith((".yaml", ".yml")) else parser.blocks
+    alias_count = sum(block.count(RUNTIME_ALIAS) for block in blocks)
+    if path in RUNTIME_ALIAS_PATHS and alias_count != 1:
+        return "runtime alias missing or duplicated"
+    if path not in RUNTIME_ALIAS_PATHS and alias_count:
+        return "runtime alias outside its named paths"
+    for block in blocks:
+        if RUNTIME_ALIAS in block:
+            block = block.replace(RUNTIME_ALIAS, "", 1)
+            if re.search(PERCENT, block, re.I) or re.search(r"\bweights?\b", block, re.I):
+                return "allocation appended to runtime alias"
+        has_data = re.search(r"\b\d+(?:\.\d+)?\b|" + PERCENT + r"|\bweights?\b", block, re.I)
+        if path not in RUNTIME_RECORDS and has_data and re.search(PROVIDER + r"\s+" + ALLOCATION_TERM, block, re.I):
+            return "provider allocation text"
+    return None
 
 
 class ProviderPresentationBoundaryTests(unittest.TestCase):
@@ -121,11 +234,48 @@ class ProviderPresentationBoundaryTests(unittest.TestCase):
                 self.assertFalse(field in text, (name, field))
 
     def test_docs_contain_no_matrix_or_hidden_copies(self):
-        paths = [ROOT / "README.html", ROOT / "AGENTS.md", *sorted((ROOT / "docs").rglob("*.html"))]
+        paths = [ROOT / "AGENTS.md", *sorted(ROOT.glob("README*")),
+                 *(path for path in sorted((ROOT / "docs").rglob("*"))
+                   if path.suffix.lower() in {".html", ".md", ".yaml", ".yml", ".json", ".txt"})]
         for path in paths:
             text = path.read_text(encoding="utf-8")
             for marker in ("provider-allocation-profiles", "allocation_profiles.py", "allocation_profiles.LANES", "direct_workload_percent", "overall_effort_percent"):
                 self.assertFalse(marker in text, (str(path.relative_to(ROOT)), marker))
-            for table in re.findall(r"<table\b[^>]*>.*?</table>", text, flags=re.S | re.I):
-                is_matrix = "%" in table and any(header in table.lower() for header in ("engineering (default)", "allocation lane", "direct production (mixed)"))
-                self.assertFalse(is_matrix, str(path.relative_to(ROOT)))
+            relative = path.relative_to(ROOT).as_posix()
+            self.assertIsNone(_allocation_copy(text, relative), relative)
+
+    def test_generic_and_concealed_target_copies_are_rejected(self):
+        table = """<table><tr><th>Allocation bucket</th><th>Target</th>
+        <th>Normal full-window count</th><th>Retired hard ceiling</th></tr>
+        <tr><td>PROVIDER_A</td><td>NN%</td><td>NN</td><td>NN</td></tr></table>"""
+        for copy in (table, table.swapcase(), "<!--" + table + "-->",
+                     '<div hidden>' + table + '</div>',
+                     '<div style="display:none" aria-hidden="true">' + table + '</div>',
+                     table.replace("%", "&#37;"), table.replace("%", "&percnt;"),
+                     table.replace("<", "&lt;").replace(">", "&gt;"),
+                     '<div data-policy="PROVIDER_A NN&#37;"></div>',
+                     '<script type="application/json">{"targets":{"PROVIDER_A":"NN%"}}</script>',
+                     '<template>PROVIDER_A NN%</template>'):
+            with self.subTest(copy=copy):
+                self.assertIsNotNone(_allocation_copy(copy))
+
+    def test_block_and_runtime_exceptions_cannot_hide_targets(self):
+        for copy in ("<p>Cursor</p><p>Target</p>",
+                     "<table><tr><td>Cursor</td><td>Target</td></tr></table>",
+                     "<p>Cursor quota or outage</p>"):
+            self.assertIsNone(_allocation_copy(copy))
+        for copy in ("<p>Cursor target NN%</p>", "<p>Cursor quota NN%</p>",
+                     '<p>Cursor quota with a weight field</p>'):
+            self.assertIsNotNone(_allocation_copy(copy))
+        for path in RUNTIME_ALIAS_PATHS:
+            self.assertIsNone(_allocation_copy(RUNTIME_ALIAS, path))
+            for copy in ("", RUNTIME_ALIAS + RUNTIME_ALIAS, RUNTIME_ALIAS + " NN%",
+                         RUNTIME_ALIAS + ' {"weight":"NN"}'):
+                self.assertIsNotNone(_allocation_copy(copy, path))
+        self.assertIsNotNone(_allocation_copy(RUNTIME_ALIAS, "docs/other.html"))
+        for (path, headers) in RUNTIME_IDENTITY_TABLES:
+            heading = "".join("<th>" + header + "</th>" for header in headers)
+            table = "<table><tr>" + heading + "</tr><tr><td>PROVIDER_A</td></tr></table>"
+            self.assertIsNone(_allocation_copy(table, path))
+            self.assertIsNotNone(_allocation_copy(table.replace("</td>", " NN%</td>"), path))
+            self.assertIsNotNone(_allocation_copy(table + '<table><tr><th>Target</th></tr><tr><td>PROVIDER_A NN%</td></tr></table>', path))

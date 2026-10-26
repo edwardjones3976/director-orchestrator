@@ -105,60 +105,9 @@ journal. These are consistency controls, not protection against its trusted owne
   &quot;profile&quot;: &quot;engineering&quot;
 }
 </code></pre>
-<p><code>policy-preview --input canonical-policy.json</code> reads the existing allocation
-authority and reports these numbers without creating a database:</p>
-<table>
-<thead>
-<tr>
-<th>Allocation bucket</th>
-<th>Target</th>
-<th>Normal full-window count</th>
-<th>Retired hard ceiling (reference only)</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>OpenAI</td>
-<td>40%</td>
-<td>8</td>
-<td>9</td>
-</tr>
-<tr>
-<td>Claude</td>
-<td>25%</td>
-<td>5</td>
-<td>6</td>
-</tr>
-<tr>
-<td>Cursor</td>
-<td>15%</td>
-<td>3</td>
-<td>4</td>
-</tr>
-<tr>
-<td>Direct Grok</td>
-<td>10%</td>
-<td>2</td>
-<td>3</td>
-</tr>
-<tr>
-<td>Antigravity</td>
-<td>10%</td>
-<td>2</td>
-<td>3</td>
-</tr>
-</tbody>
-</table>
-<p>The retired-ceiling column is historical reference only; the owner retired this
-target+5 admission gate on 2026-09-21 and it no longer blocks a reservation.</p>
 <p>For actual Grok Bot, diagnostics report <code>allocation_binding_missing</code>; enrolling
 it without a binding fails with that reason. It does not borrow the direct Grok
 or Cursor allocation, and their credentials, quota and actors remain separate.</p>
-<p>Generic custom-product policy support remains available for a future explicit
-owner decision. Its targets must total 100, and zero-target products are ineligible.
-Any custom weights or new Grok Bot bucket binding require separate recorded
-<code>policy_authorization</code>. None is selected by this owner decision. No policy changes
-revive a quota-limited route or attest an underlying managed model family.</p>
 <p>Each enrolled route fixes <code>route_id</code>, <code>product_id</code>, <code>actor_id</code>, <code>provider_identity</code>,
 <code>model_family</code>, <code>eligible</code>, allowed <code>roles</code>, and <code>enrollment_evidence</code>. A route not
 enrolled or explicitly ineligible cannot be used. Product/model labels submitted
