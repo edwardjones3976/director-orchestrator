@@ -42,7 +42,6 @@ from jsonschema import Draft202012Validator
 
 from director_orchestrator import provider_profiles as pp
 from director_orchestrator.documentation import html_text, read_document
-from director_orchestrator.allocation_profiles import ALLOCATION_PROFILES, DEFAULT_ALLOCATION_PROFILE
 from director_orchestrator.antigravity import (
     ANTIGRAVITY_CONTRACT_VERSION,
     ANTIGRAVITY_DEBATE_CONTRACT_VERSION,
@@ -230,9 +229,7 @@ class SchemaTests(unittest.TestCase):
         )
         effects = self.defs["profileDocument"]["properties"]["authority"]["properties"]["external_effects"]["properties"]["may_be_granted"]["items"]["enum"]
         self.assertEqual(sorted(effects), sorted(action for _system, action in SUPPORTED_EFFECT_ACTIONS))
-        self.assertEqual(
-            self.defs["allocationProfileId"]["enum"], list(ALLOCATION_PROFILES)
-        )
+        self.assertNotIn("allocationProfileId", self.defs)
         self.assertEqual(self.defs["endpoint"]["enum"][: len(LANES)], list(LANES))
 
 
@@ -394,25 +391,16 @@ class CharterMirrorTests(unittest.TestCase):
         # 8.5 + Z.ai 1.5, owner decision 2026-09-27 "Approve 1.5; total 10.0".
         self.assertEqual(total, 10.0)
 
-    def test_allocation_mirrors_allocation_profiles_and_directive(self):
+    def test_descriptive_profiles_exclude_admission_fields(self):
         for lane, profile in self.profiles.items():
-            allocation = profile["roles"]["allocation"]
             with self.subTest(lane=lane):
-                for profile_id, weights in ALLOCATION_PROFILES.items():
-                    self.assertEqual(allocation["profiles"][profile_id], weights[lane])
-                self.assertEqual(allocation["default_profile"], DEFAULT_ALLOCATION_PROFILE)
-                self.assertEqual(allocation["default_profile"], self.directive["default_allocation_profile"])
-                self.assertEqual(allocation["capacity_context"], self.directive["capacity_context"])
-                self.assertEqual(allocation["accounting_basis"], "admitted_assignment_count")
-                self.assertEqual(allocation["overall_effort_policy"], self.directive["overall_effort_policy"])
-                self.assertEqual(allocation["zero_target_rule"], self.directive["workload_enforcement"]["zero_target_rule"])
+                self.assertNotIn("allocation", profile["roles"])
+                self.assertNotIn("allocation_module", profile["source_of_truth"])
                 lane_kind = self.directive["workload_lanes"].get(lane)
                 self.assertEqual(profile["roles"]["charter_workload_lane"], lane_kind)
                 self.assertEqual(profile["identifiers"]["charter_workload_lane_key"], lane if lane_kind else None)
-        contract_weights = self.contract["allocation_and_selection"]["allocation_profiles"]
-        self.assertEqual(contract_weights["lane_order"], list(LANES))
-        for profile_id, weights in ALLOCATION_PROFILES.items():
-            self.assertEqual(contract_weights["weights"][profile_id], [weights[lane] for lane in LANES])
+        self.assertNotIn("allocation_and_selection", self.contract)
+        self.assertEqual(self.contract["provider_selection"]["selection_policy"], "cheap_capable_model_first")
 
     def test_role_profiles_mirror_charter(self):
         role_profiles = self.charter["role_profiles"]
@@ -566,7 +554,7 @@ class CharterMirrorTests(unittest.TestCase):
         self.assertEqual(profile["roles"]["hygiene_review"], block)
         contract = self.contract["supplemental_reviewers"]["github_copilot_lite"]
         self.assertFalse(contract["provider_or_committee_member"])
-        self.assertIsNone(contract["workload_percentage"])
+        self.assertNotIn("workload_percentage", contract)
         self.assertFalse(contract["gating"])
         self.assertEqual(contract["authority_granted"], [])
         for lane, other in self.profiles.items():
@@ -1118,7 +1106,7 @@ class DiscoveryTests(unittest.TestCase):
             ROOT / "CLAUDE.md",
             ROOT / "README.html",
             ROOT / "docs" / "project-leadership.html",
-            ROOT / "docs" / "provider-allocation-profiles.html",
+            ROOT / "docs" / "provider-capacity-and-authority.html",
             ROOT / "docs" / "contribution-attribution-policy.html",
             ROOT / "docs" / "team-operating-charter.html",
             ROOT / "prompts" / "director-system.md",

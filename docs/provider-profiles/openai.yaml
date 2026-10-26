@@ -26,7 +26,6 @@ authority_granted: "none"
 source_of_truth:
   charter_document: "docs/team-operating-charter.html"
   charter_module: "src/director_orchestrator/team_charter.py"
-  allocation_module: "src/director_orchestrator/allocation_profiles.py"
   deterministic_policy: "src/director_orchestrator/policy.py"
   route_catalog: "docs/provider-profiles/routes.yaml"
   precedence: "charter_code_and_deterministic_policy_override_this_profile"
@@ -71,18 +70,6 @@ roles:
     seatable_in_debate: true
     may_initiate_debate: false
     vote_grants_authority: false
-  allocation:
-    profiles:
-      mixed: 22
-      engineering: 33
-      public_research: 16
-      enterprise: 27
-    default_profile: "engineering"
-    overall_effort_policy: "telemetry_only_no_separate_allocation"
-    capacity_context: "owner_Pro20x_Max5x_not_API_entitlements"
-    accounting_basis: "admitted_assignment_count"
-    zero_target_rule: "ineligible"
-    accounting_status: control_plane_telemetry_and_authorized_production
   hygiene_review: null
   openai_functions: null
   director_functions:
@@ -216,9 +203,9 @@ authority:
 
 platform_limitations:
   - limitation: "The Responses API route is separately billed; the owner's OpenAI Pro 20x subscription does not fund it."
-    source: "docs/provider-allocation-profiles.html, Capacity, roles, and authority"
-  - limitation: "The legacy provider registry contains no OpenAI production adapter; the lane's allocation exists in accounting but cannot execute there without a real authenticated adapter."
-    source: "docs/provider-allocation-profiles.html"
+    source: "docs/provider-capacity-and-authority.html, Capacity, roles, and authority"
+  - limitation: "The legacy provider registry contains no OpenAI production adapter; the lane cannot execute there without a real authenticated adapter."
+    source: "docs/provider-capacity-and-authority.html"
   - limitation: "The native Codex host transport is packet-only analysis with read-only sandboxing and no repository inspection; a timeout, nonzero exit, oversized output, or invalid terminal stream is ambiguous and never redispatched."
     source: "docs/native-codex-packet-transport.html"
   - limitation: "The isolated CI acceptance issuer is a separate GitHub OIDC workflow that is dormant until owner adoption; it is not an OpenAI contact."

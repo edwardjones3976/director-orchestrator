@@ -71,34 +71,13 @@ responsibility_areas:
   - name: "leadership"
     expectation: "Coordinate dependencies and dissent under owner intent and deterministic policy."
 
-allocation_and_selection:
+provider_selection:
   enforced_ledger: "real_assignment_admissions"
   accepted_output_ledger: "separate_authenticated_accepted_production"
-  default_profile: "engineering"
-  allocation_profiles:
-    # Z.ai enrolled at 18% on 2026-09-27; other nonzero lanes reduced
-    # proportionally to 82% (see docs/provider-allocation-profiles.html).
-    lane_order: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, zai]
-    weights:
-      engineering: [33, 21, 12, 8, 8, 0, 0, 0, 18]
-      mixed: [22, 27, 9, 8, 4, 4, 4, 4, 18]
-      public_research: [16, 21, 4, 4, 4, 21, 12, 0, 18]
-      enterprise: [27, 31, 4, 4, 4, 0, 4, 8, 18]
-  profile_binding: "frozen_before_approval_preserve_real_history_no_silent_redistribution"
-  zero_target: "ineligible"
-  total_effort_status: "separate_telemetry_not_production_credit"
-  normal_tolerance_percentage_points: 3
-  # Retired by owner direction on 2026-09-27; allocation guidance never blocks dispatch.
-  hard_ceiling_above_target_percentage_points: null
-  allocation_unit: "assignment_count"
-  prospective_window_assignments: 20
-  insufficient_history_action: "fixed_twenty_slots_real_assignments_only"
   selection_policy: "cheap_capable_model_first"
   selection_order:
     - "exact scope, allowlists, transport, and readiness"
     - "task capability, tools, context, risk, and reviewer independence"
-    - "accepted-productive-work allocation guidance and advisory under-target preference"
-    - "total-effort telemetry and advisory under-band preference"
     - "lowest trusted comparable estimated cost"
     - "deterministic tie-breaker"
   missing_cost_rule: "Unknown cost is never treated as zero or automatically cheapest."
@@ -319,8 +298,6 @@ providers:
 supplemental_reviewers:
   github_copilot_lite:
     provider_or_committee_member: false
-    workload_percentage: null
-    effort_band_percent: [0, 4]
     accounting_status: "unscored_reporting_only_no_production_credit"
     provider_adapter: "none"
     automatic_routing: false

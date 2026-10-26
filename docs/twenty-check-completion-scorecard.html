@@ -1901,7 +1901,7 @@ an unknown cost and never accepts a <code>QUALIFIED_COST_UNKNOWN</code> row as a
 measured-cost PASS.</p>
 <p>Strict inputs: identities must match the compact identifier form and be unique
 within each lineage list; <code>provider_route</code> must be one of the canonical
-<code>allocation_profiles.LANES</code> (aliases such as <code>external_openai</code> are not
+the registered provider lanes (aliases such as <code>external_openai</code> are not
 accepted); counters must be exact non-negative integers (booleans and floats
 are rejected); a cost must be a finite non-negative number (<code>inf</code>/<code>nan</code> are
 not measured costs). A <code>ZERO_PROVIDER_EFFECT</code> simulation is <code>NOT_QUALIFIED</code>

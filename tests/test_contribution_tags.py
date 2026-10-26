@@ -458,20 +458,11 @@ class ContributionPolicySurfaceTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         charter = read_document(root / "docs" / "team-operating-charter.html")
         prompt = read_document(root / "prompts" / "director-system.md")
-        for expected in (
-            # Z.ai enrollment 2026-09-27: 18% everywhere, others reduced to 82%.
-            "| OpenAI / Codex production | 22% | 33% | 16% | 27% |",
-            "| Claude | 27% | 21% | 21% | 31% |",
-            "| Cursor | 9% | 12% | 4% | 4% |",
-            "| Grok | 8% | 8% | 4% | 4% |",
-            "| Gemini / Antigravity | 4% | 8% | 4% | 4% |",
-            "| Perplexity | 4% | 0% | 21% | 0% |",
-            "| Z.ai (GLM) | 18% | 18% | 18% | 18% |",
-        ):
-            self.assertIn(expected, charter)
-        self.assertIn("Freeze one approved allocation profile and its digest before plan approval", prompt)
-        self.assertIn("historical share bounds are maintained but non-enforcing (retired by owner 2026-09-21)", prompt)
-        self.assertIn("startup uses the full 20-slot denominator with real assignments only", prompt)
+        self.assertNotIn("| Provider lane | Mixed | Engineering (default) |", charter)
+        self.assertNotIn("allocation_profiles", charter)
+        self.assertNotIn("Freeze one approved allocation profile and its digest before plan approval", prompt)
+        self.assertNotIn("historical share bounds are maintained but non-enforcing (retired by owner 2026-09-21)", prompt)
+        self.assertNotIn("startup uses the full 20-slot denominator with real assignments only", prompt)
         self.assertIn("cheapest capable trusted model first", prompt)
         self.assertIn("GitHub Copilot Lite", prompt)
         self.assertIn("Contributed-by:", charter)

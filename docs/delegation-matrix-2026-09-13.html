@@ -11,7 +11,7 @@
 <body>
 <a class="skip-link" href="#content">Skip to content</a>
 <header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
-<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#1-lane-eligibility-depends-on-the-selected-allocation-profile">1. Lane eligibility depends on the selected allocation profile</a></li><li class="top"><a href="#2-integer-quotas-r7">2. Integer quotas (R7)</a></li><li class="top"><a href="#3-assignment-matrix--disjoint-writers">3. Assignment matrix — disjoint writers</a></li><li class="top"><a href="#4-launch-packets">4. Launch packets</a></li><li class="sub"><a href="#a-03--openai--codex--evidence-chain-fixes">A-03 — OpenAI / Codex — evidence-chain fixes</a></li><li class="sub"><a href="#a-04--cursor--switch-coupling-fixes">A-04 — Cursor — switch-coupling fixes</a></li><li class="sub"><a href="#a-05--openai--codex--control-script-and-staging">A-05 — OpenAI / Codex — control script and staging</a></li><li class="sub"><a href="#a-06--claude-code--n8n-v2">A-06 — Claude Code — n8n v2</a></li><li class="sub"><a href="#a-11--grok--adversarial-negative-path-analysis">A-11 — Grok — adversarial negative-path analysis</a></li><li class="sub"><a href="#a-12--grok--cross-check">A-12 — Grok — cross-check</a></li><li class="sub"><a href="#a-13--antigravity--closed-dispatch">A-13 — Antigravity — closed dispatch</a></li><li class="sub"><a href="#a-14--antigravity--invited-debate-seat">A-14 — Antigravity — invited debate seat</a></li><li class="sub"><a href="#a-15--perplexity--bounded-public-research">A-15 — Perplexity — bounded public research</a></li><li class="sub"><a href="#a-16--firecrawl--bounded-public-research">A-16 — Firecrawl — bounded public research</a></li><li class="sub"><a href="#a-17--github-copilot-lite--hygiene-observation">A-17 — GitHub Copilot Lite — hygiene observation</a></li><li class="top"><a href="#5-enabling-every-lane-fully--what-each-one-still-needs">5. Enabling every lane fully — what each one still needs</a></li><li class="top"><a href="#6-owner-decisions-this-raises">6. Owner decisions this raises</a></li><li class="top"><a href="#7-what-this-matrix-does-not-claim">7. What this matrix does not claim</a></li></ul></details></nav>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#3-assignment-matrix--disjoint-writers">3. Assignment matrix — disjoint writers</a></li><li class="top"><a href="#4-launch-packets">4. Launch packets</a></li><li class="sub"><a href="#a-03--openai--codex--evidence-chain-fixes">A-03 — OpenAI / Codex — evidence-chain fixes</a></li><li class="sub"><a href="#a-04--cursor--switch-coupling-fixes">A-04 — Cursor — switch-coupling fixes</a></li><li class="sub"><a href="#a-05--openai--codex--control-script-and-staging">A-05 — OpenAI / Codex — control script and staging</a></li><li class="sub"><a href="#a-06--claude-code--n8n-v2">A-06 — Claude Code — n8n v2</a></li><li class="sub"><a href="#a-11--grok--adversarial-negative-path-analysis">A-11 — Grok — adversarial negative-path analysis</a></li><li class="sub"><a href="#a-12--grok--cross-check">A-12 — Grok — cross-check</a></li><li class="sub"><a href="#a-13--antigravity--closed-dispatch">A-13 — Antigravity — closed dispatch</a></li><li class="sub"><a href="#a-14--antigravity--invited-debate-seat">A-14 — Antigravity — invited debate seat</a></li><li class="sub"><a href="#a-15--perplexity--bounded-public-research">A-15 — Perplexity — bounded public research</a></li><li class="sub"><a href="#a-16--firecrawl--bounded-public-research">A-16 — Firecrawl — bounded public research</a></li><li class="sub"><a href="#a-17--github-copilot-lite--hygiene-observation">A-17 — GitHub Copilot Lite — hygiene observation</a></li><li class="top"><a href="#5-enabling-every-lane-fully--what-each-one-still-needs">5. Enabling every lane fully — what each one still needs</a></li><li class="top"><a href="#6-owner-decisions-this-raises">6. Owner decisions this raises</a></li><li class="top"><a href="#7-what-this-matrix-does-not-claim">7. What this matrix does not claim</a></li></ul></details></nav>
 <main id="content">
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:00 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 22:35 UTC | BEGIN]] -->
@@ -22,224 +22,13 @@
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 09:55 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 08:20 UTC | BEGIN]] -->
 <h1 id="delegation-matrix--2026-09-13-delivery-rev-2">Delegation matrix — 2026-09-13 delivery (rev 2)</h1>
-<blockquote>
-<p><strong>Superseding note, 2026-09-21.</strong> The owner retired the rolling-twenty
-target-plus-five hard ceiling referenced below (§§1–2) as outdated. The
-historical hard-ceiling numbers below are preserved for reference only; they
-no longer block or refuse admission. Zero-target lane refusal, soft-band
-preference, capability, evidence, and approval gates described below remain
-unchanged and current. This note supersedes only the hard-ceiling enforcement
-claims below; it does not alter this document's original dated text.</p>
-</blockquote>
-<blockquote>
-<p><strong>Correction, 2026-09-09 (WO-COMBINED-1).</strong> Eligibility depends on the
-selected allocation profile. A zero target refuses the lane in that profile
-for accepted productive work, including accepted non-code research. It does
-not prohibit that lane under every profile, and it does not bar implementation
-only. <code>is_accepted_productive_kind</code> classifies Perplexity and Firecrawl research
-as productive, and admission applies the allocation check to that classification.
-<code>engineering</code> gives both lanes zero and refuses their research assignments;
-<code>public_research</code> gives Perplexity 25% and Firecrawl 15% and admits the same
-requests when the other admission conditions pass. This correction changes no
-allocation profile, dispatch authorization, credential, or live route.</p>
-</blockquote>
 <p><strong>Issued by:</strong> Claude, acting Director-Orchestrator · 2026-09-08
-<strong>Authority:</strong> <code>docs/team-operating-charter.html</code>, <code>docs/provider-allocation-profiles.html</code>,
-<code>docs/provider-profiles/</code>, <code>src/director_orchestrator/allocation_profiles.py</code>,
-<code>workload_policy.py</code>, <code>AGENTS.md</code>. Where this document and any of those
+<strong>Authority:</strong> <code>docs/team-operating-charter.html</code>, <code>docs/provider-capacity-and-authority.html</code>,
+<code>docs/provider-profiles/</code>, <code>workload_policy.py</code>, <code>AGENTS.md</code>. Where this document and any of those
 disagree, they win. This document grants no authority and attests no route.</p>
 <p>Read with <a href="director-decision-rules.html"><code>docs/director-decision-rules.html</code></a> and
 <a href="activation-plan-2026-09-13.html"><code>docs/activation-plan-2026-09-13.html</code></a>.</p>
 <hr />
-<h2 id="1-lane-eligibility-depends-on-the-selected-allocation-profile">1. Lane eligibility depends on the selected allocation profile</h2>
-<p>Read from <code>docs/provider-profiles/*.yaml</code>, <code>routes.yaml</code>, and
-<code>allocation_profiles.py</code> on the candidate. The default is the <strong>engineering</strong>
-allocation profile (<code>DEFAULT_ALLOCATION_PROFILE = &quot;engineering&quot;</code>), whose targets
-are <code>openai 40, claude 25, cursor 15, grok 10, antigravity 10, perplexity 0, firecrawl 0, github-copilot 0</code> over a rolling window of
-twenty admitted assignments, soft tolerance ±3 points, hard ceiling target +5.
-<strong>Zero target refuses the lane in that profile, including for accepted non-code
-research; a profile with a non-zero target can admit the same lane.</strong></p>
-<p>Verified against this branch's unchanged source: <a href="../src/director_orchestrator/workload_policy.py#L512-L529"><code>is_accepted_productive_kind</code>
-at workload_policy.py:512–529</a>
-includes Perplexity and Firecrawl research. The <a href="../src/director_orchestrator/workload_policy.py#L993-L1002"><code>evaluate_assignment</code> admission
-call site at workload_policy.py:993–1002</a>
-uses that classification before calling <code>direct_assignment_capacity_violation</code>;
-the <a href="../src/director_orchestrator/workload_policy.py#L617-L618">zero-target refusal at lines 617–618</a>
-returns <code>allocation_profile_lane_ineligible</code>. The <a href="../src/director_orchestrator/allocation_profiles.py#L17-L18">targets at
-allocation_profiles.py:17–18</a>
-are zero for both lanes in <code>engineering</code>, and 25%/15% respectively in
-<code>public_research</code>. Non-zero targets satisfy this allocation condition only;
-remaining capacity, capability, evidence and approval gates still apply.</p>
-<table>
-<thead>
-<tr>
-<th>Lane</th>
-<th>Class</th>
-<th>Assignable now</th>
-<th>Governing constraint</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>OpenAI / Codex</strong></td>
-<td>full-spectrum primary</td>
-<td><strong>Yes</strong> — analysis, implementation, independent review</td>
-<td>The profile records no repository execution lane for orchestrator-dispatched OpenAI production; the legacy registry has no OpenAI adapter. Repository work therefore lands through owner-launched Codex sessions, which is the surface that produced PRs #115–#120. Cannot accept or merge a candidate it materially authored</td>
-</tr>
-<tr>
-<td><strong>Claude</strong></td>
-<td>director control plane</td>
-<td><strong>Yes</strong> — implementation via a Claude Code session; independent review of candidates it did not produce</td>
-<td>Cowork is not a synchronous adapter; the programmable bridge is a Claude Code Routine. Director coordination creates <strong>no production credit</strong>, so this session's work consumes none of Claude's quota</td>
-</tr>
-<tr>
-<td><strong>Cursor</strong></td>
-<td>full-spectrum primary</td>
-<td><strong>Yes</strong> — implementation, research, QA, independent exact-SHA review</td>
-<td>Every run needs an allowlisted project, repository and durable starting ref. Auto-generated <code>cursor/...</code> branches are not durable starting points</td>
-</tr>
-<tr>
-<td><strong>Grok</strong></td>
-<td>full-spectrum primary</td>
-<td><strong>Analysis now; implementation and verdicts once the CLI contact is bound</strong></td>
-<td>The in-process Responses API contact is synchronous, tool-free and <strong>analysis only</strong>; API output is never promoted into repository or review authority. Repository work and verdicts require the digest-verified Build CLI contact through an authenticated host runner. The host bridge preflight has not been run and activation bindings are <code>{}</code>, so Grok's verdict capability is <code>U</code></td>
-</tr>
-<tr>
-<td><strong>Antigravity / Gemini</strong></td>
-<td>subordinate supplemental specialist</td>
-<td><strong>Yes, in two closed forms only</strong></td>
-<td>Denied <code>review_verdict</code>, <code>acceptance_verdict</code>, <code>repository_write</code>, <code>repository_access</code>, <code>branch_selection</code>, <code>contract_or_methodology_definition</code>, <code>external_write</code>, <code>merge</code>. Ordinary dispatch sends <strong>no model-authored prose</strong> — the request is composed only from fixed strings, closed enums and three bounded integers (<code>assignment_sequence</code>, <code>variant_count</code>, <code>max_lines_per_artifact</code>), and the validator rejects anything else. Withheld: task text, repository paths or source, acceptance criteria, owner objective. Every artifact must feed a later Claude, Cursor or Grok assignment that independently verifies and integrates it</td>
-</tr>
-<tr>
-<td><strong>Perplexity</strong></td>
-<td>evidence-only research</td>
-<td><strong>Refused in <code>engineering</code>; allocation-admissible in <code>public_research</code></strong></td>
-<td>Accepted non-code research is productive under <code>is_accepted_productive_kind</code>, so the zero target in <code>engineering</code> refuses it. The 25% target in <code>public_research</code> permits it subject to admission and the remaining gates (§1). Each assignment needs an owner approval bound to the digest of the exact outbound query, and a later mutation invalidates that approval. Output is untrusted evidence until a primary lane evaluates it</td>
-</tr>
-<tr>
-<td><strong>Firecrawl</strong></td>
-<td>public search transport</td>
-<td><strong>Repository lane refused in <code>engineering</code>; allocation-admissible in <code>public_research</code></strong></td>
-<td>Accepted non-code research is productive, so the zero target in <code>engineering</code> refuses it. The 15% target in <code>public_research</code> permits it subject to admission and the remaining gates (§1). Surface one: the repository lane, which executes on the LangGraph primary path, has no legacy adapter, and needs <code>FIRECRAWL_API_KEY</code> added to the deployment. Surface two: a Firecrawl MCP server connected to the Director's own session, already live and already used — these are different transports and evidence from one is not evidence about the other</td>
-</tr>
-<tr>
-<td><strong>GitHub Copilot (Lite)</strong></td>
-<td>supplemental hygiene reviewer</td>
-<td><strong>Yes, post-freeze, non-gating</strong></td>
-<td>Explicitly carries no workload share, range or ceiling, and no production credit, so a Lite observation does not consume a quota slot. Requires required checks green and a frozen exact candidate; fails closed without an authenticated contact; at most three conditional attempts; a substantive Copilot-authored fix would make it a material author and ineligible to review that candidate</td>
-</tr>
-<tr>
-<td><strong>Microsoft 365 Copilot</strong></td>
-<td>retired, transport-blocked</td>
-<td><strong>No — retired by #161</strong></td>
-<td>The lane was retired by #161 and is not in LANES. What stops it is transport: live dependency discovery hard-codes the lane unauthenticated with <code>microsoft_365_copilot_work_iq_capability_evidence_missing</code>, and it must not enter the activation binding map because the combined live signal is AND-ed across every binding. §5 gives the enablement path</td>
-</tr>
-</tbody>
-</table>
-<p><code>direct-provider-to-provider</code> is the one route catalogued as <strong>prohibited</strong>.
-Every exchange between lanes in this matrix is brokered by the Director.</p>
-<h2 id="2-integer-quotas-r7">2. Integer quotas (R7)</h2>
-<p>Largest-remainder apportionment of the engineering targets over the
-twenty-assignment window, with the soft band and hard ceiling as integer bounds:</p>
-<p><strong>The allocation check covers accepted productive work.</strong> Implementation is
-productive, and <code>is_accepted_productive_kind</code> also includes accepted Perplexity
-and Firecrawl research. Admission projects those research assignments into the
-same capacity check (§1). Ordinary analysis, review, validation and Director
-coordination do not acquire production credit merely by consuming effort.</p>
-<table>
-<thead>
-<tr>
-<th>Lane</th>
-<th style="text-align:right">Target</th>
-<th style="text-align:right">Quota of 20</th>
-<th style="text-align:right">Ceiling</th>
-<th style="text-align:right">Implementation this delivery</th>
-<th>Non-quota work</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>OpenAI</td>
-<td style="text-align:right">40%</td>
-<td style="text-align:right"><strong>8</strong></td>
-<td style="text-align:right">9</td>
-<td style="text-align:right">2 — A-03, A-05</td>
-<td>A-01 audit</td>
-</tr>
-<tr>
-<td>Claude</td>
-<td style="text-align:right">25%</td>
-<td style="text-align:right"><strong>5</strong></td>
-<td style="text-align:right">6</td>
-<td style="text-align:right">1 — A-06</td>
-<td>Director coordination (no credit)</td>
-</tr>
-<tr>
-<td>Cursor</td>
-<td style="text-align:right">15%</td>
-<td style="text-align:right"><strong>3</strong></td>
-<td style="text-align:right">4</td>
-<td style="text-align:right">1 — A-04</td>
-<td>A-02 triage, four reviews</td>
-</tr>
-<tr>
-<td>Grok</td>
-<td style="text-align:right">10%</td>
-<td style="text-align:right"><strong>2</strong></td>
-<td style="text-align:right">3</td>
-<td style="text-align:right">0 — <strong>quota untouched</strong></td>
-<td>A-11, A-12 analyses</td>
-</tr>
-<tr>
-<td>Antigravity</td>
-<td style="text-align:right">10%</td>
-<td style="text-align:right"><strong>2</strong></td>
-<td style="text-align:right">3</td>
-<td style="text-align:right">1 — A-13</td>
-<td>A-14 debate seat</td>
-</tr>
-<tr>
-<td>Perplexity</td>
-<td style="text-align:right">0%</td>
-<td style="text-align:right">0 impl.</td>
-<td style="text-align:right">—</td>
-<td style="text-align:right">0</td>
-<td><strong>A-15 research held in <code>engineering</code></strong> — requires a non-zero target</td>
-</tr>
-<tr>
-<td>Firecrawl</td>
-<td style="text-align:right">0%</td>
-<td style="text-align:right">0 impl.</td>
-<td style="text-align:right">—</td>
-<td style="text-align:right">0</td>
-<td><strong>A-16 research held in <code>engineering</code></strong> — requires a non-zero target</td>
-</tr>
-<tr>
-<td>GitHub Copilot</td>
-<td style="text-align:right">0%</td>
-<td style="text-align:right">0 impl.</td>
-<td style="text-align:right">—</td>
-<td style="text-align:right">0</td>
-<td><strong>A-17 hygiene review</strong> — no production credit by charter</td>
-</tr>
-<tr>
-<td></td>
-<td style="text-align:right"></td>
-<td style="text-align:right"><strong>20</strong></td>
-<td style="text-align:right"></td>
-<td style="text-align:right"><strong>5 of 20 consumed</strong></td>
-<td></td>
-</tr>
-</tbody>
-</table>
-<p>Two corrections follow from this. Grok is <strong>not</strong> at cap — its analyses cost no
-quota, so it can take an implementation assignment as soon as its digest-verified
-CLI contact is bound. A-15 and A-16 cannot be admitted as repository-lane
-research under <code>engineering</code>; they require a profile with non-zero targets.
-These engineering quotas do not describe a <code>public_research</code> allocation window.</p>
-<p><code>workload_policy.py</code> is the authority at admission over the true rolling window,
-which includes history this document does not hold. If it refuses an assignment,
-the Director re-routes rather than appealing.</p>
 <h2 id="3-assignment-matrix--disjoint-writers">3. Assignment matrix — disjoint writers</h2>
 <p>One active writer per file. No lane reviews a candidate it materially authored.
 No two assignments share a file.</p>
@@ -583,13 +372,6 @@ and each has a path.</p>
 missing credential, an unbound transport, or a contract that has not yet been
 changed.</p>
 <h2 id="6-owner-decisions-this-raises">6. Owner decisions this raises</h2>
-<p><strong>D-07 — allocation profile prerequisite for A-15 and A-16.</strong> The prior
-withdrawal rested on the incorrect claim that <code>engineering</code> never barred research.
-It refuses these lanes' accepted research because their targets are zero.
-<code>public_research</code> gives both lanes non-zero targets and permits the same requests
-through allocation admission when the other conditions pass. A-15 and A-16
-remain conditional on an authorized profile with non-zero targets and all their
-other gates. This document does not select or activate a different profile.</p>
 <p><strong>D-08 — Grok's contact class.</strong> Grok's two assignments are analysis, which the
 API contact serves. If the Director later needs Grok as an exact-SHA reviewer —
 which happens if a single Claude session authors both A-05 and A-06 — the
@@ -608,7 +390,7 @@ Wednesday instead of Friday costs nothing, and converts Grok from an
 analysis-only lane into one that can hold implementation and exact-SHA review
 work whose quota is entirely unused. Recommended.</p>
 <h2 id="7-what-this-matrix-does-not-claim">7. What this matrix does not claim</h2>
-<p>Lane membership and an allocation share do not attest that a provider route is
+<p>Lane membership do not attest that a provider route is
 enrolled, authenticated or live. No packet here has been dispatched: the
 Director holds no provider transport in this session, and dispatching one would
 be an external action requiring the owner. Every assignment above is a prepared

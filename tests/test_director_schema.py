@@ -320,18 +320,15 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
 
         await director.plan(record)
 
-        for profile, targets in ALLOCATION_PROFILES.items():
+        baseline = director.captured
+        for profile in ALLOCATION_PROFILES:
             record.intake.allocation_profile = profile
             await director.plan(record)
-            self.assertEqual(director.captured["allocation_profile"], profile)
-            self.assertEqual(director.captured["allocation_targets"], dict(targets))
-            rules = " ".join(director.captured["routing_rules"])
-            for lane, weight in targets.items():
-                self.assertIn(f"{lane} {weight}%", rules)
-            self.assertNotIn("25/25/20/15/11/4", rules)
-            self.assertLess(rules.index("total-effort soft-preference rank"), rules.index("finally trusted cheapest cost rank"))
-            self.assertIn("allocation_profile and allocation_targets", director.instructions)
-            self.assertNotIn("Engineering is OpenAI 40%", director.instructions)
+            self.assertEqual(director.captured, baseline)
+            self.assertNotIn("allocation_profile", director.captured)
+            self.assertNotIn("allocation_targets", director.captured)
+        self.assertNotIn("allocation_profile", director.instructions)
+        self.assertNotIn("allocation_targets", director.instructions)
 
         charter = director.captured["team_operating_charter"]
         self.assertEqual(charter["schema_version"], "director-team-charter/v1")
@@ -359,9 +356,8 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("medium", charter["committee"]["debate"]["recommended_for_complexity"])
         self.assertIn("committee votes", charter["perplexity_contract"]["prohibited"])
         directive = charter["director_operating_directive"]
-        self.assertEqual(directive["default_allocation_profile"], "engineering")
-        self.assertEqual(directive["allocation_profiles"]["weights"]["engineering"], [33, 21, 12, 8, 8, 0, 0, 0, 18])
-        self.assertEqual(len(directive["allocation_profiles"]["lane_order"]), 9)
+        self.assertNotIn("default_allocation_profile", directive)
+        self.assertNotIn("allocation_profiles", directive)
         self.assertEqual(
             directive["workload_accounting"]["ledgers"]["overall_effort"],
             "prospective_observed_effort_guard",
@@ -375,21 +371,13 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
                 "unconditional_claude_medium_or_long_requirement"
             ]
         )
-        self.assertFalse(
-            directive["workload_enforcement"]["overall_effort_can_block_or_route"]
-        )
+        self.assertNotIn("workload_enforcement", directive)
         self.assertIn("estimated_roi", directive["roi_and_waste"])
         self.assertFalse(directive["copilot_lite_hygiene_review"]["gating"])
-        self.assertIsNone(
-            directive["copilot_lite_hygiene_review"]["workload_percentage"]
-        )
+        self.assertNotIn("workload_percentage", directive["copilot_lite_hygiene_review"])
         self.assertEqual(
             directive["coding_routing"]["selection_order"][2],
-            "direct_allocation_compliance_and_under_target_preference",
-        )
-        self.assertNotIn(
-            "github_copilot_cli_lite",
-            directive["allocation_profiles"]["lane_order"],
+            "lowest_trusted_estimated_cost",
         )
         self.assertEqual(
             directive["copilot_lite_hygiene_review"]["attempts"],
@@ -621,7 +609,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Different-provider exact-candidate review", readme)
         self.assertIn("non-author review/merge", report)
 
-    def test_balanced_allocation_selection_and_copilot_are_synchronized(self):
+    def test_selection_and_copilot_are_synchronized(self):
         root = Path(__file__).resolve().parents[1]
         surfaces = {
             "charter": root / "docs" / "team-operating-charter.html",
@@ -647,8 +635,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
         for name, text in content.items():
             with self.subTest(surface=name):
                 normalized = " ".join(text.split()).lower()
-                self.assertIn("allocation", normalized)
-                self.assertIn("profile", normalized)
+                self.assertNotIn("allocation_profiles", normalized)
                 self.assertIn("copilot", normalized)
                 self.assertIn("waste", normalized)
 
@@ -664,9 +651,7 @@ class DirectorTeamCharterTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         directive = team_operating_charter()["director_operating_directive"]
-        self.assertEqual(set(directive["allocation_profiles"]["weights"]), {"engineering", "mixed", "public_research", "enterprise"})
-        for weights in directive["allocation_profiles"]["weights"].values():
-            self.assertEqual(sum(weights), 100)
+        self.assertNotIn("allocation_profiles", directive)
         self.assertEqual(
             directive["workload_accounting"]["unit_basis"],
             "real_reserved_assignment_once",
@@ -1172,19 +1157,18 @@ class ProjectProviderRolesContractTests(unittest.TestCase):
                 self.assertIn(f'- name: "{area["name"]}"', contract)
                 self.assertIn(f'expectation: "{area["expectation"]}"', contract)
 
-    def test_contract_mirrors_prospective_total_effort_controls(self):
+    def test_contract_excludes_admission_data_and_keeps_selection_controls(self):
         contract = self.contract()
         for field in (
-            'default_profile: "engineering"',
-            'engineering: [33, 21, 12, 8, 8, 0, 0, 0, 18]',
-            'mixed: [22, 27, 9, 8, 4, 4, 4, 4, 18]',
-            'public_research: [16, 21, 4, 4, 4, 21, 12, 0, 18]',
-            'enterprise: [27, 31, 4, 4, 4, 0, 4, 8, 18]',
-            'total_effort_status: "separate_telemetry_not_production_credit"',
+            'provider_selection:',
+            'selection_policy: "cheap_capable_model_first"',
+            'task capability, tools, context, risk, and reviewer independence',
         ):
             with self.subTest(field=field):
                 self.assertIn(field, contract)
 
+        self.assertNotIn("allocation_profiles:", contract)
+        self.assertNotIn("default_profile:", contract)
         self.assertNotIn("historical_overall_effort_percent:", contract)
         self.assertNotIn("historical_overall_effort_status:", contract)
 

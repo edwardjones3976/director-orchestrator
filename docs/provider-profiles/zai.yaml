@@ -7,7 +7,7 @@
 # Provider profile sheet: Z.ai (GLM) (director-provider-profile/v1).
 # Descriptive only. Grants no authority. This lane has no charter role profile,
 # standing role, or legacy adapter; every field below is derived
-# from code, the allocation profiles, and the provider setup document.
+# from code, provider capabilities, and the provider setup document.
 # Names only: no allowlist, key, token, endpoint, path, or owner identifier values.
 schema_version: "director-provider-profile/v1"
 document_type: "director-provider-profile"
@@ -18,7 +18,6 @@ authority_granted: "none"
 source_of_truth:
   charter_document: "docs/team-operating-charter.html"
   charter_module: "src/director_orchestrator/team_charter.py"
-  allocation_module: "src/director_orchestrator/allocation_profiles.py"
   deterministic_policy: "src/director_orchestrator/policy.py"
   route_catalog: "docs/provider-profiles/routes.yaml"
   precedence: "charter_code_and_deterministic_policy_override_this_profile"
@@ -40,7 +39,7 @@ identifiers:
 roles:
   team: "lane_only"
   lane_class: "capability_routed_lane"
-  summary: "Assignment-scoped implementation, tests, research, and tool use, and independent review of other providers' work when Z.ai did not materially author the candidate; never self-review. GLM output served through the Claude Code executable is attributed to Z.ai and is never relabelled Claude. The lane holds a Director-invited committee seat with the owner-approved advisory weight 1.5 (total 10.0 for new debates), and a nonzero allocation target is not evidence that it is operational: it stays closed until every production readiness check passes."
+  summary: "Assignment-scoped implementation, tests, research, and tool use, and independent review of other providers' work when Z.ai did not materially author the candidate; never self-review. GLM output served through the Claude Code executable is attributed to Z.ai and is never relabelled Claude. The lane holds a Director-invited committee seat with the owner-approved advisory weight 1.5 (total 10.0 for new debates), and it stays closed until every production readiness check passes."
   charter_workload_lane: null
   strategy_key: null
   strategy_priority: null
@@ -54,24 +53,16 @@ roles:
     - "Z.ai cannot review, accept, or merge a candidate it materially authored."
     - "Output served through the Claude Code executable is Z.ai output; it never counts as Claude work, a Claude review, or Claude-family independence."
     - "Lite trial attempts earn no production credit and are never production or qualification evidence."
-    - "A nonzero allocation target is not evidence that the route is operational."
+    - "Every production readiness check must pass before execution."
   family: "zai"
   transport_rule: "The production native CLI and the Lite trial contact are separate contacts; each may use only the capabilities and authority of that contact, and the trial contact never runs in production mode."
-  routing_rule: "Route Z.ai by assignment scope, granted tools, reviewer independence from every material author's provider family, readiness, and the 18% target and +/-3 band as routing guidance, never a dispatch block."
+  routing_rule: "Route Z.ai by assignment scope, granted tools, reviewer independence from every material author's provider family, and readiness."
   committee:
     member: true
     voting_power: 1.5
     seatable_in_debate: true
     may_initiate_debate: false
     vote_grants_authority: false
-  allocation:
-    profiles: { mixed: 18, engineering: 18, public_research: 18, enterprise: 18 }
-    default_profile: "engineering"
-    overall_effort_policy: "telemetry_only_no_separate_allocation"
-    capacity_context: "owner_Pro20x_Max5x_not_API_entitlements"
-    accounting_basis: "admitted_assignment_count"
-    zero_target_rule: "ineligible"
-    accounting_status: "allocation_without_legacy_adapter"
   hygiene_review: null
   openai_functions: null
 
@@ -147,8 +138,7 @@ authority:
   charter_prohibited: null
   review_requirement: "Every Z.ai candidate needs independent exact-candidate review by a non-author from a different provider family. Z.ai reviews only candidates it did not author, and its verdict is evidence for the deterministic gate, never merge authority."
   strategy_constraints:
-    - "a nonzero target is not evidence that a route is operational"
-    - "the 18% target and the rolling-twenty +/-3 band are routing guidance; the former target plus five hard limit was retired by the owner on 2026-09-27 and allocation share never blocks dispatch"
+    - "verify each route's actual readiness"
   separation_of_duties:
     - "cannot review, accept, or merge its own candidate"
     - "reviewer independence is judged by provider family; Z.ai is its own family, never Claude's"
@@ -262,10 +252,6 @@ sources:
     anchor: "The owner enrolled Z.ai (GLM Coding Plan) as its own production lane `zai` on"
   - document: "docs/provider-setup.html"
     anchor: "and are never relabelled Claude."
-  - document: "docs/provider-allocation-profiles.html"
-    anchor: "### Z.ai production enrollment (2026-09-27)"
-  - document: "docs/templates/project-bootstrap/provider-roles-contract.yaml"
-    anchor: "lane_order: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, zai]"
   - document: "docs/providers/zai-welcome-aboard.md"
     anchor: "Code may host your session; it does not change your provider identity to Claude."
 # [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]]

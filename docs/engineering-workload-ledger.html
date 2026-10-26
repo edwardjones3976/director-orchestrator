@@ -11,7 +11,7 @@
 <body>
 <a class="skip-link" href="#content">Skip to content</a>
 <header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
-<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#what-the-twenty-means">What the twenty means</a></li><li class="top"><a href="#product-identity-and-allocation-policy">Product identity and allocation policy</a></li><li class="top"><a href="#establish-history-once-without-inventing-it">Establish history once, without inventing it</a></li><li class="top"><a href="#reserve-attempt-record-settle">Reserve, attempt, record, settle</a></li><li class="top"><a href="#historical-identity-readable-never-new-authority">Historical identity: readable, never new authority</a></li><li class="top"><a href="#resource-bound-result-is-tri-state-not-a-share-gate">Resource-bound result is tri-state, not a share gate</a></li><li class="top"><a href="#diagnostics-and-limits">Diagnostics and limits</a></li></ul></details></nav>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#what-the-twenty-means">What the twenty means</a></li><li class="top"><a href="#product-identity">Product identity</a></li><li class="top"><a href="#establish-history-once-without-inventing-it">Establish history once, without inventing it</a></li><li class="top"><a href="#reserve-attempt-record-settle">Reserve, attempt, record, settle</a></li><li class="top"><a href="#historical-identity-readable-never-new-authority">Historical identity: readable, never new authority</a></li><li class="top"><a href="#resource-bound-result-is-tri-state-not-a-share-gate">Resource-bound result is tri-state, not a share gate</a></li><li class="top"><a href="#diagnostics-and-limits">Diagnostics and limits</a></li></ul></details></nav>
 <main id="content">
 <!-- [[Codex Director | GPT-6 Astra | 2026-09-21 | 23:56 UTC | BEGIN]] -->
 <!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 23:26 UTC | BEGIN]] -->
@@ -40,22 +40,6 @@ A user able to edit this database or its enrollment inputs remains trusted. The
 module validates evidence structure and consistency; it does <strong>not</strong> authenticate
 the contents of referenced evidence or attest complete historical coverage.</p>
 <h2 id="what-the-twenty-means">What the twenty means</h2>
-<p>Let <code>W</code> be the most recent nineteen recorded, non-coordination assignments plus
-the proposed new assignment, and <code>c(p)</code> the number attributed to allocation bucket
-<code>p</code> in <code>W</code>. Admission uses the same twenty-slot startup denominator as the charter:</p>
-<pre><code>prospective_share(p) = 100 * c(p) / 20
-normal band(p) = target(p) ± 3 percentage points   (advisory routing preference)
-admission condition(p) = target(p) &gt; 0
-</code></pre>
-<p>Only real reservations fill slots. Unfilled startup slots are reported as unfilled,
-not assigned to fictitious providers. The normal band supplies the under-target
-routing preference only; it never refuses admission. The owner retired the
-former target+5 hard admission ceiling on 2026-09-21 as outdated. <code>historical_maximum_slots</code>
-and <code>historical_hard_caps_ok</code> in the status payload retain that retired number for
-reference; they are explicitly non-enforcing and never block or refuse a
-reservation. <code>next_eligible_routes</code> ranks admitted-capacity candidates by their
-prospective distance below target. The caller must still apply capability, exact
-scope, quota, reviewer independence, security and budget gates.</p>
 <p>Every real reservation consumes one assignment once. Reserved, failed, rejected,
 cancelled and ambiguous rows remain in admission history. Settlement never refunds
 capacity. The twenty-first assignment removes the oldest from the current window,
@@ -73,10 +57,7 @@ replays. Calling <code>reserve</code> again returns the prior reservation with
 <code>dispatch_permitted: false</code>; only a new <code>begin-attempt</code> yields a one-time workload
 permit. Immutable database triggers prevent normal SQL updates/deletions of the
 journal. These are consistency controls, not protection against its trusted owner.</p>
-<h2 id="product-identity-and-allocation-policy">Product identity and allocation policy</h2>
-<p>The owner selected <strong>the existing five-provider allocation</strong>: OpenAI 40%, Claude
-25%, Cursor 15%, direct Grok 10% and Antigravity 10%. The canonical engineering
-profile remains unchanged. It has <strong>no actual Grok Bot allocation binding</strong>.</p>
+<h2 id="product-identity">Product identity</h2>
 <table>
 <thead>
 <tr>

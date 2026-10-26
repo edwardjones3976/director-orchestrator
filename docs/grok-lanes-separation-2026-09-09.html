@@ -23,7 +23,7 @@ route qualification, allocation decision, authorization, or activation receipt.
 Retained Microsoft 365 references describe the retired historical deployment;
 PR #161 retired that integration. Current authority is the
 <a href="team-operating-charter.html">team operating charter</a>,
-<a href="provider-allocation-profiles.html">provider allocation profiles</a>, and
+<a href="provider-capacity-and-authority.html">provider capacity and authority</a>, and
 <a href="langgraph-primary-operations.html">LangGraph primary operations</a>.
 Verify current state through the <a href="state-witness.html">Witness Ledger</a> rather
 than treating a historical readiness claim as evidence of today's deployment.</p>
@@ -116,9 +116,6 @@ three questions requiring scoped authority and verified capability:</p>
 <li><strong>How the orchestrator reaches it.</strong> If it is only usable from inside Cursor's
 own agent surface, it belongs in the same category as an owner-launched
 session: a real dispatch path, but not one this service drives.</li>
-<li><strong>Whether it becomes a lane.</strong> <code>LANES</code> in <code>allocation_profiles.py</code> is a fixed
-tuple, and every allocation profile carries one target per lane. Adding a lane
-changes every profile.</li>
 <li><strong>Credentials.</strong> Owner-reserved. This session neither creates, retrieves,
 handles nor stores a credential of any kind.</li>
 </ol>

@@ -54,10 +54,6 @@ class InstructionSurfaceDriftTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIn(rule, rules(guard.check_instruction_text(text)))
 
-    def test_agents_rule_eleven_copied_into_a_local_file_is_drift(self):
-        agents = read_document(ROOT / "AGENTS.md")
-        rule = next(line for line in agents.splitlines() if line.startswith("11. "))
-        self.assertIn("copied-allocation-window", rules(guard.check_instruction_text(rule)))
 
     def test_arbitrary_numbers_and_technical_instructions_are_not_drift(self):
         for text in (
