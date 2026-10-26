@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Foreman fix-it — BlackBox host stability (WO-HOST-BBOX-20261026-001) · Director Orchestrator</title>
+<link rel="stylesheet" href="../assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="../index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Repair documents"><a href="../foreman-repair-work-orders.html">Repair procedure</a><a href="https://github.com/edwardjones3976/director-orchestrator/issues/299">Issue #299</a></nav></header>
+<main id="content">
+<p class="eyebrow">ISSUED · Foreman fix-it work order · 26 October 2026</p>
+<h1>BlackBox host stability and cursor-agent HTML response repair</h1>
+<p class="notice"><strong>ISSUED.</strong> Supersedes Codex-issued <code>foreman-fix-it-20261025.html</code> (2026-10-26 06:45 UTC), which is stale on Foreman identity, the BIOS 5021 hold, and Codex Retry. Owner order (2026-10-26): skip Codex on this repair; Claude (sole Foreman) issues this replacement for <strong>Cursor Warden</strong> to execute on BlackBox. Repository copy is authoritative for coordination; mirror to the host artifact path in step 1.1.</p>
+
+<section aria-labelledby="identity">
+<h2 id="identity">1. Identity, authority and assignment</h2>
+<dl>
+<dt>Work-order ID / revision / state</dt><dd><code>WO-HOST-BBOX-20261026-001</code> / rev 1 / <strong>ISSUED</strong></dd>
+<dt>Scope kind</dt><dd>REPAIR (host configuration and diagnostics; no repository code changes unless a separate PR is opened later)</dd>
+<dt>Runtime applicability</dt><dd>Not applicable — host repair outside LangGraph packet admission. Original authority: owner order relayed on <a href="https://github.com/edwardjones3976/director-orchestrator/issues/299#issuecomment-6414286036">issue #299 comment 6414286036</a> and Slack <code>#project-director</code>.</dd>
+<dt>Mandatory research</dt><dd><strong>reused</strong> at intake — Microsoft Learn bug check <code>0x7A</code> (<a href="https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/bug-check-0x7a--kernel-data-inpage-error">KERNEL_DATA_INPAGE_ERROR</a>) and general stop-code troubleshooting (<a href="https://learn.microsoft.com/en-us/troubleshoot/windows-client/performance/stop-code-error-troubleshooting">Microsoft Learn</a>). Relevance: mixed stop codes after RAM reduction commonly implicate storage I/O, memory integrity, or third-party drivers before BIOS changes.</dd>
+<dt>Originating issue / evidence</dt><dd><a href="https://github.com/edwardjones3976/director-orchestrator/issues/299">#299</a>; Warden packet <code>C:\Users\edwar\.codex\artifacts\pc-crash-20261025\report\cursor-warden-packet-20261026-htmlparse.html</code>; dump copies under <code>C:\Users\edwar\.codex\artifacts\pc-crash-20261025\</code>.</dd>
+<dt>Issuing acting Foreman</dt><dd>Claude Code — sole Director-Orchestrator Foreman (owner appointment 2026-10-26). Issue time: 2026-10-26 04:10 America/Los_Angeles (11:10 UTC).</dd>
+<dt>Accountable executor (one writer on host)</dt><dd>Cursor Warden on BlackBox (administrator #3). OpenAI Codex is <strong>off the repair list</strong> unless new evidence requires a separate Foreman revision.</dd>
+<dt>Eligible independent reviewer</dt><dd>Claude as Investigator/Quality Lead may review host evidence; no PR merge in this order.</dd>
+<dt>Contact and acknowledgment</dt><dd>Post execution progress and closeout on <a href="https://github.com/edwardjones3976/director-orchestrator/issues/299">#299</a>. Acknowledgment text: <code>WO-HOST-BBOX-20261026-001 ack — Cursor Warden — &lt;Pacific time&gt;</code>.</dd>
+<dt>Maintained HTML report (this document)</dt><dd>Repository: <code>docs/reports/host-blackbox-foreman-fix-it-20261026.html</code>. Host mirror: <code>C:\Users\edwar\.codex\artifacts\pc-crash-20261025\report\foreman-fix-it-20261026.html</code>.</dd>
+</dl>
+</section>
+
+<section aria-labelledby="problem">
+<h2 id="problem">2. Problem, baseline and boundaries</h2>
+<dl>
+<dt>Observed</dt><dd>After intentional RAM downgrade to 32 GB, BlackBox still records <strong>mixed kernel bugchecks</strong> on 2026-10-25 (local): 13:08 <code>0x7A</code> (<code>102526-19531-01.dmp</code>); 19:06 <code>0x139</code> (<code>102526-11281-01.dmp</code>); 23:22 <code>0x50</code> (<code>102526-11890-01.dmp</code>); earlier same incident window: <code>0xEF</code>, <code>0x13A</code>, <code>0x0A</code>, <code>0x133</code> (×2). Separately, <strong>cursor-agent</strong> <code>2026.10.22-27dcf5f</code> exited twice with <code>JSON.parse</code> on HTML beginning <code>&lt;html&gt;&lt;head&gt;&lt;meta charset='utf-8'/&gt;</code> (sessions <code>20261026T025915</code>, <code>20261026T034842</code>) — gateway/HTML error page, not local config corruption. No <code>Cursor.exe</code> WER 1000 in the last two days.</dd>
+<dt>Expected</dt><dd>Stable host under 32 GB with BIOS 5044; complete dump triage; storage and system files verified; cursor-agent failures explained with mitigations; no unauthorized hardware flash or RAM restore.</dd>
+<dt>Established cause</dt><dd><strong>Hypothesis bundle</strong> (not yet single-root): (a) storage or paging-path fault suggested by <code>0x7A</code>; (b) memory-integrity / driver corruption suggested by <code>0x139</code> and <code>0x50</code>; (c) cursor-agent upstream HTML response (proxy, auth, or service outage). WinDbg coverage is incomplete (four transcripts for eight archived dumps per Warden examples).</dd>
+<dt>Hardware baseline (evidence — do not change unless a step explicitly allows)</dt><dd>BlackBox; Ryzen 9 5950X; ASUS TUF GAMING X570-PLUS (WI-FI); BIOS <strong>5044</strong> (SMBIOS 2026-01-03); 32 GB (two Corsair <code>CMW64GX4M4D3600C18</code> 16 GB modules in <strong>DIMM_A2 + DIMM_B1</strong> at <strong>2133 MHz / 1.2 V</strong>); boot Samsung SSD 990 PRO 2TB firmware <code>8B2QJXD7</code>; <code>C:</code> NTFS ~225 GB free.</dd>
+<dt>BIOS 5044 vs prior 5021 hold — Foreman finding</dt><dd>The earlier procedure hold (“do not treat BIOS flash as remediation until 5044 is validated”) is <strong>satisfied by observation</strong>: 5044 is installed. This order <strong>does not authorize BIOS flash</strong>. Record 5044 in the closeout; do not downgrade or re-flash without a separate owner order.</dd>
+<dt>DIMM slot recommendation (owner decision only)</dt><dd>ASUS two-DIMM guidance is typically <strong>A2 + B2</strong>; reported population is <strong>A2 + B1</strong>. Foreman recommendation: after diagnostic steps below, if memory-related failures persist, ask the owner whether to reseat to A2+B2 — <strong>not an automated step</strong>.</dd>
+<dt>Git baseline</dt><dd>Not applicable — host-only repair.</dd>
+<dt>Permitted operations</dt><dd>Read-only and diagnostic commands on BlackBox; WinDbg analysis; <code>chkdsk /scan</code>; <code>sfc</code>/<code>DISM</code> health checks; driver inventory; cursor-agent log capture; copying this HTML to the artifact report folder; updating the execution table in section 4 of this file on the host copy.</dd>
+<dt>Excluded actions</dt><dd><strong>No BIOS flash.</strong> <strong>No restore to 64 GB RAM.</strong> No Codex dispatch or Codex Retry. No UAC disable. No registration of Warden host watchdog (remains <code>enabled: false</code>). No opening secret stores (<code>provider-mcp-secrets</code>, <code>.env</code>, <code>mcp.json</code> bodies).</dd>
+</dl>
+</section>
+
+<section aria-labelledby="limits">
+<h2 id="limits">3. Limits and checkpoints</h2>
+<table>
+<caption>Inherited caps — host repair case</caption>
+<thead><tr><th scope="col">Control</th><th scope="col">Value</th></tr></thead>
+<tbody>
+<tr><th scope="row">Paid provider calls</th><td>Zero</td></tr>
+<tr><th scope="row">Repair revisions without Foreman</th><td>Executor may not expand scope; return to Foreman Claude on blocker</td></tr>
+<tr><th scope="row">Checkpoint</th><td>2026-10-26 12:00 America/Los_Angeles (19:00 UTC) — post stage reached on #299</td></tr>
+<tr><th scope="row">Delivery</th><td>Closeout rows in section 4 filled on host mirror; link from #299</td></tr>
+</tbody>
+</table>
+</section>
+
+<section aria-labelledby="procedure">
+<h2 id="procedure">4. Prescribed procedure (Cursor Warden — elevated where noted)</h2>
+<p>Run from an elevated PowerShell session when copying minidumps or writing under <code>C:\Windows\Minidumps</code>. Use <code>certutil -hashfile PATH SHA256</code> when <code>Get-FileHash</code> is unavailable. Escape untrusted log text in any HTML updates.</p>
+<table>
+<caption>Execution checklist</caption>
+<thead><tr><th scope="col">Step</th><th scope="col">Action (working directory)</th><th scope="col">Expected evidence</th><th scope="col">Failure branch</th><th scope="col">State</th></tr></thead>
+<tbody>
+<tr><th scope="row">1.1 Intake</th><td>Acknowledge on #299. Copy this file to <code>C:\Users\edwar\.codex\artifacts\pc-crash-20261025\report\foreman-fix-it-20261026.html</code>. Run <code>python %USERPROFILE%\.cursor\skills\warden\scripts\warden.py snapshot</code>.</td><td>Ack comment; snapshot JSON under warden ledger; file hash of mirror</td><td>Stop if not on BlackBox — report wrong host</td><td>required</td></tr>
+<tr><th scope="row">1.2 Inventory lock</th><td>Record: BIOS version, DIMM slots/speed, SSD model/firmware, free space — compare to section 2 baseline.</td><td>Matching fields or explicit delta listed</td><td>Report drift to Foreman before mutating</td><td>required</td></tr>
+<tr><th scope="row">2.1 WinDbg — remaining dumps</th><td>For each dump under <code>...\dumps\</code> lacking a complete transcript in <code>...\report\windbg\</code>, run WinDbg/KD (<code>!analyze -v</code>, <code>kv</code>, <code>lm t n</code>, bugcheck parameters). Priority files: <code>102526-19531-01.dmp</code>, <code>102526-11281-01.dmp</code>, <code>102526-11890-01.dmp</code>, plus any of the earlier set still missing analysis.</td><td>One text transcript per dump; symbols not <code>WRONG_SYMBOLS</code> for primary faulting module</td><td>If symbols fail, document symbol path used; do not claim “complete triage”</td><td>required</td></tr>
+<tr><th scope="row">2.2 Driver/storage correlation</th><td>From transcripts, list faulting modules (especially storage filter, NVMe, antivirus, <code>stornvme.sys</code>). Compare to installed versions: <code>driverquery /v /fo list</code> filtered to named drivers.</td><td>Table: module → version → update/rollback candidate</td><td>UNKNOWN module → keep dump excerpt in report</td><td>required</td></tr>
+<tr><th scope="row">3.1 Storage health</th><td><code>Get-PhysicalDisk | Format-List FriendlyName,HealthStatus,OperationalStatus</code>; reliability counter for 990 PRO; <code>chkdsk C: /scan</code> (online scan only in this step).</td><td>Health OK or documented fault; chkdsk result captured</td><td>If chkdsk reports corruption → Foreman amendment before <code>/f</code> offline repair</td><td>required</td></tr>
+<tr><th scope="row">3.2 System file integrity</th><td><code>DISM /Online /Cleanup-Image /CheckHealth</code> then <code>sfc /verifyonly</code>. If verifyonly reports violations, run <code>sfc /scannow</code> once and retain log.</td><td>Exit codes and console output saved under <code>...\report\</code></td><td>DISM CheckHealth fails → stop before scannow; report</td><td>required</td></tr>
+<tr><th scope="row">4.1 cursor-agent HTML parse</th><td>Read sessions under cursor-agent logs for <code>20261026T025915</code> and <code>20261026T034842</code>. Capture first 512 bytes of failing HTTP body and request URL/host if logged. Compare with Warden packet HTML. Test HTTPS reachability to the same host (e.g. <code>curl -sS -D -</code> HEAD/GET — no secrets in #299).</td><td>Classification: auth redirect, 5xx, captive portal, or proxy HTML; timestamp correlation</td><td>If intermittent, record two-of-two repro attempt; no credential paste</td><td>required</td></tr>
+<tr><th scope="row">4.2 cursor-agent mitigation</th><td>Retry agent after confirming network/DNS; check for agent update channel newer than <code>2026.10.22-27dcf5f</code> if available. Do not delete user config without owner ack.</td><td>Pass/fail retry note; version after update if applied</td><td>Persistent HTML → open INVESTIGATOR handoff for upstream; host repair continues</td><td>required</td></tr>
+<tr><th scope="row">5.1 DIMM recommendation</th><td>If steps 2–3 implicate memory integrity and owner has not reseated: post Foreman <strong>recommendation only</strong> for A2+B2 — await owner reply before physical change.</td><td>#299 comment with recommendation text</td><td>Do not reseat DIMMs without owner yes</td><td>not applicable until memory fault confirmed</td></tr>
+<tr><th scope="row">6.1 Closeout</th><td>Update execution states in host mirror; post summary on #299 with links to new transcripts and logs; file Warden finding if inaccurate prior “complete WinDbg” claim existed.</td><td>Disposition: investigated / mitigated / blocked</td><td>Unresolved kernel crashes → blocked with next Foreman revision request</td><td>required</td></tr>
+</tbody>
+</table>
+</section>
+
+<section aria-labelledby="acceptance">
+<h2 id="acceptance">5. Acceptance (this order)</h2>
+<ul>
+<li>Every archived dump has a WinDbg transcript or an explicit blocked reason.</li>
+<li>Storage scan, DISM CheckHealth, and SFC verify (or scannow if required) results are filed.</li>
+<li>cursor-agent HTML failure is classified with evidence; retry/update outcome recorded.</li>
+<li>BIOS 5044 recorded; no flash attempted; 5021 hold marked satisfied.</li>
+<li>Codex was not used on the repair path.</li>
+</ul>
+<p>This order does not certify zero future bugchecks. It certifies prescribed diagnostics were executed and recorded.</p>
+</section>
+
+<section aria-labelledby="execution-log">
+<h2 id="execution-log">6. Execution log (fill on host mirror)</h2>
+<p class="notice">Cursor Warden: append rows as steps complete. Do not erase failures.</p>
+<table>
+<thead><tr><th scope="col">Step</th><th scope="col">Completed (Pacific)</th><th scope="col">Result</th><th scope="col">Evidence path</th></tr></thead>
+<tbody>
+<tr><td>1.1</td><td></td><td></td><td></td></tr>
+<tr><td>1.2</td><td></td><td></td><td></td></tr>
+<tr><td>2.1</td><td></td><td></td><td></td></tr>
+<tr><td>2.2</td><td></td><td></td><td></td></tr>
+<tr><td>3.1</td><td></td><td></td><td></td></tr>
+<tr><td>3.2</td><td></td><td></td><td></td></tr>
+<tr><td>4.1</td><td></td><td></td><td></td></tr>
+<tr><td>4.2</td><td></td><td></td><td></td></tr>
+<tr><td>5.1</td><td></td><td></td><td></td></tr>
+<tr><td>6.1</td><td></td><td></td><td></td></tr>
+</tbody>
+</table>
+</section>
+</main>
+<footer class="site-footer">Foreman fix-it · WO-HOST-BBOX-20261026-001 · Executor: Cursor Warden · Codex excluded by owner order.</footer>
+</body>
+</html>
