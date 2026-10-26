@@ -78,6 +78,7 @@ class _DocumentText(HTMLParser):
         self.parts = []
         self.blocks = []
         self.pending = []
+        self.row = None
 
     def _flush(self):
         block = " ".join(" ".join(self.pending).split())
@@ -87,7 +88,12 @@ class _DocumentText(HTMLParser):
 
     def handle_data(self, data):
         self.parts.append(data)
-        self.pending.append(data)
+        if self.row is not None:
+            self.row.append(data)
+        for index, paragraph in enumerate(re.split(r"\n[ \t]*\n", data)):
+            if index:
+                self._flush()
+            self.pending.append(paragraph)
 
     def handle_comment(self, data):
         self._flush()
@@ -95,6 +101,8 @@ class _DocumentText(HTMLParser):
         self.blocks.append(" ".join(data.split()))
 
     def handle_starttag(self, tag, attrs):
+        if tag == "tr":
+            self.row = []
         if tag in {"td", "th", "li", "p", "dt", "dd", "div", "section", "pre", "script", "template"} or re.fullmatch(r"h[1-6]", tag):
             self._flush()
         for key, value in attrs:
@@ -103,6 +111,9 @@ class _DocumentText(HTMLParser):
                 self.blocks.append(" ".join(value.split()))
 
     def handle_endtag(self, tag):
+        if tag == "tr" and self.row is not None:
+            self.blocks.append(" ".join(" ".join(self.row).split()))
+            self.row = None
         if tag in {"td", "th", "li", "p", "dt", "dd", "div", "section", "pre", "script", "template"} or re.fullmatch(r"h[1-6]", tag):
             self._flush()
 
@@ -145,7 +156,7 @@ def _allocation_copy(text, path=""):
         return "provider percentage"
     if re.search(r'["\'](?:allocation_profiles|weights|targets|provider_percentages)["\']\s*:\s*[{\[]', flattened, re.I) and re.search(PROVIDER, flattened, re.I):
         return "inline allocation data"
-    blocks = list(_yaml_scalars(yaml.safe_load(text))) if path.endswith((".yaml", ".yml")) else parser.blocks
+    blocks = list(_yaml_scalars(yaml.safe_load(text))) if path.endswith((".yaml", ".yml", ".json")) else parser.blocks
     alias_count = sum(block.count(RUNTIME_ALIAS) for block in blocks)
     if path in RUNTIME_ALIAS_PATHS and alias_count != 1:
         return "runtime alias missing or duplicated"
@@ -156,9 +167,16 @@ def _allocation_copy(text, path=""):
             block = block.replace(RUNTIME_ALIAS, "", 1)
             if re.search(PERCENT, block, re.I) or re.search(r"\bweights?\b", block, re.I):
                 return "allocation appended to runtime alias"
-        has_data = re.search(r"\b\d+(?:\.\d+)?\b|" + PERCENT + r"|\bweights?\b", block, re.I)
-        if path not in RUNTIME_RECORDS and has_data and re.search(PROVIDER + r"\s+" + ALLOCATION_TERM, block, re.I):
-            return "provider allocation text"
+        for clause in re.split(r"(?<=[.!?;])\s+", block):
+            has_data = re.search(r"\b(?:\d+(?:\.\d+)?|NN)\b|" + PERCENT + r"|\bweights?\b", clause, re.I)
+            allocation = re.search(PROVIDER + r"\s+" + ALLOCATION_TERM, clause, re.I)
+            measured_target = re.search(PERCENT + r"|\bweights?\b", clause, re.I) or re.search(
+                r"\b(?:targets?|shares?|allocations?)\s*:?\s+(?:of\s+)?(?:" + PROVIDER + r"[\s:'-]*)?(?:NN|\d+(?:\.\d+)?)\b", clause, re.I
+            )
+            allocation = allocation or (measured_target and re.search(PROVIDER, clause, re.I)
+                                        and re.search(r"\b(?:allocation|targets?|shares?)\b", clause, re.I))
+            if path not in RUNTIME_RECORDS and has_data and allocation:
+                return "provider allocation text"
     return None
 
 
@@ -279,3 +297,19 @@ class ProviderPresentationBoundaryTests(unittest.TestCase):
             self.assertIsNone(_allocation_copy(table, path))
             self.assertIsNotNone(_allocation_copy(table.replace("</td>", " NN%</td>"), path))
             self.assertIsNotNone(_allocation_copy(table + '<table><tr><th>Target</th></tr><tr><td>PROVIDER_A NN%</td></tr></table>', path))
+
+    def test_prose_targets_use_the_same_logical_block(self):
+        for copy in ("PROVIDER_A's share: NN%", "PROVIDER_A has a NN% target",
+                     "Target PROVIDER_A: NN", "NN% is assigned as a share to PROVIDER_A",
+                     "<li>PROVIDER_A has a target of NN%</li>",
+                     "<table><tr><td>PROVIDER_A</td><td>Target</td><td>NN</td></tr></table>"):
+            with self.subTest(copy=copy):
+                self.assertIsNotNone(_allocation_copy(copy))
+        for copy in ("<p>PROVIDER_A is ready.</p><p>A target of NN%.</p>",
+                     "<li>PROVIDER_A is ready.</li><li>A target of NN%.</li>",
+                     "PROVIDER_A is ready.\n\nA target of NN%.",
+                     "<p>PROVIDER_A's uptime was NN%.</p>",
+                     "<p>PROVIDER_A's independent NN% activity rule earns no production credit.</p>",
+                     "No policy changes revive a quota-limited route or attest an underlying managed model family."):
+            with self.subTest(copy=copy):
+                self.assertIsNone(_allocation_copy(copy))
