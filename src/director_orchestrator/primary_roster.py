@@ -25,6 +25,7 @@ this seam. Project leadership alone changes neither runtime's admission floor.
 """
 from collections import Counter
 from dataclasses import dataclass
+import re
 from typing import Mapping, Sequence
 
 from .primary_workload import admission_reason
@@ -83,6 +84,9 @@ def lanes_requiring_cost_rank(pool: Sequence[str] | frozenset[str] | set[str]) -
     )
 
 
+# Shared Copilot issue-scope rules: the provider-dispatch guard's
+# ``dispatch_guard.copilot_issue_scope_error`` must accept and refuse exactly the
+# same inputs, so a scope the roster admits is one the dispatcher admits too.
 ALLOWED_COPILOT_ISSUE_KINDS = frozenset({
     "triage",
     "investigation",
@@ -91,43 +95,67 @@ ALLOWED_COPILOT_ISSUE_KINDS = frozenset({
     "drafting",
     "tracking",
 })
+COPILOT_REPOSITORY_PATTERN = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+COPILOT_SCOPE_ALIASES = {
+    "repository": ("repository", "repo"),
+    "issue_number": ("issue_number", "issue_reference", "issue"),
+    "packet": ("packet", "drafting_packet"),
+}
 
 
 @dataclass(frozen=True)
 class IssueRef:
     repository: str
-    issue_number: int | None = None
+    issue_number: int | str | None = None
     kind: str | None = None
     packet: Mapping[str, object] | None = None
 
 
-def is_valid_issue_ref(issue_ref: object) -> bool:
-    if isinstance(issue_ref, IssueRef):
-        repo = issue_ref.repository
-        num = issue_ref.issue_number
-        kind = issue_ref.kind
-        packet = issue_ref.packet
-    elif isinstance(issue_ref, Mapping):
-        repo = issue_ref.get("repository") or issue_ref.get("repo")
-        num = issue_ref.get("issue_number") or issue_ref.get("issue") or issue_ref.get("issue_reference")
-        kind = issue_ref.get("kind")
-        packet = issue_ref.get("packet") or issue_ref.get("drafting_packet")
-    else:
-        return False
+def _scope_field(scope: Mapping[str, object], field: str) -> object:
+    present = [key for key in COPILOT_SCOPE_ALIASES[field] if key in scope]
+    if len(present) > 1:
+        raise ValueError(f"ambiguous {field}: give only one of {', '.join(present)}")
+    return scope[present[0]] if present else None
 
-    if not isinstance(repo, str) or not repo.strip():
-        return False
-    if kind is not None and kind not in ALLOWED_COPILOT_ISSUE_KINDS:
-        return False
-    if isinstance(num, int) and num > 0:
-        return True
-    if isinstance(num, str) and num.strip().isdigit() and int(num.strip()) > 0:
-        return True
-    if packet is not None and isinstance(packet, Mapping) and len(packet) > 0:
-        return True
+
+def _valid_issue_number(value: object) -> bool:
+    # type() rather than isinstance(): bool (and any other int subclass) is refused.
+    if type(value) is int:
+        return value > 0
+    return isinstance(value, str) and value.isascii() and value.isdigit() and int(value) > 0
+
+
+def issue_scope_error(scope: object) -> str | None:
+    """None when ``scope`` is a valid typed Copilot issue scope, else the reason it is not."""
+    if isinstance(scope, IssueRef):
+        scope = {"repository": scope.repository, "issue_number": scope.issue_number,
+                 "kind": scope.kind, "packet": scope.packet}
+    if not isinstance(scope, Mapping):
+        return "issue_scope must be a mapping"
+    kind = scope.get("kind")
+    if not isinstance(kind, str) or kind not in ALLOWED_COPILOT_ISSUE_KINDS:
+        return f"kind {kind!r} not allowed; allowed kinds: {', '.join(sorted(ALLOWED_COPILOT_ISSUE_KINDS))}"
+    try:
+        repository = _scope_field(scope, "repository")
+        number = _scope_field(scope, "issue_number")
+        draft = _scope_field(scope, "packet")
+    except ValueError as exc:
+        return str(exc)
+    if not isinstance(repository, str) or not COPILOT_REPOSITORY_PATTERN.fullmatch(repository):
+        return "repository must be owner/name"
+    if number is not None and not _valid_issue_number(number):
+        return "issue number must be a positive integer (bool, negative and non-numeric values are refused)"
     if kind == "drafting":
-        return True
-    return False
+        title = draft.get("title") if isinstance(draft, Mapping) else None
+        if not isinstance(title, str) or not title.strip():
+            return "drafting requires a packet mapping with a nonempty string title"
+    elif number is None:
+        return f"kind {kind!r} requires an issue number"
+    return None
+
+
+def is_valid_issue_ref(issue_ref: object) -> bool:
+    return issue_scope_error(issue_ref) is None
 
 
 @dataclass(frozen=True)
@@ -168,7 +196,7 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
         raise PrimaryRosterHold("primary_task_capability_unknown")
     has_issue_cap = "github_issue_work" in required_capabilities
     if has_issue_cap:
-        if not active_issue_ref or not is_valid_issue_ref(active_issue_ref):
+        if (issue_ref is not None and issue_scope is not None) or not is_valid_issue_ref(active_issue_ref):
             raise PrimaryRosterHold("primary_issue_scope_required")
     research = None
     if "public_research" in required_capabilities:
@@ -186,7 +214,7 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
     def eligible_for(prior: Sequence[str], *, exclude: str | None = None):
         candidates = [lane for lane in IMPLEMENTERS if lane != exclude and lane in pool
                       and (lane != "antigravity" or team_mode or "bounded_scaffolding" in required_capabilities)
-                      and (lane != "github-copilot" or (has_issue_cap and is_valid_issue_ref(active_issue_ref)))
+                      and (lane != "github-copilot" or has_issue_cap)
                       and admission_reason(lane, prior, allocation_profile=allocation_profile) is None]
         if any(type(trusted_cost_ranks.get(lane)) is not int or trusted_cost_ranks[lane] < 0
                for lane in candidates):

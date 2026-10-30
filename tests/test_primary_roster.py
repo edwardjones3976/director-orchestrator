@@ -174,7 +174,7 @@ class PrimaryRosterTests(unittest.TestCase):
             self.select(**args)
 
         # Typed issue reference selects Copilot
-        args["issue_ref"] = IssueRef(repository="owner/repo", issue_number=123)
+        args["issue_ref"] = IssueRef(repository="owner/repo", issue_number=123, kind="investigation")
         roster = self.select(**args)
         self.assertEqual(roster.producer, "github-copilot")
         self.assertIn(roster.reviewer, {"openai", "claude", "cursor", "grok"})

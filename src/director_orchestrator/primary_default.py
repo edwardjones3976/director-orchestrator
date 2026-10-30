@@ -1432,6 +1432,7 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
     selected = select_primary_roster(available=available, history=history,
         required_capabilities=record.intake.primary_required_capabilities,
         public_research_query=record.intake.primary_public_research_query,
+        issue_ref=record.intake.primary_issue_ref,
         trusted_cost_ranks={canonical_allocation_lane(lane): rank for lane, rank in settings.trusted_provider_cost_ranks().items()},
         allocation_profile=record.intake.allocation_profile,
         team_mode=settings.langgraph_primary_antigravity_team_enabled)

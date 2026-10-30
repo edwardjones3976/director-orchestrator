@@ -21,7 +21,7 @@ from director_orchestrator.config import (
     UNAVAILABLE_PRIMARY_CAPABILITIES,
     Settings,
 )
-from director_orchestrator.models import SlackIntake
+from director_orchestrator.models import PER_TASK_PRIMARY_CAPABILITIES, SlackIntake
 from director_orchestrator.primary_roster import PrimaryRosterHold, select_primary_roster
 
 GATEWAY_SECRET = "synthetic-routing-gateway-secret-32-characters"
@@ -160,11 +160,14 @@ class IntakeRoutingDefaultsConfigurationTests(unittest.TestCase):
         element = get_args(annotation)[0]
         self.assertIs(Literal, get_origin(element))
         declared = set(get_args(element))
+        # Per-task capabilities need per-task scope, so config never offers them.
         self.assertEqual(
             declared,
             set(SELECTABLE_PRIMARY_CAPABILITIES)
-            | set(UNAVAILABLE_PRIMARY_CAPABILITIES),
+            | set(UNAVAILABLE_PRIMARY_CAPABILITIES)
+            | set(PER_TASK_PRIMARY_CAPABILITIES),
         )
+        self.assertFalse(set(PER_TASK_PRIMARY_CAPABILITIES) & set(SELECTABLE_PRIMARY_CAPABILITIES))
         profiles = get_args(
             SlackIntake.model_fields["allocation_profile"].annotation
         )
