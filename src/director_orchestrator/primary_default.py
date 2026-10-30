@@ -1421,6 +1421,9 @@ def _small_producer_constraints(
     ]
 
 
+_ASSIGNMENT_TASK_MAX_LENGTH = 10_000  # models.py:436 task: str = Field(min_length=1, max_length=10_000)
+
+
 def _copilot_assignment_task(text: str, scope: Mapping[str, Any] | Any) -> str:
     if isinstance(scope, Mapping):
         s = scope
@@ -1449,9 +1452,15 @@ def _copilot_assignment_task(text: str, scope: Mapping[str, Any] | Any) -> str:
 
     detail = ", ".join(parts)
     if not text:
-        return f"Execute issue work: {detail}" if detail else "Execute issue work."
+        base = f"Execute issue work: {detail}" if detail else "Execute issue work."
+        if len(base) > _ASSIGNMENT_TASK_MAX_LENGTH:
+            return base[:_ASSIGNMENT_TASK_MAX_LENGTH - 3] + "..."
+        return base
     if detail and detail not in text:
-        return f"{text} ({detail})"
+        candidate = f"{text} ({detail})"
+        if len(candidate) > _ASSIGNMENT_TASK_MAX_LENGTH:
+            return text
+        return candidate
     return text
 
 

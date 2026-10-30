@@ -17,7 +17,7 @@ from director_orchestrator.models import Assignment, ProviderName
 from director_orchestrator.config import Settings
 from director_orchestrator.models import IntakeAuthentication, SlackIntake, TaskRecord, TaskStatus
 from director_orchestrator.policy import preview_plan
-from director_orchestrator.primary_default import _live_parallel_plan
+from director_orchestrator.primary_default import _copilot_assignment_task, _live_parallel_plan
 from director_orchestrator.primary_roster import (
     ALLOWED_COPILOT_ISSUE_KINDS,
     IssueRef,
@@ -487,3 +487,40 @@ class IntakeIssueScopeTests(unittest.TestCase):
             self.assertEqual(cm.exception.status_code, 409)
             self.assertIn("Issue-scoped requests require the LangGraph primary", cm.exception.detail)
             self.assertIn("GitHub issue work is unavailable under legacy rollback", cm.exception.detail)
+
+    def test_copilot_assignment_task_10000_char_intake_round_trips(self):
+        settings = self._settings()
+        long_text = "x" * 10_000
+        scope = VALID_SCOPES["int_issue_number"]
+        record = self._record(
+            settings,
+            text=long_text,
+            primary_required_capabilities=["github_issue_work"],
+            primary_issue_ref=scope,
+        )
+        self._plan(record, settings)
+        assignment = record.plan.assignments[0]
+        self.assertLessEqual(len(assignment.task), 10_000)
+        self.assertEqual(assignment.task, long_text)
+        validated = TaskRecord.model_validate(record.model_dump(mode="json"))
+        self.assertEqual(validated.plan.assignments[0].task, long_text)
+
+    def test_copilot_assignment_task_empty_text_oversized_draft_truncates(self):
+        scope = {
+            "kind": "drafting",
+            "repository": VALID_REPO,
+            "packet": {"title": "Draft", "body": "B" * 12_000},
+        }
+        result = _copilot_assignment_task("", scope)
+        self.assertLessEqual(len(result), 10_000)
+        self.assertTrue(result.endswith("..."))
+        self.assertEqual(len(result), 10_000)
+
+    def test_copilot_assignment_task_short_text_preserves_exact_output(self):
+        scope = VALID_SCOPES["int_issue_number"]
+        result = _copilot_assignment_task("Implement the bounded change", scope)
+        self.assertEqual(
+            result,
+            "Implement the bounded change (issue #42, repo edwardjones3976/director-orchestrator, kind triage)",
+        )
+
