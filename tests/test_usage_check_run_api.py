@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from dataclasses import replace
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
@@ -86,6 +88,71 @@ class UsageCheckRunApiTests(unittest.TestCase):
         response, _ = self._request(plan)
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["status"], "busy")
+
+
+class ContactObservationsApiTests(unittest.TestCase):
+    """Additive WO-20261029-005 cases: the read-only contact-observations route."""
+
+    SIX_CONTACTS = (
+        "zai",
+        "github-copilot",
+        "firecrawl",
+        "antigravity-subscription-cli",
+        "grok-bot",
+        "zcode",
+    )
+
+    def _get(self, headers: dict | None, receipts_root):
+        test_settings = replace(main.settings, shared_secret="test-secret")
+        with (
+            patch.object(main, "settings", test_settings),
+            patch.object(
+                main.usage_monitor, "run_forever", new=AsyncMock(return_value=None)
+            ),
+            patch.object(main.engine, "run", new=AsyncMock(return_value=None)),
+            patch.object(main.store, "list_recoverable", return_value=[]),
+            patch(
+                "director_orchestrator.contact_observations.DEFAULT_RECEIPTS_ROOT",
+                receipts_root,
+            ),
+        ):
+            with TestClient(main.app) as client:
+                return client.get(
+                    "/v1/usage-checks/contact-observations", headers=headers
+                )
+
+    def test_authorized_get_returns_all_contacts_from_receipts_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            empty_root = Path(directory) / "receipts"
+            response = self._get(
+                {"Authorization": "Bearer test-secret"}, empty_root
+            )
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["freshness_window_days"], 7)
+            self.assertFalse(payload["receipts_root_present"])
+            records = {record["contact_id"]: record for record in payload["contacts"]}
+            self.assertEqual(tuple(records), self.SIX_CONTACTS)
+            for contact_id in self.SIX_CONTACTS:
+                with self.subTest(contact_id=contact_id):
+                    self.assertFalse(records[contact_id]["ready"])
+                    self.assertEqual(records[contact_id]["staleness"], "not-observed")
+                    self.assertEqual(records[contact_id]["task_result_state"], "not-observed")
+            # Observation-only Copilot: issues-only scope, nothing else claimed.
+            self.assertEqual(
+                records["github-copilot"]["permissions_state"], "recorded-issues-only"
+            )
+
+    def test_get_requires_authentication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            empty_root = Path(directory) / "receipts"
+            self.assertEqual(
+                self._get(None, empty_root).status_code, 401
+            )
+            self.assertEqual(
+                self._get({"Authorization": "Bearer wrong-secret"}, empty_root).status_code,
+                401,
+            )
 
 
 if __name__ == "__main__":

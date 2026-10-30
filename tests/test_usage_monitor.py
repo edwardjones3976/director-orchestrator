@@ -14,6 +14,7 @@
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | BEGIN]]
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from dataclasses import replace
@@ -1388,6 +1389,150 @@ class UsageMonitorTests(unittest.IsolatedAsyncioTestCase):
             records = await monitor.run_once(force=True, cycle_id="USAGE-FORGE00001")
             self.assertEqual(records, [])
             self.assertEqual(adapter.calls, 1)
+
+
+class ContactObservationsHealthTests(unittest.TestCase):
+    """Additive WO-20261029-005 cases: the separate contact_observations health section."""
+
+    PRE_EXISTING_HEALTH_KEYS = (
+        "enabled",
+        "paid_run_gate_open",
+        "gate_state",
+        "interval_minutes",
+        "providers",
+        "unsupported_providers",
+        "all_configured_have_recent_signal",
+        "all_configured_completion_verified",
+        "completion_verified_providers",
+        "pending_completion_providers",
+        "missing_or_stale_providers",
+        "accounting_day",
+        "daily_accounting",
+        "latest",
+    )
+    SIX_CONTACTS = (
+        "zai",
+        "github-copilot",
+        "firecrawl",
+        "antigravity-subscription-cli",
+        "grok-bot",
+        "zcode",
+    )
+    RECORD_FIELDS = (
+        "contact_id",
+        "provider_family",
+        "source",
+        "observed_at_utc",
+        "transport",
+        "account_scope",
+        "auth_state",
+        "quota_state",
+        "permissions_state",
+        "task_result_state",
+        "staleness",
+        "ready",
+        "note",
+    )
+
+    def test_health_keeps_existing_keys_and_adds_contact_observations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            settings = replace(
+                BOUNDED_SETTINGS, sqlite_path=str(Path(directory) / "tasks.sqlite3")
+            )
+            monitor = UsageMonitor(settings, TaskStore(settings.sqlite_path), adapters={})
+            health = monitor.health()
+            for key in self.PRE_EXISTING_HEALTH_KEYS:
+                self.assertIn(key, health)
+            section = health["contact_observations"]
+            for key in (
+                "description",
+                "freshness_window_days",
+                "receipts_root",
+                "receipts_root_present",
+                "contacts",
+            ):
+                self.assertIn(key, section)
+            self.assertEqual(
+                [record["contact_id"] for record in section["contacts"]],
+                list(self.SIX_CONTACTS),
+            )
+            for record in section["contacts"]:
+                with self.subTest(contact_id=record["contact_id"]):
+                    for field in self.RECORD_FIELDS:
+                        self.assertIn(field, record)
+
+    def test_supported_providers_and_interval_gates_are_unchanged(self):
+        from director_orchestrator.usage import (
+            MINIMUM_INTERVAL,
+            MINIMUM_INTERVAL_MINUTES,
+            SUPPORTED_PROVIDERS,
+        )
+
+        self.assertEqual(
+            SUPPORTED_PROVIDERS,
+            {"openai", "cursor", "claude", "gemini", "grok", "perplexity"},
+        )
+        self.assertTrue(set(self.SIX_CONTACTS).isdisjoint(SUPPORTED_PROVIDERS))
+        self.assertEqual(MINIMUM_INTERVAL, timedelta(minutes=15))
+        self.assertEqual(MINIMUM_INTERVAL_MINUTES, 15)
+
+    def test_gate_state_is_unchanged_and_contacts_never_become_probe_providers(self):
+        for enabled, paid, expected_gate in (
+            (False, True, "usage_disabled"),
+            (True, False, "paid_runs_disabled"),
+            (True, True, "open"),
+        ):
+            with self.subTest(expected_gate=expected_gate), tempfile.TemporaryDirectory() as directory:
+                settings = replace(
+                    BOUNDED_SETTINGS,
+                    usage_check_enabled=enabled,
+                    allow_paid_runs=paid,
+                    sqlite_path=str(Path(directory) / "tasks.sqlite3"),
+                )
+                monitor = UsageMonitor(settings, TaskStore(settings.sqlite_path), adapters={})
+                health = monitor.health()
+                self.assertEqual(health["gate_state"], expected_gate)
+                self.assertIn("contact_observations", health)
+                # Observations never widen the probe roster.
+                self.assertTrue(
+                    set(health["providers"]).issubset(
+                        {"openai", "cursor", "claude", "gemini", "grok", "perplexity"}
+                    )
+                )
+
+    def test_health_section_reflects_receipts_and_keeps_isolation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            lane = root / "zai"
+            lane.mkdir(parents=True)
+            finished = datetime.now(timezone.utc) - timedelta(hours=1)
+            (lane / "healthcheck.json").write_text(
+                json.dumps(
+                    {
+                        "provider": "zai",
+                        "status": "COMPLETED",
+                        "started_at": finished.strftime("%Y%m%dT%H%M%SZ"),
+                        "finished_at": finished.strftime("%Y%m%dT%H%M%SZ"),
+                        "exit_code": 0,
+                        "is_error": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            settings = replace(
+                BOUNDED_SETTINGS, sqlite_path=str(root / "tasks.sqlite3")
+            )
+            monitor = UsageMonitor(settings, TaskStore(settings.sqlite_path), adapters={})
+            with patch(
+                "director_orchestrator.contact_observations.DEFAULT_RECEIPTS_ROOT", root
+            ):
+                section = monitor.health()["contact_observations"]
+            records = {record["contact_id"]: record for record in section["contacts"]}
+            self.assertTrue(records["zai"]["ready"])
+            self.assertEqual(records["zai"]["staleness"], "fresh")
+            # ZCode never earns readiness from Z.ai API receipts.
+            self.assertFalse(records["zcode"]["ready"])
+            self.assertFalse(records["grok-bot"]["ready"])
 
 
 if __name__ == "__main__":
