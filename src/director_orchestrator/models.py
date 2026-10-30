@@ -453,7 +453,6 @@ class Assignment(BaseModel):
     discussion_round: int = Field(default=0, ge=0, le=3)
 
     @model_validator(mode="after")
-
     def default_first_rebuttal_round(self) -> Assignment:
         # Preserve v1 plan compatibility: rebuttals persisted before the explicit
         # round field existed are first-round turns.
@@ -464,6 +463,14 @@ class Assignment(BaseModel):
             self.discussion_round = 1
         return self
 
+    @model_serializer(mode="wrap")
+    def _omit_absent_issue_scope(self, handler):
+        # Assignment approvals and the primary plan digest hash this dump: an
+        # assignment without an issue scope keeps its exact pre-existing bytes.
+        data = handler(self)
+        if data.get("issue_scope", 0) is None:
+            del data["issue_scope"]
+        return data
 
     @property
     def github_issue(self) -> dict[str, Any] | None:

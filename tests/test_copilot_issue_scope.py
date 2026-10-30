@@ -1,5 +1,7 @@
+import copy
 from dataclasses import replace
 import json
+from pathlib import Path
 import unittest
 
 from unittest.mock import Mock, patch
@@ -7,8 +9,10 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from starlette.background import BackgroundTasks
 import director_orchestrator.main as main_module
+from director_orchestrator.approvals import _canonical_digest, assignment_approval_digest
+from director_orchestrator.packet_contracts import PacketContractError, build_replay_run, validate_packet
 from director_orchestrator.packet_routing import DirectorPacketTaskRouter, copilot_issue_context
-from director_orchestrator.models import ProviderName
+from director_orchestrator.models import Assignment, ProviderName
 
 from director_orchestrator.config import Settings
 from director_orchestrator.models import IntakeAuthentication, SlackIntake, TaskRecord, TaskStatus
@@ -197,6 +201,34 @@ VALID_SCOPES = {
                                          "drafting_packet": {"title": "Draft"}},
 }
 
+SCHEMAS = Path(__file__).parents[1] / "docs" / "schemas"
+# packet_contracts._verify_work_result_linkage compares exactly these members.
+LINKAGE_FIELDS = ("schema_version", "task_id", "assignment_id", "idempotency_key",
+                  "authority_snapshot_digest", "correlation")
+BASELINE_ASSIGNMENT = {
+    "sequence": 1,
+    "agent": "openai",
+    "kind": "general",
+    "workload_size": "simple",
+    "effort_points": 1,
+    "retry_limit": 3,
+    "allocation_profile": "engineering",
+    "primary_provider_lane": None,
+    "model_label": None,
+    "task": "Implement the bounded change",
+    "acceptance": ["Tests pass"],
+    "public_research_query": None,
+    "antigravity_directive": None,
+    "repository": "owner/repository",
+    "starting_ref": "main",
+    "depends_on": [],
+    "requires_approval": False,
+    "allow_draft_pr": False,
+    "estimated_cost_usd": 0.25,
+    "discussion_phase": "work",
+    "discussion_round": 0,
+}
+
 
 class SharedIssueScopeParityTests(unittest.TestCase):
     """The same 27 invalid and 5 valid scopes the dispatch guard is tested with."""
@@ -353,6 +385,92 @@ class IntakeIssueScopeTests(unittest.TestCase):
 
         packet = router.planned_work_packet(record, assignment)
         self.assertIsNone(packet["correlation"]["github_issue"])
+
+    def _copilot_work_packet(self, scope):
+        settings = self._settings()
+        record = self._record(settings, primary_required_capabilities=["github_issue_work"],
+                              primary_issue_ref=scope)
+        self._plan(record, settings)
+        return self._router().planned_work_packet(record, record.plan.assignments[0])
+
+    @staticmethod
+    def _matching_result(work):
+        result = json.loads((SCHEMAS / "model-result-packet-v1.example.json").read_text(encoding="utf-8"))
+        for field in LINKAGE_FIELDS:
+            result[field] = copy.deepcopy(work[field])
+        return result
+
+    def test_copilot_result_packet_links_to_its_structured_work_packet(self):
+        for name, scope in sorted(VALID_SCOPES.items()):
+            with self.subTest(name=name):
+                work = self._copilot_work_packet(scope)
+                self.assertIsInstance(work["correlation"]["github_issue"], dict)
+                result = self._matching_result(work)
+                validate_packet("result", result)
+                replay = build_replay_run(work, result)
+                self.assertEqual(copilot_issue_context(scope),
+                                 replay["result_packet"]["correlation"]["github_issue"])
+                # Member order is not identity: RFC 8785 bytes are compared.
+                reordered = dict(reversed(list(result["correlation"]["github_issue"].items())))
+                result["correlation"]["github_issue"] = reordered
+                build_replay_run(work, result)
+
+    def test_copilot_result_packet_with_a_different_github_issue_is_refused(self):
+        work = self._copilot_work_packet(VALID_SCOPES["int_issue_number"])
+        context = work["correlation"]["github_issue"]
+        mismatches = {
+            "null": None,
+            "string_reference": context["issue_reference"],
+            "other_issue": {**context, "issue_reference": "43"},
+            "other_repository": {**context, "repository": "owner/other"},
+            "extra_member": {**context, "extra": ""},
+            "missing_member": {k: v for k, v in context.items() if k != "labels"},
+        }
+        for name, github_issue in sorted(mismatches.items()):
+            with self.subTest(name=name):
+                result = self._matching_result(work)
+                result["correlation"]["github_issue"] = github_issue
+                validate_packet("result", result)
+                with self.assertRaisesRegex(PacketContractError, "linkage mismatch: correlation"):
+                    build_replay_run(work, result)
+
+    def test_correlation_linkage_does_not_treat_true_as_one(self):
+        work = self._copilot_work_packet(VALID_SCOPES["int_issue_number"])
+        work["correlation"]["github_issue"]["flag"] = 1
+        result = self._matching_result(work)
+        result["correlation"]["github_issue"]["flag"] = True
+        with self.assertRaisesRegex(PacketContractError, "linkage mismatch: correlation"):
+            build_replay_run(work, result)
+
+    def test_result_schema_still_accepts_string_and_null_github_issue(self):
+        result = json.loads((SCHEMAS / "model-result-packet-v1.example.json").read_text(encoding="utf-8"))
+        for github_issue in (None, "42"):
+            with self.subTest(github_issue=github_issue):
+                result["correlation"]["github_issue"] = github_issue
+                validate_packet("result", result)
+
+    def test_assignment_without_issue_scope_keeps_its_baseline_bytes(self):
+        # Every Assignment field as fe25119 serialized it: no issue_scope member.
+        assignment = Assignment.model_validate(BASELINE_ASSIGNMENT)
+        self.assertEqual(BASELINE_ASSIGNMENT, assignment.model_dump(mode="json"))
+        self.assertEqual(_canonical_digest(BASELINE_ASSIGNMENT), assignment_approval_digest(assignment))
+
+        settings = self._settings()
+        record = self._record(settings)
+        self._plan(record, settings)
+        dumped = record.plan.model_dump(mode="json")
+        self.assertTrue(dumped["assignments"])
+        for item in dumped["assignments"]:
+            self.assertNotIn("issue_scope", item)
+        self.assertEqual(dumped, type(record.plan).model_validate(dumped).model_dump(mode="json"))
+
+    def test_assignment_with_issue_scope_serializes_it(self):
+        scope = VALID_SCOPES["int_issue_number"]
+        assignment = Assignment.model_validate({**BASELINE_ASSIGNMENT, "issue_scope": scope})
+        dumped = assignment.model_dump(mode="json")
+        self.assertEqual(scope, dumped["issue_scope"])
+        self.assertEqual(assignment, Assignment.model_validate(dumped))
+        self.assertNotEqual(_canonical_digest(BASELINE_ASSIGNMENT), assignment_approval_digest(assignment))
 
     def test_legacy_engine_refuses_primary_issue_ref_with_409(self):
         record = self._record(
