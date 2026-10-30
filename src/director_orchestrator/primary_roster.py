@@ -83,6 +83,53 @@ def lanes_requiring_cost_rank(pool: Sequence[str] | frozenset[str] | set[str]) -
     )
 
 
+ALLOWED_COPILOT_ISSUE_KINDS = frozenset({
+    "triage",
+    "investigation",
+    "reproduction_planning",
+    "evidence",
+    "drafting",
+    "tracking",
+})
+
+
+@dataclass(frozen=True)
+class IssueRef:
+    repository: str
+    issue_number: int | None = None
+    kind: str | None = None
+    packet: Mapping[str, object] | None = None
+
+
+def is_valid_issue_ref(issue_ref: object) -> bool:
+    if isinstance(issue_ref, IssueRef):
+        repo = issue_ref.repository
+        num = issue_ref.issue_number
+        kind = issue_ref.kind
+        packet = issue_ref.packet
+    elif isinstance(issue_ref, Mapping):
+        repo = issue_ref.get("repository") or issue_ref.get("repo")
+        num = issue_ref.get("issue_number") or issue_ref.get("issue") or issue_ref.get("issue_reference")
+        kind = issue_ref.get("kind")
+        packet = issue_ref.get("packet") or issue_ref.get("drafting_packet")
+    else:
+        return False
+
+    if not isinstance(repo, str) or not repo.strip():
+        return False
+    if kind is not None and kind not in ALLOWED_COPILOT_ISSUE_KINDS:
+        return False
+    if isinstance(num, int) and num > 0:
+        return True
+    if isinstance(num, str) and num.strip().isdigit() and int(num.strip()) > 0:
+        return True
+    if packet is not None and isinstance(packet, Mapping) and len(packet) > 0:
+        return True
+    if kind == "drafting":
+        return True
+    return False
+
+
 @dataclass(frozen=True)
 class PrimaryRoster:
     producer: str
@@ -93,12 +140,15 @@ class PrimaryRoster:
 def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
                           required_capabilities: Sequence[str] = (),
                           public_research_query: str | None = None,
+                          issue_ref: IssueRef | Mapping[str, object] | None = None,
+                          issue_scope: IssueRef | Mapping[str, object] | None = None,
                           trusted_cost_ranks: Mapping[str, int],
                           allocation_profile: str = DEFAULT_ALLOCATION_PROFILE,
                           team_mode: bool = False,
                           director_provider: str = "openai") -> PrimaryRoster:
     targets = allocation_targets(allocation_profile)
     pool = set(available)
+    active_issue_ref = issue_ref if issue_ref is not None else issue_scope
     if pool - KNOWN_LANES:
         raise PrimaryRosterHold("primary_inventory_unknown_identity")
     if not core_inventory_ready(available, director_provider=director_provider):
@@ -107,8 +157,19 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
         # Enterprise targets exist, but the default graph has no scoped enterprise
         # production adapter. A capability request cannot grant tenant access.
         raise PrimaryRosterHold("primary_enterprise_scoped_adapter_required")
-    if set(required_capabilities) - {"public_research", "enterprise_context", "bounded_scaffolding", "repository_assistance"}:
+    allowed_caps = {
+        "public_research",
+        "enterprise_context",
+        "bounded_scaffolding",
+        "repository_assistance",
+        "github_issue_work",
+    }
+    if set(required_capabilities) - allowed_caps:
         raise PrimaryRosterHold("primary_task_capability_unknown")
+    has_issue_cap = "github_issue_work" in required_capabilities
+    if has_issue_cap:
+        if not active_issue_ref or not is_valid_issue_ref(active_issue_ref):
+            raise PrimaryRosterHold("primary_issue_scope_required")
     research = None
     if "public_research" in required_capabilities:
         if not public_research_query:
@@ -125,7 +186,7 @@ def select_primary_roster(*, available: Sequence[str], history: Sequence[str],
     def eligible_for(prior: Sequence[str], *, exclude: str | None = None):
         candidates = [lane for lane in IMPLEMENTERS if lane != exclude and lane in pool
                       and (lane != "antigravity" or team_mode or "bounded_scaffolding" in required_capabilities)
-                      and (lane != "github-copilot" or "repository_assistance" in required_capabilities)
+                      and (lane != "github-copilot" or (has_issue_cap and is_valid_issue_ref(active_issue_ref)))
                       and admission_reason(lane, prior, allocation_profile=allocation_profile) is None]
         if any(type(trusted_cost_ranks.get(lane)) is not int or trusted_cost_ranks[lane] < 0
                for lane in candidates):
