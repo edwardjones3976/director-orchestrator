@@ -336,30 +336,46 @@ def _json_evidence(
     is_error = payload.get("is_error") is True
     status = payload.get("status")
     status_text = status.strip().lower() if isinstance(status, str) else ""
-    if status_text:
-        # An explicit status always wins over the process exit code: every
-        # non-success status (FAILED_OR_AMBIGUOUS, error, failed, timed out,
-        # even an unresolved ATTEMPT_RESERVED) is a failure or an ambiguity,
-        # never a success (Codex review finding 2, 2026-10-30).
-        task_success: bool | None = status_text in _SUCCESS_STATUSES
-    elif is_error or (isinstance(exit_code, int) and exit_code != 0):
-        task_success = False
-    elif isinstance(exit_code, int) and exit_code == 0:
+    action = payload.get("action")
+    action_text = action.strip().lower() if isinstance(action, str) else ""
+    denied_commands = payload.get("denied_commands")
+    denial_diagnostic = payload.get("denial_diagnostic")
+    has_denials = bool(
+        (isinstance(denied_commands, list) and denied_commands) or denial_diagnostic
+    )
+
+    # Failure precedence (Codex review finding 2, 2026-10-30): explicit
+    # failure signals (is_error, non-zero exit code, non-success status, or
+    # Antigravity command denials) take precedence over any success signal.
+    # Success requires a success status (or, where no status field exists,
+    # exit 0) AND no failure signal.
+    if (
+        is_error
+        or (isinstance(exit_code, int) and exit_code != 0)
+        or (status_text and status_text not in _SUCCESS_STATUSES)
+        or has_denials
+    ):
+        task_success: bool | None = False
+    elif status_text or (isinstance(exit_code, int) and exit_code == 0):
+        # A success status exists (and no failure signal was present), or
+        # no status field exists and exit 0 indicates success.
         task_success = True
     else:
         # A dated receipt with no task-outcome fields certifies no task result.
         task_success = None
-    denied_commands = payload.get("denied_commands")
-    denial_diagnostic = payload.get("denial_diagnostic")
-    if task_success is True and (
-        (isinstance(denied_commands, list) and denied_commands) or denial_diagnostic
-    ):
-        # Antigravity receipts: a recorded denial, or an unresolved denial
-        # diagnostic, demotes a zero exit code to an explicit non-success —
-        # the producer fails these runs and ambiguity outranks exit codes.
-        task_success = False
+
     unconfirmed = False
-    if task_success is True and not isinstance(provider, str):
+    if task_success is True and (
+        action_text == "status"
+        or (spec.contact_id == "firecrawl" and not (isinstance(exit_code, int) and exit_code == 0))
+    ):
+        # Firecrawl action status check (Codex review finding 1, 2026-10-30):
+        # a status-only check (--status) returns exit 0 even when unauthenticated,
+        # so it never establishes authentication or readiness (at most observed-unconfirmed).
+        # Only task actions exercising the service with exit 0 count as success.
+        task_success = None
+        unconfirmed = True
+    elif task_success is True and not isinstance(provider, str):
         # A providerless receipt (the Antigravity CLI's agy-*.receipt.json)
         # records only the process exit code and denials; the producer also
         # fails runs with an empty response or denied actions, which this
@@ -425,10 +441,15 @@ def _match_shape(name: str, spec: ContactSpec) -> ReceiptShape | None:
     return None
 
 
-def _evidence_rank(evidence: _ReceiptEvidence) -> tuple[datetime, bool, str]:
-    """Selection order: newest first, then certified outcomes, then a stable name."""
+def _evidence_rank(evidence: _ReceiptEvidence) -> tuple[datetime, bool, bool, str]:
+    """Selection order: newest first, then certified outcomes, then structured over text, then a stable name."""
 
-    return (evidence.observed_at, evidence.task_success is not None, evidence.path.name)
+    return (
+        evidence.observed_at,
+        evidence.task_success is not None,
+        evidence.path.suffix != ".txt",
+        evidence.path.name,
+    )
 
 
 def _latest_evidence(

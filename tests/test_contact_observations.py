@@ -445,6 +445,47 @@ class NegativeEvidenceTests(unittest.TestCase):
                 self.assertNotEqual(record.auth_state, ContactAuthState.OBSERVED_AUTHENTICATED)
                 self.assertFalse(record.ready)
 
+    def test_failure_signals_override_completed_status(self):
+        # Failure precedence (Codex review finding 2, 2026-10-30): explicit
+        # failure signals outrank a success status text.
+        for extra in (
+            {"exit_code": 1, "is_error": False},
+            {"exit_code": 0, "is_error": True},
+            {"exit_code": 1, "is_error": True},
+        ):
+            with self.subTest(extra=extra), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                path = _write_json(
+                    root,
+                    "zai",
+                    "failure_precedence.json",
+                    _json_receipt(
+                        "zai",
+                        finished=NOW - timedelta(hours=1),
+                        status="COMPLETED",
+                        **extra,
+                    ),
+                )
+                record = contact_observation("zai", receipts_root=root, now=NOW)
+                self.assertEqual(record.source, str(path))
+                self.assertEqual(record.staleness, ContactObservationStaleness.FRESH)
+                self.assertEqual(record.task_result_state, ContactTaskResultState.OBSERVED_FAILURE)
+                self.assertNotEqual(record.auth_state, ContactAuthState.OBSERVED_AUTHENTICATED)
+                self.assertFalse(record.ready)
+
+    def test_firecrawl_status_action_with_zero_exit_is_not_authenticated_and_not_ready(self):
+        # Firecrawl action status check (Codex review finding 1, 2026-10-30):
+        # a status-only check never establishes authentication or readiness.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            receipt, _ = _write_firecrawl(root, NOW - timedelta(hours=1), action="status", exit_code=0)
+            record = contact_observation("firecrawl", receipts_root=root, now=NOW)
+            self.assertEqual(record.source, str(receipt))
+            self.assertEqual(record.staleness, ContactObservationStaleness.FRESH)
+            self.assertNotEqual(record.auth_state, ContactAuthState.OBSERVED_AUTHENTICATED)
+            self.assertEqual(record.task_result_state, ContactTaskResultState.OBSERVED_UNCONFIRMED)
+            self.assertFalse(record.ready)
+
 
 class MissingAndStaleTests(unittest.TestCase):
     """Acceptance (C): missing evidence is not-observed; expired receipts are stale."""
