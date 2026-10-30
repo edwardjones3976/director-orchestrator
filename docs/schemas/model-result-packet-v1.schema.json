@@ -69,7 +69,8 @@
         "github_issue": {
           "type": [
             "string",
-            "null"
+            "null",
+            "object"
           ]
         },
         "github_pull_request": {

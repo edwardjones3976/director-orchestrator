@@ -268,6 +268,10 @@ class UsageCheckStatus(StrEnum):
 
 
 MAX_SLACK_INTAKE_TEXT = 20_000
+MAX_PRIMARY_ISSUE_REF_JSON = 4_000
+# Capabilities only a single task can request: each needs per-task scope (an
+# issue reference), so deployment configuration never offers them.
+PER_TASK_PRIMARY_CAPABILITIES = ("github_issue_work",)
 
 
 class PrimaryCommitteeDebate(BaseModel):
@@ -325,19 +329,48 @@ class SlackIntake(BaseModel):
     user_id: str = Field(min_length=1, max_length=64)
     text: str = Field(min_length=1, max_length=MAX_SLACK_INTAKE_TEXT)
     allocation_profile: Literal["engineering", "mixed", "public_research", "enterprise"] = "engineering"
-    primary_required_capabilities: tuple[Literal["public_research", "enterprise_context", "bounded_scaffolding", "repository_assistance"], ...] = Field(default=(), max_length=4)
+    primary_required_capabilities: tuple[Literal["public_research", "enterprise_context", "bounded_scaffolding", "repository_assistance", "github_issue_work"], ...] = Field(default=(), max_length=4)
     primary_public_research_query: str | None = Field(default=None, min_length=1, max_length=500)
+    # The typed GitHub issue scope `github_issue_work` needs; it is per task, so
+    # deployment configuration cannot request that capability. The roster
+    # re-validates it with the same shared rules before selecting Copilot.
+    primary_issue_ref: dict[str, Any] | None = None
     primary_committee_debate: PrimaryCommitteeDebate | None = None
     permalink: str | None = Field(default=None, max_length=2_000)
     received_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    @field_validator("primary_issue_ref")
+    @classmethod
+    def _typed_issue_ref(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        from .primary_roster import issue_scope_error
+
+        error = issue_scope_error(value)
+        if error:
+            raise ValueError(f"primary_issue_ref is invalid: {error}")
+        try:
+            encoded = json.dumps(value, sort_keys=True)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("primary_issue_ref must be JSON-serializable") from exc
+        if len(encoded) > MAX_PRIMARY_ISSUE_REF_JSON:
+            raise ValueError(f"primary_issue_ref exceeds {MAX_PRIMARY_ISSUE_REF_JSON} characters")
+        return value
+
+    @model_validator(mode="after")
+    def _issue_ref_needs_issue_capability(self) -> SlackIntake:
+        if self.primary_issue_ref is not None and "github_issue_work" not in self.primary_required_capabilities:
+            raise ValueError("primary_issue_ref requires the github_issue_work capability")
+        return self
+
     @model_serializer(mode="wrap")
     def _omit_absent_committee_debate(self, handler):
         # Attestations, approvals and phase digests hash this dump: an intake
-        # without an invitation keeps its exact pre-existing bytes.
+        # without an invitation or issue scope keeps its exact pre-existing bytes.
         data = handler(self)
-        if data.get("primary_committee_debate", 0) is None:
-            del data["primary_committee_debate"]
+        for optional in ("primary_issue_ref", "primary_committee_debate"):
+            if data.get(optional, 0) is None:
+                del data[optional]
         return data
 
 
@@ -407,6 +440,7 @@ class Assignment(BaseModel):
     # and `acceptance` stay for the Director's own review and the owner's Slack
     # thread; they are never transmitted to Antigravity.
     antigravity_directive: AntigravityDirective | None = None
+    issue_scope: dict[str, Any] | None = None
     repository: str | None = Field(default=None, max_length=2_000)
     starting_ref: str = Field(default="main", min_length=1, max_length=255)
     depends_on: list[int] = Field(default_factory=list, max_length=20)
@@ -428,6 +462,19 @@ class Assignment(BaseModel):
         ):
             self.discussion_round = 1
         return self
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_issue_scope(self, handler):
+        # Assignment approvals and the primary plan digest hash this dump: an
+        # assignment without an issue scope keeps its exact pre-existing bytes.
+        data = handler(self)
+        if data.get("issue_scope", 0) is None:
+            del data["issue_scope"]
+        return data
+
+    @property
+    def github_issue(self) -> dict[str, Any] | None:
+        return self.issue_scope
 
 
 class DebateInitialPosition(BaseModel):

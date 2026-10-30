@@ -1,0 +1,526 @@
+import copy
+from dataclasses import replace
+import json
+from pathlib import Path
+import unittest
+
+from unittest.mock import Mock, patch
+from fastapi import HTTPException
+from pydantic import ValidationError
+from starlette.background import BackgroundTasks
+import director_orchestrator.main as main_module
+from director_orchestrator.approvals import _canonical_digest, assignment_approval_digest
+from director_orchestrator.packet_contracts import PacketContractError, build_replay_run, validate_packet
+from director_orchestrator.packet_routing import DirectorPacketTaskRouter, copilot_issue_context
+from director_orchestrator.models import Assignment, ProviderName
+
+from director_orchestrator.config import Settings
+from director_orchestrator.models import IntakeAuthentication, SlackIntake, TaskRecord, TaskStatus
+from director_orchestrator.policy import preview_plan
+from director_orchestrator.primary_default import _copilot_assignment_task, _live_parallel_plan
+from director_orchestrator.primary_roster import (
+    ALLOWED_COPILOT_ISSUE_KINDS,
+    IssueRef,
+    PrimaryRosterHold,
+    is_valid_issue_ref,
+    issue_scope_error,
+    select_primary_roster,
+)
+
+
+class CopilotIssueScopeTests(unittest.TestCase):
+    ENTERPRISE_IN_BAND = ("openai",) * 4 + ("claude",) * 5
+
+    def select(self, **kw):
+        args = dict(
+            available=("openai", "claude", "cursor", "github-copilot"),
+            allocation_profile="enterprise",
+            history=self.ENTERPRISE_IN_BAND,
+            trusted_cost_ranks={"openai": 4, "claude": 3, "cursor": 2, "github-copilot": 0},
+        )
+        args.update(kw)
+        return select_primary_roster(**args)
+
+    def test_copilot_refused_without_explicit_issue_scope(self):
+        # Even with lowest cost rank (0), Copilot is never selected without explicit issue scope
+        roster = self.select()
+        self.assertNotEqual(roster.producer, "github-copilot")
+        self.assertIn(roster.producer, {"openai", "claude", "cursor"})
+
+    def test_copilot_refused_for_repository_assistance_alone(self):
+        # repository_assistance alone does not grant issue scope and cannot select Copilot
+        roster = self.select(required_capabilities=("repository_assistance",))
+        self.assertNotEqual(roster.producer, "github-copilot")
+        self.assertIn(roster.producer, {"openai", "claude", "cursor"})
+
+    def test_copilot_requires_issue_ref_when_issue_scope_requested(self):
+        # github_issue_work without issue_ref raises PrimaryRosterHold
+        with self.assertRaisesRegex(PrimaryRosterHold, "issue_scope"):
+            self.select(required_capabilities=("github_issue_work",))
+
+        # Empty dict or invalid issue_ref raises PrimaryRosterHold
+        with self.assertRaisesRegex(PrimaryRosterHold, "issue_scope"):
+            self.select(required_capabilities=("github_issue_work",), issue_ref={})
+
+        with self.assertRaisesRegex(PrimaryRosterHold, "issue_scope"):
+            self.select(
+                required_capabilities=("github_issue_work",),
+                issue_ref={"repository": "", "issue_number": 1},
+            )
+
+        with self.assertRaisesRegex(PrimaryRosterHold, "issue_scope"):
+            self.select(
+                required_capabilities=("github_issue_work",),
+                issue_ref={"repository": "owner/repo", "issue_number": -1},
+            )
+
+        with self.assertRaisesRegex(PrimaryRosterHold, "issue_scope"):
+            self.select(
+                required_capabilities=("github_issue_work",),
+                issue_ref={"repository": "owner/repo", "kind": "unsupported_kind", "issue_number": 1},
+            )
+
+    def test_copilot_selected_for_all_allowed_issue_kinds(self):
+        for kind in ALLOWED_COPILOT_ISSUE_KINDS:
+            with self.subTest(kind=kind):
+                # drafting needs a typed packet; every other kind needs the issue number.
+                packet = {"title": "Draft"} if kind == "drafting" else None
+                issue_ref = IssueRef(repository="owner/repo", issue_number=42, kind=kind, packet=packet)
+                roster = self.select(
+                    required_capabilities=("github_issue_work",),
+                    issue_ref=issue_ref,
+                )
+                self.assertEqual(roster.producer, "github-copilot")
+                self.assertIn(roster.reviewer, {"openai", "claude", "cursor", "grok"})
+
+    def test_copilot_selected_with_dict_issue_ref_and_drafting_packet(self):
+        # Dict issue_ref with issue number
+        roster = self.select(
+            required_capabilities=("github_issue_work",),
+            issue_ref={"repository": "owner/repo", "issue_number": 101, "kind": "triage"},
+        )
+        self.assertEqual(roster.producer, "github-copilot")
+
+        # Dict issue_ref for drafting without issue number
+        roster_draft = self.select(
+            required_capabilities=("github_issue_work",),
+            issue_ref={
+                "repository": "owner/repo",
+                "kind": "drafting",
+                "packet": {"title": "New issue draft", "body": "Details"},
+            },
+        )
+        self.assertEqual(roster_draft.producer, "github-copilot")
+
+    def test_other_lanes_selection_unchanged_versus_baseline(self):
+        # Baseline standard selection without issue scope; derived from baseline fe25119 behavior
+        standard = self.select(
+            available=("openai", "claude", "cursor", "grok"),
+            history=(),
+            trusted_cost_ranks={"openai": 0, "claude": 2, "cursor": 1, "grok": 3},
+        )
+        self.assertEqual((standard.producer, standard.reviewer), ("openai", "claude"))
+
+    def test_is_valid_issue_ref_edge_cases(self):
+        self.assertFalse(is_valid_issue_ref(None))
+        self.assertFalse(is_valid_issue_ref("string_not_mapping"))
+        self.assertFalse(is_valid_issue_ref({"repo": "owner/repo"}))
+        # kind is required; a bare repository plus number is not a typed scope.
+        self.assertFalse(is_valid_issue_ref({"repo": "owner/repo", "issue": 1}))
+        self.assertFalse(is_valid_issue_ref(IssueRef(repository="owner/repo", issue_number=1)))
+        self.assertTrue(is_valid_issue_ref({"repo": "owner/repo", "issue": 1, "kind": "triage"}))
+        self.assertTrue(is_valid_issue_ref(IssueRef(repository="owner/repo", issue_number=1, kind="triage")))
+        self.assertTrue(
+            is_valid_issue_ref(IssueRef(repository="owner/repo", kind="drafting", packet={"title": "test"}))
+        )
+        # Explicit None is the same as absent.
+        self.assertTrue(is_valid_issue_ref(
+            {"repository": "owner/repo", "kind": "drafting", "issue_number": None, "packet": {"title": "t"}}))
+        self.assertFalse(is_valid_issue_ref(IssueRef(repository="owner/repo", kind="drafting")))
+        self.assertFalse(is_valid_issue_ref(IssueRef(repository="owner/repo", issue_number=True, kind="triage")))
+
+    def test_selection_holds_on_each_invalid_shared_scope(self):
+        for name, scope in sorted(INVALID_SCOPES.items()):
+            with self.subTest(name=name), self.assertRaisesRegex(PrimaryRosterHold, "primary_issue_scope_required"):
+                self.select(required_capabilities=("github_issue_work",), issue_ref=scope)
+
+    def test_selection_admits_copilot_for_each_valid_shared_scope(self):
+        for name, scope in sorted(VALID_SCOPES.items()):
+            with self.subTest(name=name):
+                roster = self.select(required_capabilities=("github_issue_work",), issue_ref=scope)
+                self.assertEqual(roster.producer, "github-copilot")
+
+    def test_issue_ref_and_issue_scope_together_hold(self):
+        scope = VALID_SCOPES["int_issue_number"]
+        with self.assertRaisesRegex(PrimaryRosterHold, "primary_issue_scope_required"):
+            self.select(required_capabilities=("github_issue_work",), issue_ref=scope, issue_scope=scope)
+
+
+# Copied verbatim from the provider-dispatch staging tests/test_copilot_guard.py
+# (WO-20261029-004): the roster and dispatch_guard.copilot_issue_scope_error must
+# accept and refuse exactly the same scopes.
+VALID_REPO = "edwardjones3976/director-orchestrator"
+INVALID_SCOPES = {
+    "not_a_mapping": ["investigation", VALID_REPO, 42],
+    "bool_issue_number": {"kind": "investigation", "repository": VALID_REPO, "issue_number": True},
+    "false_issue_number": {"kind": "investigation", "repository": VALID_REPO, "issue_number": False},
+    "zero_issue_number": {"kind": "investigation", "repository": VALID_REPO, "issue_number": 0},
+    "negative_issue_number": {"kind": "investigation", "repository": VALID_REPO, "issue_number": -5},
+    "negative_numeric_string": {"kind": "investigation", "repository": VALID_REPO, "issue_reference": "-5"},
+    "zero_string": {"kind": "investigation", "repository": VALID_REPO, "issue_reference": "0"},
+    "non_numeric_string": {"kind": "investigation", "repository": VALID_REPO, "issue_reference": "issue-42"},
+    "padded_numeric_string": {"kind": "investigation", "repository": VALID_REPO, "issue_reference": " 42 "},
+    "unicode_digit_string": {"kind": "investigation", "repository": VALID_REPO, "issue_reference": "²"},
+    "float_issue_number": {"kind": "investigation", "repository": VALID_REPO, "issue_number": 42.0},
+    "repository_without_owner": {"kind": "investigation", "repository": "director-orchestrator", "issue_number": 42},
+    "repository_with_extra_segment": {"kind": "investigation", "repository": "a/b/c", "issue_number": 42},
+    "repository_with_space": {"kind": "investigation", "repository": "owner/my repo", "issue_number": 42},
+    "repository_trailing_newline": {"kind": "investigation", "repository": VALID_REPO + "\n", "issue_number": 42},
+    "repository_not_string": {"kind": "investigation", "repository": ["owner/name"], "issue_number": 42},
+    "kind_missing": {"repository": VALID_REPO, "issue_number": 42},
+    "kind_unknown": {"kind": "coding", "repository": VALID_REPO, "issue_number": 42},
+    "drafting_without_packet": {"kind": "drafting", "repository": VALID_REPO},
+    "drafting_with_only_issue_number": {"kind": "drafting", "repository": VALID_REPO, "issue_number": 42},
+    "drafting_packet_truthy_string": {"kind": "drafting", "repository": VALID_REPO, "packet": "draft it"},
+    "drafting_packet_without_title": {"kind": "drafting", "repository": VALID_REPO, "packet": {"body": "b"}},
+    "drafting_packet_empty_title": {"kind": "drafting", "repository": VALID_REPO, "packet": {"title": "  "}},
+    "drafting_packet_title_not_string": {"kind": "drafting", "repository": VALID_REPO, "packet": {"title": 7}},
+    "drafting_with_invalid_issue_number": {"kind": "drafting", "repository": VALID_REPO, "issue_number": -1,
+                                           "packet": {"title": "t"}},
+    "ambiguous_issue_aliases": {"kind": "investigation", "repository": VALID_REPO, "issue_number": 42,
+                                "issue_reference": "43"},
+    "ambiguous_repository_aliases": {"kind": "investigation", "repository": VALID_REPO, "repo": "x/y",
+                                     "issue_number": 42},
+}
+VALID_SCOPES = {
+    "int_issue_number": {"kind": "triage", "repository": VALID_REPO, "issue_number": 42},
+    "numeric_string": {"kind": "evidence", "repository": VALID_REPO, "issue_reference": "42"},
+    "repo_alias": {"kind": "tracking", "repo": "a.b_c-d/e.f_g-h", "issue": 1},
+    "drafting_packet": {"kind": "drafting", "repository": VALID_REPO, "packet": {"title": "Draft"}},
+    "drafting_packet_alias_with_issue": {"kind": "drafting", "repository": VALID_REPO, "issue_number": 7,
+                                         "drafting_packet": {"title": "Draft"}},
+}
+
+SCHEMAS = Path(__file__).parents[1] / "docs" / "schemas"
+# packet_contracts._verify_work_result_linkage compares exactly these members.
+LINKAGE_FIELDS = ("schema_version", "task_id", "assignment_id", "idempotency_key",
+                  "authority_snapshot_digest", "correlation")
+BASELINE_ASSIGNMENT = {
+    "sequence": 1,
+    "agent": "openai",
+    "kind": "general",
+    "workload_size": "simple",
+    "effort_points": 1,
+    "retry_limit": 3,
+    "allocation_profile": "engineering",
+    "primary_provider_lane": None,
+    "model_label": None,
+    "task": "Implement the bounded change",
+    "acceptance": ["Tests pass"],
+    "public_research_query": None,
+    "antigravity_directive": None,
+    "repository": "owner/repository",
+    "starting_ref": "main",
+    "depends_on": [],
+    "requires_approval": False,
+    "allow_draft_pr": False,
+    "estimated_cost_usd": 0.25,
+    "discussion_phase": "work",
+    "discussion_round": 0,
+}
+
+
+class SharedIssueScopeParityTests(unittest.TestCase):
+    """The same 27 invalid and 5 valid scopes the dispatch guard is tested with."""
+
+    def test_table_size_matches_the_guard_table(self):
+        self.assertEqual((27, 5), (len(INVALID_SCOPES), len(VALID_SCOPES)))
+
+    def test_roster_validator_refuses_every_invalid_scope(self):
+        for name, scope in sorted(INVALID_SCOPES.items()):
+            with self.subTest(name=name):
+                self.assertIsNotNone(issue_scope_error(scope))
+                self.assertFalse(is_valid_issue_ref(scope))
+
+    def test_roster_validator_accepts_every_valid_scope(self):
+        for name, scope in sorted(VALID_SCOPES.items()):
+            with self.subTest(name=name):
+                self.assertIsNone(issue_scope_error(scope))
+                self.assertTrue(is_valid_issue_ref(scope))
+
+
+class IntakeIssueScopeTests(unittest.TestCase):
+    """Production intake carries a typed issue scope through to roster selection."""
+
+    COST_RANKS = '{"openai":5,"claude":4,"cursor":3,"grok":6,"github-copilot":1}'
+    AVAILABLE = ("openai", "claude", "cursor", "github-copilot")
+
+    def _record(self, settings, **intake_fields):
+        intake = SlackIntake.model_validate_json(json.dumps({
+            "source_event_id": "issue-scope-event",
+            "channel_id": "C0BAV9CMC80",
+            "user_id": "U123",
+            "text": "Implement the bounded change",
+            "thread_ts": "1787450001.123456",
+            "allocation_profile": "enterprise",
+            **intake_fields,
+        }))
+        record = TaskRecord(task_id="DIR-LG-ISSUESCOPE", status=TaskStatus.QUEUED, intake=intake,
+                            intake_authentication=IntakeAuthentication.BEARER_DRY_RUN)
+        record.plan = preview_plan(intake.text, settings)
+        return record
+
+    def _settings(self):
+        return replace(Settings(), repository_allowlist=("owner/repository",),
+                       trusted_provider_cost_ranks_json=self.COST_RANKS)
+
+    def _plan(self, record, settings):
+        _live_parallel_plan(record, settings, available=self.AVAILABLE,
+                            history=CopilotIssueScopeTests.ENTERPRISE_IN_BAND)
+        return record.plan.assignments[0].primary_provider_lane
+
+    def test_intake_with_valid_issue_scope_selects_copilot(self):
+        settings = self._settings()
+        for name, scope in sorted(VALID_SCOPES.items()):
+            with self.subTest(name=name):
+                record = self._record(settings, primary_required_capabilities=["github_issue_work"],
+                                      primary_issue_ref=scope)
+                self.assertEqual(scope, record.intake.primary_issue_ref)
+                self.assertEqual("github-copilot", self._plan(record, settings))
+
+    def test_intake_without_issue_scope_does_not_select_copilot(self):
+        settings = self._settings()
+        self.assertNotEqual("github-copilot", self._plan(self._record(settings), settings))
+        record = self._record(settings, primary_required_capabilities=["repository_assistance"])
+        self.assertNotEqual("github-copilot", self._plan(record, settings))
+        # The capability without a scope holds before dispatch rather than selecting Copilot.
+        record = self._record(settings, primary_required_capabilities=["github_issue_work"])
+        with self.assertRaisesRegex(PrimaryRosterHold, "primary_issue_scope_required"):
+            self._plan(record, settings)
+
+    def test_intake_refuses_each_invalid_issue_scope(self):
+        settings = self._settings()
+        for name, scope in sorted(INVALID_SCOPES.items()):
+            with self.subTest(name=name), self.assertRaises(ValidationError):
+                self._record(settings, primary_required_capabilities=["github_issue_work"],
+                             primary_issue_ref=scope)
+
+    def test_intake_refuses_issue_scope_without_the_capability(self):
+        with self.assertRaisesRegex(ValidationError, "requires the github_issue_work capability"):
+            self._record(self._settings(), primary_issue_ref=VALID_SCOPES["int_issue_number"])
+
+    def test_intake_without_issue_scope_keeps_its_serialized_bytes(self):
+        dumped = self._record(self._settings()).intake.model_dump()
+        self.assertNotIn("primary_issue_ref", dumped)
+
+    def _router(self):
+        adapter = Mock()
+        adapter.provider = "github-copilot"
+        adapter.allowed_tools = ("READ_REPOSITORY",)
+        adapter.allowed_external_effects = ()
+        adapter.model_label = None
+        adapter.workload_size = None
+        other_adapter = Mock()
+        other_adapter.provider = "openai"
+        other_adapter.allowed_tools = ("READ_REPOSITORY",)
+        other_adapter.allowed_external_effects = ()
+        other_adapter.model_label = None
+        other_adapter.workload_size = None
+        snapshots_mock = Mock()
+        snapshots_mock.resolve = Mock(
+            return_value=[
+                {"path": "README.md", "commit_sha": "0" * 40, "blob_sha": "1" * 40}
+            ]
+        )
+        return DirectorPacketTaskRouter(
+            authority_snapshots=snapshots_mock,
+            boundary_adapters={
+                "github-copilot": adapter,
+                "openai": other_adapter,
+                "claude": other_adapter,
+                "cursor": other_adapter,
+            },
+            writer_owner_id="test-writer",
+            writer_secret="test-secret",
+            timeout_seconds=300,
+        )
+
+    def test_copilot_assignment_and_worker_packet_end_to_end(self):
+        settings = self._settings()
+        router = self._router()
+        for name, scope in sorted(VALID_SCOPES.items()):
+            with self.subTest(name=name):
+                record = self._record(
+                    settings,
+                    primary_required_capabilities=["github_issue_work"],
+                    primary_issue_ref=scope,
+                )
+                self._plan(record, settings)
+                assignment = record.plan.assignments[0]
+
+                # Copilot assignment carries issue scope and repository from scope
+                self.assertEqual(assignment.primary_provider_lane, "github-copilot")
+                self.assertEqual(assignment.agent, ProviderName.GITHUB_COPILOT)
+                self.assertEqual(assignment.issue_scope, scope)
+                self.assertEqual(assignment.github_issue, scope)
+                expected_repo = scope.get("repository") or scope.get("repo")
+                self.assertEqual(assignment.repository, expected_repo)
+
+                # Worker packet correlation.github_issue matches staging dispatcher fields
+                packet = router.planned_work_packet(record, assignment)
+                expected_context = copilot_issue_context(scope)
+                self.assertEqual(packet["correlation"]["github_issue"], expected_context)
+                self.assertEqual(packet["repository"], expected_repo)
+
+    def test_worker_packet_without_issue_scope_has_no_copilot_and_null_github_issue(self):
+        settings = self._settings()
+        router = self._router()
+        record = self._record(settings)
+        self._plan(record, settings)
+        assignment = record.plan.assignments[0]
+
+        self.assertNotEqual(assignment.primary_provider_lane, "github-copilot")
+        self.assertIsNone(assignment.issue_scope)
+        self.assertIsNone(assignment.github_issue)
+
+        packet = router.planned_work_packet(record, assignment)
+        self.assertIsNone(packet["correlation"]["github_issue"])
+
+    def _copilot_work_packet(self, scope):
+        settings = self._settings()
+        record = self._record(settings, primary_required_capabilities=["github_issue_work"],
+                              primary_issue_ref=scope)
+        self._plan(record, settings)
+        return self._router().planned_work_packet(record, record.plan.assignments[0])
+
+    @staticmethod
+    def _matching_result(work):
+        result = json.loads((SCHEMAS / "model-result-packet-v1.example.json").read_text(encoding="utf-8"))
+        for field in LINKAGE_FIELDS:
+            result[field] = copy.deepcopy(work[field])
+        return result
+
+    def test_copilot_result_packet_links_to_its_structured_work_packet(self):
+        for name, scope in sorted(VALID_SCOPES.items()):
+            with self.subTest(name=name):
+                work = self._copilot_work_packet(scope)
+                self.assertIsInstance(work["correlation"]["github_issue"], dict)
+                result = self._matching_result(work)
+                validate_packet("result", result)
+                replay = build_replay_run(work, result)
+                self.assertEqual(copilot_issue_context(scope),
+                                 replay["result_packet"]["correlation"]["github_issue"])
+                # Member order is not identity: RFC 8785 bytes are compared.
+                reordered = dict(reversed(list(result["correlation"]["github_issue"].items())))
+                result["correlation"]["github_issue"] = reordered
+                build_replay_run(work, result)
+
+    def test_copilot_result_packet_with_a_different_github_issue_is_refused(self):
+        work = self._copilot_work_packet(VALID_SCOPES["int_issue_number"])
+        context = work["correlation"]["github_issue"]
+        mismatches = {
+            "null": None,
+            "string_reference": context["issue_reference"],
+            "other_issue": {**context, "issue_reference": "43"},
+            "other_repository": {**context, "repository": "owner/other"},
+            "extra_member": {**context, "extra": ""},
+            "missing_member": {k: v for k, v in context.items() if k != "labels"},
+        }
+        for name, github_issue in sorted(mismatches.items()):
+            with self.subTest(name=name):
+                result = self._matching_result(work)
+                result["correlation"]["github_issue"] = github_issue
+                validate_packet("result", result)
+                with self.assertRaisesRegex(PacketContractError, "linkage mismatch: correlation"):
+                    build_replay_run(work, result)
+
+    def test_correlation_linkage_does_not_treat_true_as_one(self):
+        work = self._copilot_work_packet(VALID_SCOPES["int_issue_number"])
+        work["correlation"]["github_issue"]["flag"] = 1
+        result = self._matching_result(work)
+        result["correlation"]["github_issue"]["flag"] = True
+        with self.assertRaisesRegex(PacketContractError, "linkage mismatch: correlation"):
+            build_replay_run(work, result)
+
+    def test_result_schema_still_accepts_string_and_null_github_issue(self):
+        result = json.loads((SCHEMAS / "model-result-packet-v1.example.json").read_text(encoding="utf-8"))
+        for github_issue in (None, "42"):
+            with self.subTest(github_issue=github_issue):
+                result["correlation"]["github_issue"] = github_issue
+                validate_packet("result", result)
+
+    def test_assignment_without_issue_scope_keeps_its_baseline_bytes(self):
+        # Every Assignment field as fe25119 serialized it: no issue_scope member.
+        assignment = Assignment.model_validate(BASELINE_ASSIGNMENT)
+        self.assertEqual(BASELINE_ASSIGNMENT, assignment.model_dump(mode="json"))
+        self.assertEqual(_canonical_digest(BASELINE_ASSIGNMENT), assignment_approval_digest(assignment))
+
+        settings = self._settings()
+        record = self._record(settings)
+        self._plan(record, settings)
+        dumped = record.plan.model_dump(mode="json")
+        self.assertTrue(dumped["assignments"])
+        for item in dumped["assignments"]:
+            self.assertNotIn("issue_scope", item)
+        self.assertEqual(dumped, type(record.plan).model_validate(dumped).model_dump(mode="json"))
+
+    def test_assignment_with_issue_scope_serializes_it(self):
+        scope = VALID_SCOPES["int_issue_number"]
+        assignment = Assignment.model_validate({**BASELINE_ASSIGNMENT, "issue_scope": scope})
+        dumped = assignment.model_dump(mode="json")
+        self.assertEqual(scope, dumped["issue_scope"])
+        self.assertEqual(assignment, Assignment.model_validate(dumped))
+        self.assertNotEqual(_canonical_digest(BASELINE_ASSIGNMENT), assignment_approval_digest(assignment))
+
+    def test_legacy_engine_refuses_primary_issue_ref_with_409(self):
+        record = self._record(
+            self._settings(),
+            primary_required_capabilities=["github_issue_work"],
+            primary_issue_ref=VALID_SCOPES["int_issue_number"],
+        )
+        with patch.object(main_module, "primary_default_activation", None):
+            with self.assertRaises(HTTPException) as cm:
+                main_module.intake(
+                    payload=record.intake,
+                    background=BackgroundTasks(),
+                )
+            self.assertEqual(cm.exception.status_code, 409)
+            self.assertIn("Issue-scoped requests require the LangGraph primary", cm.exception.detail)
+            self.assertIn("GitHub issue work is unavailable under legacy rollback", cm.exception.detail)
+
+    def test_copilot_assignment_task_10000_char_intake_round_trips(self):
+        settings = self._settings()
+        long_text = "x" * 10_000
+        scope = VALID_SCOPES["int_issue_number"]
+        record = self._record(
+            settings,
+            text=long_text,
+            primary_required_capabilities=["github_issue_work"],
+            primary_issue_ref=scope,
+        )
+        self._plan(record, settings)
+        assignment = record.plan.assignments[0]
+        self.assertLessEqual(len(assignment.task), 10_000)
+        self.assertEqual(assignment.task, long_text)
+        validated = TaskRecord.model_validate(record.model_dump(mode="json"))
+        self.assertEqual(validated.plan.assignments[0].task, long_text)
+
+    def test_copilot_assignment_task_empty_text_oversized_draft_truncates(self):
+        scope = {
+            "kind": "drafting",
+            "repository": VALID_REPO,
+            "packet": {"title": "Draft", "body": "B" * 12_000},
+        }
+        result = _copilot_assignment_task("", scope)
+        self.assertLessEqual(len(result), 10_000)
+        self.assertTrue(result.endswith("..."))
+        self.assertEqual(len(result), 10_000)
+
+    def test_copilot_assignment_task_short_text_preserves_exact_output(self):
+        scope = VALID_SCOPES["int_issue_number"]
+        result = _copilot_assignment_task("Implement the bounded change", scope)
+        self.assertEqual(
+            result,
+            "Implement the bounded change (issue #42, repo edwardjones3976/director-orchestrator, kind triage)",
+        )
+
