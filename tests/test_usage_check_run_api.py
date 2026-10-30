@@ -143,6 +143,33 @@ class ContactObservationsApiTests(unittest.TestCase):
                 records["github-copilot"]["permissions_state"], "recorded-issues-only"
             )
 
+    def test_unauthenticated_health_carries_no_paths(self):
+        # Codex review finding 1: /health needs no credentials, so its
+        # contact-observation section carries states and counts only.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "receipts"
+            (root / "zai").mkdir(parents=True)
+            test_settings = replace(main.settings, shared_secret="test-secret")
+            with (
+                patch.object(main, "settings", test_settings),
+                patch.object(main.usage_monitor, "run_forever", new=AsyncMock(return_value=None)),
+                patch.object(main.engine, "run", new=AsyncMock(return_value=None)),
+                patch.object(main.store, "list_recoverable", return_value=[]),
+                patch("director_orchestrator.contact_observations.DEFAULT_RECEIPTS_ROOT", root),
+            ):
+                with TestClient(main.app) as client:
+                    response = client.get("/health")
+            self.assertEqual(response.status_code, 200)
+            section = response.json()["usage_monitor"]["contact_observations"]
+            self.assertNotIn("receipts_root", section)
+            text = response.text
+            for forbidden in (str(root), root.as_posix(), directory, str(Path.home()), Path.home().as_posix()):
+                with self.subTest(forbidden=forbidden):
+                    self.assertNotIn(forbidden, text)
+                    self.assertNotIn(forbidden.replace("\\", "\\\\"), text)
+            for record in section["contacts"]:
+                self.assertNotIn("source", record)
+
     def test_get_requires_authentication(self):
         with tempfile.TemporaryDirectory() as directory:
             empty_root = Path(directory) / "receipts"

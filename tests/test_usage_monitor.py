@@ -1418,21 +1418,19 @@ class ContactObservationsHealthTests(unittest.TestCase):
         "grok-bot",
         "zcode",
     )
+    # /health is unauthenticated: states and counts only, never paths.
     RECORD_FIELDS = (
         "contact_id",
         "provider_family",
-        "source",
         "observed_at_utc",
-        "transport",
-        "account_scope",
         "auth_state",
         "quota_state",
         "permissions_state",
         "task_result_state",
         "staleness",
         "ready",
-        "note",
     )
+    PATH_FIELDS = ("source", "transport", "note", "account_scope")
 
     def test_health_keeps_existing_keys_and_adds_contact_observations(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1447,19 +1445,20 @@ class ContactObservationsHealthTests(unittest.TestCase):
             for key in (
                 "description",
                 "freshness_window_days",
-                "receipts_root",
                 "receipts_root_present",
+                "counts",
                 "contacts",
             ):
                 self.assertIn(key, section)
+            self.assertNotIn("receipts_root", section)
+            self.assertEqual(section["counts"]["total"], len(self.SIX_CONTACTS))
             self.assertEqual(
                 [record["contact_id"] for record in section["contacts"]],
                 list(self.SIX_CONTACTS),
             )
             for record in section["contacts"]:
                 with self.subTest(contact_id=record["contact_id"]):
-                    for field in self.RECORD_FIELDS:
-                        self.assertIn(field, record)
+                    self.assertEqual(set(record), set(self.RECORD_FIELDS))
 
     def test_supported_providers_and_interval_gates_are_unchanged(self):
         from director_orchestrator.usage import (
@@ -1533,6 +1532,38 @@ class ContactObservationsHealthTests(unittest.TestCase):
             # ZCode never earns readiness from Z.ai API receipts.
             self.assertFalse(records["zcode"]["ready"])
             self.assertFalse(records["grok-bot"]["ready"])
+            self.assertEqual(section["counts"]["ready"], 1)
+
+    def test_health_section_never_exposes_paths(self):
+        # Codex review finding 1: /health is unauthenticated, so neither the
+        # receipts root nor any receipt path or user-profile directory may
+        # appear in it, with or without receipts on disk.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "receipts"
+            lane = root / "zai"
+            lane.mkdir(parents=True)
+            finished = datetime.now(timezone.utc) - timedelta(hours=1)
+            stamp = finished.strftime("%Y%m%dT%H%M%SZ")
+            (lane / f"{stamp}.json").write_text(
+                json.dumps({"provider": "zai", "status": "COMPLETED", "started_at": stamp, "exit_code": 0}),
+                encoding="utf-8",
+            )
+            settings = replace(
+                BOUNDED_SETTINGS, sqlite_path=str(Path(directory) / "tasks.sqlite3")
+            )
+            monitor = UsageMonitor(settings, TaskStore(settings.sqlite_path), adapters={})
+            with patch(
+                "director_orchestrator.contact_observations.DEFAULT_RECEIPTS_ROOT", root
+            ):
+                section = monitor.health()["contact_observations"]
+            text = json.dumps(section)
+            for forbidden in (str(root), root.as_posix(), str(Path(directory)), str(Path.home()), "receipts_root\""):
+                with self.subTest(forbidden=forbidden):
+                    self.assertNotIn(forbidden, text)
+            self.assertNotIn(json.dumps(str(Path.home()))[1:-1], text)
+            for record in section["contacts"]:
+                for field in self.PATH_FIELDS:
+                    self.assertNotIn(field, record)
 
 
 if __name__ == "__main__":

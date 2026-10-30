@@ -913,6 +913,10 @@ class ContactTaskResultState(StrEnum):
     STALE = "stale"
     OBSERVED_SUCCESS = "observed-success"
     OBSERVED_FAILURE = "observed-failure"
+    # A dated attempt exists, but its evidence cannot certify the outcome
+    # (text-only output, or a receipt that omits the producer's success
+    # conditions); never a success and never readiness.
+    OBSERVED_UNCONFIRMED = "observed-unconfirmed"
 
 
 class ContactObservationStaleness(StrEnum):

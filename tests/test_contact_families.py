@@ -34,6 +34,7 @@ class ContactFamilyTableTests(unittest.TestCase):
             "github-copilot": "GitHub/Microsoft",
             "vscode-coding-bot": "GitHub/Microsoft",
             "zai": "Z.ai",
+            "zcode": "Z.ai",
             "owner": "Owner",
         }
         self.assertEqual(set(CONTACT_LANES_BY_ID), set(expected))
