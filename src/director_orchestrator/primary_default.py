@@ -1421,6 +1421,40 @@ def _small_producer_constraints(
     ]
 
 
+def _copilot_assignment_task(text: str, scope: Mapping[str, Any] | Any) -> str:
+    if isinstance(scope, Mapping):
+        s = scope
+    elif hasattr(scope, "__dict__"):
+        s = scope.__dict__
+    else:
+        s = {}
+    kind = s.get("kind") or "issue"
+    number = s.get("issue_number") or s.get("issue_reference") or s.get("issue")
+    repo = s.get("repository") or s.get("repo") or ""
+    draft = s.get("packet") or s.get("drafting_packet") if kind == "drafting" else None
+    draft_title = draft.get("title", "") if isinstance(draft, Mapping) else ""
+    draft_body = draft.get("body", "") if isinstance(draft, Mapping) else ""
+
+    parts = []
+    if number is not None:
+        parts.append(f"issue #{number}")
+    if draft_title:
+        parts.append(f"draft '{draft_title}'")
+        if draft_body:
+            parts.append(f"body: {draft_body}")
+    if repo:
+        parts.append(f"repo {repo}")
+    if kind:
+        parts.append(f"kind {kind}")
+
+    detail = ", ".join(parts)
+    if not text:
+        return f"Execute issue work: {detail}" if detail else "Execute issue work."
+    if detail and detail not in text:
+        return f"{text} ({detail})"
+    return text
+
+
 def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
                         available: tuple[str, ...], history: tuple[str, ...]) -> None:
     """Freeze a minimal capability-selected DAG before execution approval."""
@@ -1469,6 +1503,15 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
     for sequence, lane in enumerate(required, start=1):
         is_research = lane in _PRIMARY_PUBLIC_RESEARCH_LANES
         is_antigravity = lane == "antigravity"
+        is_copilot = lane == "github-copilot"
+        copilot_scope = record.intake.primary_issue_ref if is_copilot else None
+        copilot_repo = None
+        if copilot_scope is not None:
+            copilot_repo = (
+                copilot_scope.get("repository") or copilot_scope.get("repo")
+                if isinstance(copilot_scope, Mapping)
+                else getattr(copilot_scope, "repository", None)
+            )
         first_wave.append(
             work_template.model_copy(
                 update={
@@ -1488,6 +1531,8 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
                         if is_antigravity
                         else record.intake.primary_public_research_query
                         if is_research
+                        else _copilot_assignment_task(record.intake.text.strip(), copilot_scope)
+                        if is_copilot and copilot_scope is not None
                         else record.intake.text.strip()
                     ),
                     "acceptance": [
@@ -1506,7 +1551,14 @@ def _live_parallel_plan(record: TaskRecord, settings: Settings, *,
                         if is_antigravity
                         else None
                     ),
-                    "repository": None if is_research or is_antigravity else repository,
+                    "issue_scope": copilot_scope,
+                    "repository": (
+                        None
+                        if is_research or is_antigravity
+                        else copilot_repo
+                        if is_copilot and copilot_repo is not None
+                        else repository
+                    ),
                     "starting_ref": starting_ref,
                     "depends_on": ([1] if selected.research and lane == selected.producer else []),
                     "requires_approval": is_research,

@@ -2,7 +2,13 @@ from dataclasses import replace
 import json
 import unittest
 
+from unittest.mock import Mock, patch
+from fastapi import HTTPException
 from pydantic import ValidationError
+from starlette.background import BackgroundTasks
+import director_orchestrator.main as main_module
+from director_orchestrator.packet_routing import DirectorPacketTaskRouter, copilot_issue_context
+from director_orchestrator.models import ProviderName
 
 from director_orchestrator.config import Settings
 from director_orchestrator.models import IntakeAuthentication, SlackIntake, TaskRecord, TaskStatus
@@ -274,3 +280,92 @@ class IntakeIssueScopeTests(unittest.TestCase):
     def test_intake_without_issue_scope_keeps_its_serialized_bytes(self):
         dumped = self._record(self._settings()).intake.model_dump()
         self.assertNotIn("primary_issue_ref", dumped)
+
+    def _router(self):
+        adapter = Mock()
+        adapter.provider = "github-copilot"
+        adapter.allowed_tools = ("READ_REPOSITORY",)
+        adapter.allowed_external_effects = ()
+        adapter.model_label = None
+        adapter.workload_size = None
+        other_adapter = Mock()
+        other_adapter.provider = "openai"
+        other_adapter.allowed_tools = ("READ_REPOSITORY",)
+        other_adapter.allowed_external_effects = ()
+        other_adapter.model_label = None
+        other_adapter.workload_size = None
+        snapshots_mock = Mock()
+        snapshots_mock.resolve = Mock(
+            return_value=[
+                {"path": "README.md", "commit_sha": "0" * 40, "blob_sha": "1" * 40}
+            ]
+        )
+        return DirectorPacketTaskRouter(
+            authority_snapshots=snapshots_mock,
+            boundary_adapters={
+                "github-copilot": adapter,
+                "openai": other_adapter,
+                "claude": other_adapter,
+                "cursor": other_adapter,
+            },
+            writer_owner_id="test-writer",
+            writer_secret="test-secret",
+            timeout_seconds=300,
+        )
+
+    def test_copilot_assignment_and_worker_packet_end_to_end(self):
+        settings = self._settings()
+        router = self._router()
+        for name, scope in sorted(VALID_SCOPES.items()):
+            with self.subTest(name=name):
+                record = self._record(
+                    settings,
+                    primary_required_capabilities=["github_issue_work"],
+                    primary_issue_ref=scope,
+                )
+                self._plan(record, settings)
+                assignment = record.plan.assignments[0]
+
+                # Copilot assignment carries issue scope and repository from scope
+                self.assertEqual(assignment.primary_provider_lane, "github-copilot")
+                self.assertEqual(assignment.agent, ProviderName.GITHUB_COPILOT)
+                self.assertEqual(assignment.issue_scope, scope)
+                self.assertEqual(assignment.github_issue, scope)
+                expected_repo = scope.get("repository") or scope.get("repo")
+                self.assertEqual(assignment.repository, expected_repo)
+
+                # Worker packet correlation.github_issue matches staging dispatcher fields
+                packet = router.planned_work_packet(record, assignment)
+                expected_context = copilot_issue_context(scope)
+                self.assertEqual(packet["correlation"]["github_issue"], expected_context)
+                self.assertEqual(packet["repository"], expected_repo)
+
+    def test_worker_packet_without_issue_scope_has_no_copilot_and_null_github_issue(self):
+        settings = self._settings()
+        router = self._router()
+        record = self._record(settings)
+        self._plan(record, settings)
+        assignment = record.plan.assignments[0]
+
+        self.assertNotEqual(assignment.primary_provider_lane, "github-copilot")
+        self.assertIsNone(assignment.issue_scope)
+        self.assertIsNone(assignment.github_issue)
+
+        packet = router.planned_work_packet(record, assignment)
+        self.assertIsNone(packet["correlation"]["github_issue"])
+
+    def test_legacy_engine_refuses_primary_issue_ref_with_409(self):
+        record = self._record(
+            self._settings(),
+            primary_required_capabilities=["github_issue_work"],
+            primary_issue_ref=VALID_SCOPES["int_issue_number"],
+        )
+        with patch.object(main_module, "primary_default_activation", None):
+            with self.assertRaises(HTTPException) as cm:
+                main_module.intake(
+                    payload=record.intake,
+                    background=BackgroundTasks(),
+                )
+            self.assertEqual(cm.exception.status_code, 409)
+            self.assertIn("Issue-scoped requests require the LangGraph primary", cm.exception.detail)
+            self.assertIn("GitHub issue work is unavailable under legacy rollback", cm.exception.detail)

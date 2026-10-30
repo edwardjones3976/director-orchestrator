@@ -440,6 +440,7 @@ class Assignment(BaseModel):
     # and `acceptance` stay for the Director's own review and the owner's Slack
     # thread; they are never transmitted to Antigravity.
     antigravity_directive: AntigravityDirective | None = None
+    issue_scope: dict[str, Any] | None = None
     repository: str | None = Field(default=None, max_length=2_000)
     starting_ref: str = Field(default="main", min_length=1, max_length=255)
     depends_on: list[int] = Field(default_factory=list, max_length=20)
@@ -452,6 +453,7 @@ class Assignment(BaseModel):
     discussion_round: int = Field(default=0, ge=0, le=3)
 
     @model_validator(mode="after")
+
     def default_first_rebuttal_round(self) -> Assignment:
         # Preserve v1 plan compatibility: rebuttals persisted before the explicit
         # round field existed are first-round turns.
@@ -461,6 +463,11 @@ class Assignment(BaseModel):
         ):
             self.discussion_round = 1
         return self
+
+
+    @property
+    def github_issue(self) -> dict[str, Any] | None:
+        return self.issue_scope
 
 
 class DebateInitialPosition(BaseModel):
