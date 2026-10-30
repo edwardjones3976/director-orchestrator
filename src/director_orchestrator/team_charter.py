@@ -28,12 +28,11 @@
 # [[Codex | GPT-5.6 | 2026-08-24 | 13:04 UTC | BEGIN]]
 from __future__ import annotations
 
-from .workload_policy import MAX_PROVIDER_ATTEMPTS
+from ._retry_constants import MAX_PROVIDER_ATTEMPTS
 
 import hashlib
 import json
 from copy import deepcopy
-from .allocation_profiles import ALLOCATION_PROFILES, DEFAULT_ALLOCATION_PROFILE, allocation_profile_digest, LANES
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -147,7 +146,6 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         },
     },
     "director_operating_directive": {
-        "workload_policy_version": "v1",
         "director": "openai",
         "runtime_director": {
             "default_provider": "openai",
@@ -165,8 +163,6 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "investigator",
         ],
         "duties_excluded_from_direct_production_share": True,
-        "direct_workload_percent": dict(ALLOCATION_PROFILES[DEFAULT_ALLOCATION_PROFILE]),
-        "overall_effort_percent": dict(ALLOCATION_PROFILES[DEFAULT_ALLOCATION_PROFILE]),
         "workload_lanes": {
             "claude": "capability_routed_lane",
             "cursor": "capability_routed_lane",
@@ -189,29 +185,11 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
             "accepted_production_ledger": "direct_production",
             "usage_guard_ledger": "overall_effort",
         },
-        "workload_enforcement": {
-            "enforced_measure": "admitted_assignment_count",
-            "normal_tolerance_percentage_points": 3,
-            "startup_denominator": "twenty_slots_real_assignments_only",
-            "evaluate": [
-                "prospective_last20_assignment_count",
-            ],
-            "soft_action": "route_next_eligible_work_to_an_under_target_provider",
-            "share_pressure_action": "historical_nonenforcing",
-            "automatic_drift_correction": True,
-            "automatic_enforcement_after_shadow": True,
-            "overall_effort_can_block_or_route": False,
-            "overall_effort_normal_bands_percent": {lane: [max(0,target-3), min(100,target+3)] for lane,target in ALLOCATION_PROFILES[DEFAULT_ALLOCATION_PROFILE].items()},
-            "degraded_team_rule": "no_threshold_relaxation_or_implicit_external_openai_spill",
-            "filler_work_prohibited": True,
-        },
         "coding_routing": {
             "selection_policy": "cheap_capable_model_first",
             "selection_order": [
                 "exact_scope_allowlists_transport_and_readiness",
                 "task_capability_tools_context_risk_and_independence",
-                "direct_allocation_compliance_and_under_target_preference",
-                "total_effort_eligibility_and_corrective_under_band_preference",
                 "lowest_trusted_estimated_cost",
                 "deterministic_tie_breaker",
             ],
@@ -252,7 +230,6 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
         },
         "copilot_lite_hygiene_review": {
             "provider_or_committee_member": False,
-            "workload_percentage": None,
             "trigger": "request_after_checks_green_and_exact_candidate_freeze",
             "attempts": "conditional_maximum_five",
             "automatic_every_push": False,
@@ -628,20 +605,13 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
     ],
 }
 
-# One canonical capacity authority feeds generated manifests and provider prompts.
+# Provider guidance feeds generated manifests and provider prompts.
 _directive = _TEAM_OPERATING_CHARTER["director_operating_directive"]
-_directive["workload_policy_version"] = "capacity-allocation-v1"
-_directive["default_allocation_profile"] = DEFAULT_ALLOCATION_PROFILE
-_directive["allocation_profiles"] = {"lane_order": list(LANES), "weights": {name: list(targets.values()) for name, targets in ALLOCATION_PROFILES.items()}}
-_directive.pop("direct_workload_percent", None)
-_directive.pop("overall_effort_percent", None)
 _directive["overall_effort_policy"] = "telemetry_only_no_separate_allocation"
 _directive["capacity_context"] = {"openai": "owner_reported_Pro_20x", "claude": "owner_reported_Max_5x", "multipliers_are_not_api_entitlements": True}
 _directive["workload_accounting"].update({"unit_basis": "real_reserved_assignment_once", "windows": ["rolling_20_real_assignments"], "failed_attempt_rule": "retain_admission_without_productive_credit", "control_plane_rule": "usage_telemetry_only_not_production_credit"})
-_directive["workload_enforcement"].update({"enforced_measure": "admitted_assignment_count", "zero_target_rule": "ineligible", "profile_changes": "preserve_history_and_require_fresh_approval", "overall_effort_normal_bands_percent": {lane: [max(0,target-3), min(100,target+3)] for lane,target in ALLOCATION_PROFILES[DEFAULT_ALLOCATION_PROFILE].items()}})
 
 # Derived bands and duplicate aliases do not need a second wire representation.
-_directive["workload_enforcement"].pop("overall_effort_normal_bands_percent", None)
 _directive["workload_accounting"].pop("usage_guard_ledger", None)
 _directive["workload_accounting"].pop("accepted_production_ledger", None)
 _directive["capacity_context"] = "owner_Pro20x_Max5x_not_API_entitlements"

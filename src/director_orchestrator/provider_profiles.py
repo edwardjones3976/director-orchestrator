@@ -517,10 +517,9 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
         ]
     )
     lines.append("")
-    lines.append("## Team and allocation")
+    lines.append("## Team and responsibilities")
     lines.append("")
     committee = roles["committee"]
-    allocation = roles["allocation"]
     lines += _kv_table(
         [
             ("Team", roles["team"]),
@@ -534,21 +533,7 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
             ("Seatable in debate", committee["seatable_in_debate"]),
             ("May initiate debate", committee["may_initiate_debate"]),
             ("Vote grants authority", committee["vote_grants_authority"]),
-            ("Default allocation profile", _code(allocation["default_profile"])),
-            ("Overall effort policy", allocation["overall_effort_policy"]),
-            ("Capacity context", allocation["capacity_context"]),
-            ("Accounting basis", allocation["accounting_basis"]),
-            ("Zero target rule", allocation["zero_target_rule"]),
-            ("Accounting status", allocation["accounting_status"]),
         ]
-    )
-    lines.append("")
-    lines.append("Direct-production allocation targets by profile (percent of the rolling twenty-assignment window):")
-    lines.append("")
-    profiles = allocation["profiles"]
-    lines += _table(
-        ["Mixed", "Engineering (default)", "Public research", "Enterprise"],
-        [[profiles["mixed"], profiles["engineering"], profiles["public_research"], profiles["enterprise"]]],
     )
     lines.append("")
     lines.append("## Roles and responsibilities")
@@ -1084,7 +1069,7 @@ def _html_document(title: str, source: str, sections: list[tuple[str, str, str]]
 def render_profile_html(profile: Mapping[str, Any], catalog: Mapping[str, Any]) -> str:
     """Lossless field presentation from YAML, with explicit section anchors."""
     labels = {'identifiers': ('identity-and-aliases', 'Identity and aliases'),
-              'roles': ('team-and-allocation', 'Team and allocation'),
+              'roles': ('team-and-responsibilities', 'Team and responsibilities'),
               'models_and_effort': ('models-and-effort', 'Models and effort'),
               'source_of_truth': ('source-of-truth', 'Source of truth')}
     sections = [('authority-notice', 'Authority notice',

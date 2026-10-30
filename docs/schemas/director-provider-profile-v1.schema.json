@@ -37,7 +37,6 @@
       "type": "string",
       "enum": ["director_backend", "openai_responses_api", "claude_routine", "claude_native_host", "claude_callback", "cursor_agents_api", "gemini_interactions_api", "xai_responses_api", "grok_cli", "perplexity_api", "zai_coding_cli", "slack", "manual_owner", "simulation"]
     },
-    "allocationProfileId": { "type": "string", "enum": ["mixed", "engineering", "public_research", "enterprise"] },
     "envName": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,79}$" },
     "slug": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,79}$" },
     "shortText": { "type": "string", "minLength": 1, "maxLength": 400 },
@@ -62,7 +61,7 @@
             "docs/project-leadership.html",
             "docs/provider-setup.html",
             "docs/providers/zai-welcome-aboard.md",
-            "docs/provider-allocation-profiles.html",
+            "docs/provider-capacity-and-authority.html",
             "docs/slack-collaboration-bus.html",
             "docs/model-interoperability-contract.html",
             "docs/langgraph-primary-operations.html",
@@ -187,11 +186,10 @@
         "source_of_truth": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["charter_document", "charter_module", "allocation_module", "deterministic_policy", "route_catalog", "precedence", "drift_rule"],
+          "required": ["charter_document", "charter_module", "deterministic_policy", "route_catalog", "precedence", "drift_rule"],
           "properties": {
             "charter_document": { "const": "docs/team-operating-charter.html" },
             "charter_module": { "const": "src/director_orchestrator/team_charter.py" },
-            "allocation_module": { "const": "src/director_orchestrator/allocation_profiles.py" },
             "deterministic_policy": { "const": "src/director_orchestrator/policy.py" },
             "route_catalog": { "const": "docs/provider-profiles/routes.yaml" },
             "precedence": { "const": "charter_code_and_deterministic_policy_override_this_profile" },
@@ -227,7 +225,7 @@
             "team", "lane_class", "summary", "charter_workload_lane", "strategy_key", "strategy_priority",
             "eligible_responsibility_areas", "excluded_responsibility_areas", "eligible_complexity",
             "capability_parity_target", "comparison_peers", "elevated_work", "non_substitution_rules",
-            "family", "transport_rule", "routing_rule", "committee", "allocation", "hygiene_review", "openai_functions"
+            "family", "transport_rule", "routing_rule", "committee", "hygiene_review", "openai_functions"
           ],
           "properties": {
             "team": { "type": "string", "enum": ["primary", "supplemental", "lane_only"] },
@@ -261,43 +259,15 @@
                 "vote_grants_authority": { "const": false }
               }
             },
-            "allocation": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["profiles", "default_profile", "overall_effort_policy", "capacity_context", "accounting_basis", "zero_target_rule", "accounting_status"],
-              "properties": {
-                "accounting_basis": { "const": "admitted_assignment_count" },
-                "profiles": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "required": ["mixed", "engineering", "public_research", "enterprise"],
-                  "properties": {
-                    "mixed": { "type": "integer", "minimum": 0, "maximum": 100 },
-                    "engineering": { "type": "integer", "minimum": 0, "maximum": 100 },
-                    "public_research": { "type": "integer", "minimum": 0, "maximum": 100 },
-                    "enterprise": { "type": "integer", "minimum": 0, "maximum": 100 }
-                  }
-                },
-                "default_profile": { "const": "engineering" },
-                "overall_effort_policy": { "const": "telemetry_only_no_separate_allocation" },
-                "capacity_context": { "const": "owner_Pro20x_Max5x_not_API_entitlements" },
-                "zero_target_rule": { "const": "ineligible" },
-                "accounting_status": {
-                  "type": "string",
-                  "enum": ["direct_production_allocation", "control_plane_telemetry_and_authorized_production", "unscored_reporting_only_no_production_credit", "allocation_without_legacy_adapter", "blocked_pending_capability_evidence"]
-                }
-              }
-            },
             "hygiene_review": {
               "oneOf": [
                 { "type": "null" },
                 {
                   "type": "object",
                   "additionalProperties": false,
-                  "required": ["provider_or_committee_member", "workload_percentage", "trigger", "attempts", "automatic_every_push", "gating", "authority_granted", "unavailable_or_quota_failure", "finding_rule", "rejected_finding_rule", "candidate_change_rule", "material_fix_authorship_rule"],
+                  "required": ["provider_or_committee_member", "trigger", "attempts", "automatic_every_push", "gating", "authority_granted", "unavailable_or_quota_failure", "finding_rule", "rejected_finding_rule", "candidate_change_rule", "material_fix_authorship_rule"],
                   "properties": {
                     "provider_or_committee_member": { "const": false },
-                    "workload_percentage": { "type": "null" },
                     "trigger": { "$ref": "#/$defs/shortText" },
                     "attempts": { "$ref": "#/$defs/shortText" },
                     "automatic_every_push": { "const": false },

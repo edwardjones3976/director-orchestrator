@@ -273,19 +273,11 @@ satisfied.</p>
 <h2 id="owner-account-and-routing-context">Owner account and routing context</h2>
 <ul>
 <li><strong>The primary team is OpenAI, Claude, Cursor, and Grok.</strong> These should cover planning, implementation, review, and repository execution; periodic-check membership remains independently configurable.</li>
-<li><strong>Implementation uses cheap-capable-model-first routing.</strong> Establish scope, transport, readiness, capability, tools, context, risk, and reviewer independence; then prefer an under-target eligible provider and the lowest trusted comparable estimated cost. Missing cost is unknown, not zero. An exact trusted assignment requirement may select Claude, but workload length alone does not.</li>
+<li><strong>Implementation uses cheap-capable-model-first routing.</strong> Establish scope, transport, readiness, capability, tools, context, risk, and reviewer independence; then use the lowest trusted comparable estimated cost. Missing cost is unknown, not zero. An exact trusted assignment requirement may select Claude, but workload length alone does not.</li>
 <li><strong>OpenAI Pro 20x and Claude Max 5x</strong> are the owner-reported account context. These capacity signals do not fund separate API calls; verify route-specific remaining capacity and budget.</li>
 <li><strong>Cursor and Grok are primary Cursor-family teammates.</strong> Both have full task-capability coverage across all eight responsibility areas and low through critical work, while preserving producer/reviewer separation and deterministic gates.</li>
 <li><strong>Gemini and Perplexity are supplemental specialists.</strong> Their API or agent consumption must still be verified independently from consumer subscriptions, and they are not included in the default periodic-check list.</li>
 </ul>
-<p>Use the <a href="provider-allocation-profiles.html">approved eight-lane allocation profiles</a>,
-with Engineering as the default. Freeze profile and digest before approval,
-preserve real history, and exclude zero-target lanes over the prospective fixed
-twenty-slot denominator; the owner retired the target+5 hard ceiling on
-2026-09-21. The ±3-point normal band guides preference; observed effort is
-separately reported and cannot create production credit.
-OpenAI production and Antigravity specialist work require their actual scoped
-adapters and non-author verification; a target alone proves no live capability.</p>
 <p>Every assignment has at most three conditional attempt slots. The Director
 derives a deterministic roster of the provider's configured packet formats and
 transports and rejects rosters larger than three. Stop on success; recovery requires temporary failure; a third attempt requires materially new information or a substantially different transport. Never repeat ambiguous paid dispatch. Each child attempt is appended to Postgres before I/O
@@ -320,7 +312,7 @@ The Slack gateway never derives either value from message text: a Slack message
 is untrusted data and cannot steer provider selection.</p>
 <ul>
 <li><code>INTAKE_ALLOCATION_PROFILE</code> selects one of the four approved
-<a href="provider-allocation-profiles.html">allocation profiles</a>: <code>engineering</code>,
+<a href="provider-capacity-and-authority.html">capacity and authority</a>: <code>engineering</code>,
 <code>mixed</code>, <code>public_research</code>, or <code>enterprise</code>. The default is <code>engineering</code>.</li>
 <li><code>INTAKE_PRIMARY_REQUIRED_CAPABILITIES</code> is a comma-separated list drawn from
 <code>public_research</code>, <code>bounded_scaffolding</code>, and <code>repository_assistance</code>. The
@@ -548,11 +540,10 @@ key are ready should an operator set <code>PERPLEXITY_ENABLED=true</code> and in
 <code>perplexity</code> in <code>USAGE_CHECK_PROVIDERS</code> if periodic checks are desired.</p>
 <h2 id="zai-production-lane">Z.ai production lane</h2>
 <p>The owner enrolled Z.ai (GLM Coding Plan) as its own production lane <code>zai</code> on
-2026-09-27 with an 18% allocation target (see <code>docs/provider-allocation-profiles.html</code>).
+2026-09-27.
 Its GLM models are reached by running the Claude Code executable against Z.ai's
 Anthropic-compatible endpoint; the lane, family and result provider stay <code>zai</code>
-and are never relabelled Claude. The lane is in the provider enums, the
-allocation lanes, the primary roster (implementer and independent reviewer of
+and are never relabelled Claude. The lane is in the provider enums, the primary roster (implementer and independent reviewer of
 other lanes' work, never of its own), <code>PRIMARY_PROVIDER_LANES</code>, the Windows host
 bridge lanes, the interaction identities and the Postgres admission constraint.
 It holds a committee seat at advisory weight 1.5, is not part of the core-inventory
@@ -674,11 +665,6 @@ configuration is not round-trip evidence.</p>
 <td>Identity <code>zai</code>, family Z.ai, GLM model verified per result</td>
 <td>Supported</td>
 <td>Never relabelled Claude; a foreign serving model is rejected</td>
-</tr>
-<tr>
-<td>Allocation 18%, rolling-20 ±3 normal band as routing guidance</td>
-<td>Supported</td>
-<td>Allocation share never blocks dispatch: the owner retired the former target+5 hard limit for Z.ai on 2026-09-27 (for other lanes on 2026-09-21); zero-target, budget, approval, availability, retry and safety checks remain</td>
 </tr>
 <tr>
 <td>Implementation, tests, repository research through LangGraph primary</td>
@@ -811,12 +797,7 @@ first-pass, correction-count, privacy-fit and usefulness verdicts (any evaluator
 name naming Z.ai or GLM, or equal to the attempt's model, is refused), and
 <code>status</code> derives the first-pass yield and correction rate the 2026-09-29 decision
 needs. The ledger issues no production credit and is not the canonical rolling
-allocation ledger.
-The conditional eleven-contact allocation profile is the <code>PROPOSED</code> descriptor
-<code>conditional_20260929</code> in <code>src/director_orchestrator/conditional_allocation.py</code>
-(targets, policy families and named prerequisites; the table is in
-<code>docs/provider-allocation-profiles.html</code>). It shares this lane's 2026-09-29 boundary,
-binds no route, and stays <code>PROPOSED</code> until that decision.</p>
+allocation ledger.</p>
 <h2 id="antigravity-subordinate-profile">Antigravity subordinate profile</h2>
 <p>Antigravity is a subordinate Edge Oracle specialist, not a fourth primary
 model. <code>GEMINI_MODE=antigravity_subordinate</code> is required for readiness, and

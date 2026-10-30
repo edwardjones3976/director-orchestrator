@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Provider capacity and authority · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+<nav class="toc" aria-label="On this page"><ul><li><a href="#capacity-capabilities-and-authority">Capacity, capabilities and authority</a></li><li><a href="#contact-family-safety-directive-207">Contact-family safety</a></li><li><a href="#dual-activity-ledgers">Dual activity ledgers</a></li></ul></nav>
+<main id="content"><h1 id="provider-capacity-and-authority">Provider capacity and authority</h1>
+<h2 id="capacity-capabilities-and-authority">Capacity, capabilities, and authority</h2>
+<p>The owner's account context is OpenAI Pro 20x and Claude Max 5x; other providers
+are paid but have materially lower capacity. These owner-reported signals inform
+capacity planning, not a conversion between providers' usage units. Prefer
+subscription-backed execution when suitable and authenticated. Separately billed
+API execution requires its own known budget and gates. Unknown remaining quota,
+cost, or usage telemetry is unknown, never zero or assumed entitlement.</p>
+<p>ChatGPT/Codex is the acting project Director; actual runtime provider identity
+remains an independently recorded deployment fact. This routing-policy change does not attest deployed provider execution or activate
+providers, and it does not alter historical attribution.
+OpenAI production is separately assigned and attributed; Director coordination,
+Moderator and Participant functions, acceptance supervision, and merge activity
+do not earn production credit. The materially authoring OpenAI lane cannot review
+or merge its own candidate; different-provider exact-candidate review remains
+required. A non-author Director inherits no authorship from delegation, QA, or
+merge coordination. Reserve a capable different
+non-author reviewer before production; all exact-SHA, security, CI and owner gates
+remain binding.</p>
+<p>Antigravity is capability-routed within the selected authenticated contract. The
+restricted fixture contact requires downstream independent verification before
+integration; the separate team contract requires its explicit grants and host
+qualification. A route grants no exact-SHA acceptance, merge authority,
+unrestricted context, or broader outbound packet contract.
+Perplexity receives only explicitly approved public research, never private
+repository context. Firecrawl and enterprise providers require their actual
+capabilities, authorized sources, least privilege, authenticated readiness, and
+supported adapters. Verify each route's actual readiness.
+GitHub Copilot's production lane is distinct from Copilot Lite hygiene observations;
+Lite creates no production credit or independent acceptance authority.</p>
+<p>The default LangGraph primary OpenAI transport uses the separately billed Responses API. OpenAI Pro 20x does not fund that API route.</p>
+<p>The default legacy provider registry does not include OpenAI production, Firecrawl,
+or Copilot production adapters. That registry must receive a real authenticated adapter
+before those lanes can execute there. The LangGraph primary path has its own
+authenticated transport composition. Microsoft 365 enterprise production remains
+a typed scope/capability hold in that path until a scoped adapter is supplied.</p>
+<p>The legacy default provider registry currently supplies Claude, Cursor, Gemini,
+Grok, and Perplexity adapters. Its expanded accounting does not add OpenAI,
+Firecrawl, or Copilot execution adapters; these lanes remain unavailable there
+unless an actual authorized adapter is composed. The primary LangGraph path uses
+authenticated transport discovery and scoped capability checks for its new lanes.
+Neither path infers production readiness from Director credentials.</p>
+<p>Record logical lane, actual provider/model/transport,
+material authors, admission and accepted counts, effort, remaining capacity when
+known, costs and categorized waste. Token, spend, runtime and concurrency limits
+remain separate. Missing eligible integration or review capability fails closed;
+A documented route does not install an adapter or deploy LangGraph.</p>
+<h2 id="contact-family-safety-directive-207">Contact-family safety (directive #207)</h2>
+<p><code>src/director_orchestrator/contact_families.py</code> types every known contact and
+lane id (for example <code>openai</code>, <code>claude</code>, <code>cursor</code>, <code>grok</code>, <code>grok-bot</code>,
+<code>gemini</code>, <code>antigravity</code>, <code>perplexity</code>, <code>firecrawl</code>, <code>github-copilot</code>,
+<code>vscode-coding-bot</code>, <code>zai</code>) to an owner-selected provider-family label: Direct
+Grok and Grok Bot are one xAI family; GitHub Copilot and VS Code Coding Bot
+are one GitHub/Microsoft family; Gemini and Antigravity are one Google family.
+Reviewer-independence checks in <code>review_handoff.py</code> and
+<code>policy.py::_independent_review_binding_errors</code> reject a reviewer whose
+provider family matches any material author's family, in addition to the
+existing identity check, so that separate contact lanes in the same family
+never create false different-provider review independence or duplicate
+accepted credit. An identity absent from the table is unknown and fails
+closed: it is never treated as independent. These family labels are policy
+labels for independence and anti-duplication decisions; they are not
+authenticated evidence of which underlying model actually served a request.</p>
+<h2 id="dual-activity-ledgers">Dual activity ledgers</h2>
+<p>The dual OpenAI activity ledgers (<code>openai_director_activity</code> and <code>openai_direct_production</code>) use schema and kind checks to prevent Director rows from being credited as production within these ledgers. Runtime credit and workload caps are unchanged until a consumer integrates the ledgers.
+Director/control-plane activity includes intake, planning, decomposition, packet preparation, capability-based routing, team communication, synthesis, acceptance supervision, completion reporting, and owner escalation.
+Direct-production activity encompasses bounded production assignments authored by OpenAI under ordinary authorship, review, CI and merge gates.
+The ledgers are distinct, append-only SQLite files. A rolling 7-day observation window looks back from the current moment. A minimum of 20 total valid events must be recorded within that window before history is considered sufficient, and a floor of 75% Director activity must be maintained to avoid a utilization hold. A kind outside the ledger's own kind set is refused (invalid_director_kind / invalid_production_kind) and never recorded.</p>
+<!-- [[Codex | GPT-6 | 2026-09-05 | 23:45 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-06 | 01:09 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 05:57 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:04 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:48 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 06:51 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-08 | 07:29 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 17:50 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 | 2026-09-12 | 23:46 UTC | END]] -->
+<!-- [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:10 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.8 Flash (High) | 2026-09-13 | 10:25 UTC | END]] -->
+<!-- [[Gemini Antigravity | Gemini 3.8 Flash (Medium) | 2026-09-13 | 10:30 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:00 UTC | END]] -->
+<!-- [[GitHub Copilot CLI | Claude Sonnet 5 | 2026-09-20 | 03:01 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:10 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 03:26 UTC | END]] -->
+<!-- [[Gemini Antigravity | gemini-3.1-pro-high | 2026-09-20 | 07:21 UTC | END]] -->
+<!-- [[Claude Code | claude-sonnet-5 | 2026-09-21 | 21:56 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | END]] -->
+<!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 06:10 UTC | END]] -->
+
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+</body>
+</html>

@@ -11,7 +11,7 @@
 <body>
 <a class="skip-link" href="#content">Skip to content</a>
 <header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
-<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#r1--sequence-checks-by-failure-probability-per-unit-cost">R1 — Sequence checks by failure probability per unit cost</a></li><li class="top"><a href="#r2--the-gate-ledger-is-three-valued-and-computed-never-asserted">R2 — The gate ledger is three-valued and computed, never asserted</a></li><li class="top"><a href="#r3--an-optional-action-must-name-the-decision-it-could-flip">R3 — An optional action must name the decision it could flip</a></li><li class="top"><a href="#r4--the-schedule-is-a-temporal-network-not-a-critical-path">R4 — The schedule is a temporal network, not a critical path</a></li><li class="top"><a href="#r5--operator-minutes-is-the-binding-resource">R5 — Operator-minutes is the binding resource</a></li><li class="top"><a href="#r6--evidence-carries-a-binding-key-and-is-reused-on-match">R6 — Evidence carries a binding key and is reused on match</a></li><li class="top"><a href="#r7--allocation-quotas-are-integers">R7 — Allocation quotas are integers</a></li><li class="top"><a href="#what-these-rules-do-not-do">What these rules do not do</a></li></ul></details></nav>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#r1--sequence-checks-by-failure-probability-per-unit-cost">R1 — Sequence checks by failure probability per unit cost</a></li><li class="top"><a href="#r2--the-gate-ledger-is-three-valued-and-computed-never-asserted">R2 — The gate ledger is three-valued and computed, never asserted</a></li><li class="top"><a href="#r3--an-optional-action-must-name-the-decision-it-could-flip">R3 — An optional action must name the decision it could flip</a></li><li class="top"><a href="#r4--the-schedule-is-a-temporal-network-not-a-critical-path">R4 — The schedule is a temporal network, not a critical path</a></li><li class="top"><a href="#r5--operator-minutes-is-the-binding-resource">R5 — Operator-minutes is the binding resource</a></li><li class="top"><a href="#r6--evidence-carries-a-binding-key-and-is-reused-on-match">R6 — Evidence carries a binding key and is reused on match</a></li><li class="top"><a href="#what-these-rules-do-not-do">What these rules do not do</a></li></ul></details></nav>
 <main id="content">
 <!-- [[OpenAI Codex | GPT-6 | 2026-09-09 | 20:25 UTC | BEGIN]] -->
 <!-- [[Claude Cowork | Claude Opus 5 | 2026-09-09 | 02:50 UTC | BEGIN]] -->
@@ -151,29 +151,6 @@ paths and digests it depends on, so a candidate change re-runs only the findings
 whose inputs moved.</p>
 <p><strong>Who applies it.</strong> Every lane producing analysis; the Director when
 reconciling evidence.</p>
-<h2 id="r7--allocation-quotas-are-integers">R7 — Allocation quotas are integers</h2>
-<p><strong>Rule.</strong> Over a rolling window <code>W</code>, convert target shares to integer quotas by
-largest-remainder apportionment so the quotas sum to <code>W</code> exactly, and express
-the bands and ceilings as integer bounds.</p>
-<pre><code>q_i = round to integers by largest remainder,  Σ q_i = W
-floor((s_i − 0.03)·W)  ≤  n_i  ≤  floor((s_i + 0.05)·W)
-</code></pre>
-<p>At <code>W = 20</code>, a 40% target is 8 assignments with a ceiling of 9. A zero target
-refuses a lane <strong>in that profile</strong>, including for accepted non-code research;
-the same lane is allocation-admissible under a profile with a non-zero target,
-subject to remaining capacity and other admission gates. In particular,
-<code>engineering</code> refuses Perplexity and Firecrawl research (both targets 0%), while
-<code>public_research</code> allows the same requests through allocation admission with
-targets of 25% and 15% respectively, when the other conditions pass.</p>
-<p><a href="../src/director_orchestrator/workload_policy.py#L512-L529"><code>is_accepted_productive_kind</code>, workload_policy.py:512–529</a>
-classifies these lanes' research as productive. The <a href="../src/director_orchestrator/workload_policy.py#L993-L1002"><code>evaluate_assignment</code>
-admission call site, workload_policy.py:993–1002</a>,
-applies that classification before the capacity check; the <a href="../src/director_orchestrator/workload_policy.py#L617-L618">zero-target check,
-lines 617–618</a>, returns
-<code>allocation_profile_lane_ineligible</code>. <a href="../src/director_orchestrator/allocation_profiles.py#L17-L18">allocation_profiles.py:17–18</a>
-defines the two target sets. Admission and concurrency rules are unchanged;
-this wording grants no dispatch authority and activates no profile.</p>
-<hr />
 <h2 id="what-these-rules-do-not-do">What these rules do not do</h2>
 <p>They do not reduce the thirty provider-activation evidence rows, the nine
 activation gates, or the attended minutes those require. Those are fixed by the

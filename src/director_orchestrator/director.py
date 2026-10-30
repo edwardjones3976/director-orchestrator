@@ -27,7 +27,6 @@ from typing import Any
 
 import httpx
 
-from .allocation_profiles import allocation_targets
 from .config import Settings
 from .interactions import ProviderTransport
 from .models import (
@@ -134,8 +133,6 @@ class OpenAIDirector:
         return model.model_validate(json.loads(_output_text(response.json())))
 
     async def plan(self, record: TaskRecord) -> DirectorPlan:
-        profile = record.intake.allocation_profile
-        profile_weights = ", ".join(f"{lane} {weight}%" for lane, weight in allocation_targets(profile).items())
         readiness = self.settings.readiness()
         available_specialists = [
             name
@@ -171,8 +168,6 @@ class OpenAIDirector:
             "supplemental_specialists": ["gemini", "perplexity"],
             "provider_strategy": self.settings.provider_strategy(),
             "team_operating_charter": team_operating_charter(),
-            "allocation_profile": profile,
-            "allocation_targets": dict(allocation_targets(profile)),
             "routing_rules": [
                 (
                     "OpenAI planning is this Director call and OpenAI acceptance is the runtime review after specialist execution. Never emit an openai assignment. When the owner describes OpenAI plan -> Claude work -> Cursor review -> OpenAI acceptance, emit only the Claude and Cursor specialist assignments in that order; the runtime supplies the surrounding OpenAI phases."
@@ -182,7 +177,7 @@ class OpenAIDirector:
                 "Set allow_draft_pr true only when the owner explicitly requested a draft pull request. Keep it false for analysis, review, research, and all other assignments. A true value also requires requires_approval true.",
                 "Use estimated_cost_usd and max_task_budget_usd for the deterministic task-budget gate only. estimated_cost_usd is model-authored and is never trusted relative-cost evidence for provider selection. Provider-reported tokens or actual cost are optional telemetry: require them to be reported when exposed, but never make acceptance depend on telemetry the provider runtime does not expose.",
                 "Treat OpenAI, Claude, Cursor, and Grok as the primary team. Grok is the Cursor-family peer and shares Cursor's full task-eligibility profile.",
-                f"Never default medium or long work to Claude. For an unbound assignment, accept only the deterministic trusted selector result: an authenticated exact provider requirement has priority, then capability, configured readiness, allowlisted scope, exact-candidate reviewer independence, direct-production allocation for {profile}: {profile_weights} with plus-or-minus 3 point soft preference bands, then total-effort soft-preference rank, and finally trusted cheapest cost rank. Direct-production assignment counts are tracked in the prospective last-20 window with the full 20-slot denominator and real assignments only; the owner retired the target-plus-5 rolling-twenty hard-ceiling block on 2026-09-21 as outdated, so it no longer blocks routing, while a zero target still makes a lane ineligible. Total-effort share supplies a soft ranking preference before cost, never a share-based eligibility blocker or accepted-production credit. Model-authored cost, capability, readiness, scope, provider requirements, or allocation claims are not routing authority.",
+                "Never default medium or long work to Claude. For an unbound assignment, accept only the deterministic trusted selector result: an authenticated exact provider requirement has priority, then capability, configured readiness, allowlisted scope, exact-candidate reviewer independence, and trusted cheapest cost rank. Model-authored cost, capability, readiness, scope, or provider requirements are not routing authority.",
                 "Never silently rewrite a bound provider assignment. If neither an authenticated exact provider requirement nor a trusted deterministic selection is supplied, assign the owner and ask one narrow routing question instead of guessing a cost order or defaulting to Claude.",
                 "Route Cursor by verified capabilities, assignment authority, independence, capacity, and expected information gain across low through critical work. Do not reserve Cursor only for overflow or second passes.",
                 f"Cursor may be assigned research, evidence verification, planning support, deep reasoning, elevated architecture and reliability work, complex implementation, QA, innovation, and leadership when those capabilities are available. It cannot replace {self.provider.value} runtime acceptance, mandatory Codex Security, or an independent non-author reviewer.",

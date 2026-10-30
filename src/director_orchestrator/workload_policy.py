@@ -53,19 +53,18 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Sequence
+from ._retry_constants import (
+    MAX_PROVIDER_RETRIES,
+    MAX_PROVIDER_ATTEMPTS,
+    LEGACY_PROVIDER_ATTEMPTS,
+    SUPPORTED_ATTEMPT_LIMITS,
+)
 from .allocation_profiles import allocation_targets, canonical_allocation_lane, DEFAULT_ALLOCATION_PROFILE, allocation_profile_digest
 
 
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
 FABLE_MODEL_FLOOR = "FABLE 5 ULTRA/MAX"
 COPILOT_LITE_NORMAL_BAND = (0, 4)
-
-# Owner amendment, 2026-10-24: four retries after the initial message/job attempt.
-MAX_PROVIDER_RETRIES = 4
-MAX_PROVIDER_ATTEMPTS = MAX_PROVIDER_RETRIES + 1
-LEGACY_PROVIDER_ATTEMPTS = 3
-SUPPORTED_ATTEMPT_LIMITS = frozenset({LEGACY_PROVIDER_ATTEMPTS, MAX_PROVIDER_ATTEMPTS})
-
 
 class WorkloadPolicyError(ValueError):
     """Raised when owner policy or evidence is structurally invalid."""

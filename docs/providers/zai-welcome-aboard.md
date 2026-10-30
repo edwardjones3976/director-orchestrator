@@ -36,18 +36,15 @@ results and arranges independent exact-revision review.
 
 ## Trial and resource rules
 
-Lite subscription only through September 28, 2026 (Pacific). Production's conditional
-18% target requires a separate owner activation decision on or after September 29.
+Lite subscription only through September 28, 2026 (Pacific). Production requires
+a separate owner activation decision on or after September 29.
 No upgrade, recharge, general-API fallback, or automatic allocation redistribution.
 OpenAI's separate 75% Director-activity rule earns no production credit.
 
 Use one primary attempt. One recovery is allowed only for a demonstrably temporary
 failure; a third requires a materially different transport or new evidence. Never
 redispatch an ambiguous paid attempt. After three recorded failures mark the route
-unavailable. Record real assignments, preserving history and the rolling 20-assignment
-controls (normal tolerance ±3 points, advisory only; the owner retired the target+5
-hard ceiling on 2026-09-21, so it no longer blocks admission, and a zero target
-remains ineligible).
+unavailable. Record real assignments, preserving history.
 
 The initial integration is a tools-disabled packet trial: propose code in your answer;
 the local test harness validates it. Do not claim you ran shell commands. This document

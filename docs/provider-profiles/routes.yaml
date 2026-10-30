@@ -495,7 +495,7 @@ routes:
     charter_basis:
       - document: "docs/native-codex-packet-transport.html"
         anchor: "packet-only analysis"
-      - document: "docs/provider-allocation-profiles.html"
+      - document: "docs/provider-capacity-and-authority.html"
         anchor: "The default LangGraph primary OpenAI transport uses the separately billed Responses"
     enforced_by:
       - "src/director_orchestrator/native_codex_transport.py"
@@ -720,8 +720,8 @@ routes:
     status: "authorized"
     default_config_state: "disabled"
     charter_basis:
-      - document: "docs/provider-allocation-profiles.html"
-        anchor: "A nonzero target is not evidence that a route is operational."
+      - document: "docs/provider-capacity-and-authority.html"
+        anchor: "Verify each route's actual readiness."
       - document: "docs/langgraph-primary-operations.html"
         anchor: "Perplexity or Firecrawl contact under the frozen profile"
     enforced_by:
@@ -805,8 +805,6 @@ routes:
     status: "authorized"
     default_config_state: "disabled"
     charter_basis:
-      - document: "docs/provider-allocation-profiles.html"
-        anchor: "trial ledger and earns zero accepted-production credit."
       - document: "docs/provider-setup.html"
         anchor: "Cost stays unknown, never zero, because the host CLI prices with Anthropic"
     enforced_by:

@@ -82,7 +82,7 @@
 <!-- [[Codex | GPT-5.6 | 2026-08-23 | 20:19 UTC | BEGIN]] -->
 <!-- [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | BEGIN]] -->
 <h1 id="director-orchestrator">Director Orchestrator</h1>
-<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=181f5fb5f89f79574a62f74bf16c76e3441c9e0a576b627e2a7ddb7405cd6472 -->
+<!-- DIRECTOR_OPERATING_DIRECTIVE_SHA256=9405327342d21d70ca269a00d6de467c84f27099b020f9e7d92acb67a9310934 -->
 <p>I am the Director.</p>
 <p>One owner posts a work order in one private Slack channel. I turn it into a bounded plan,
 route it to the provider lane that fits, hold each result against acceptance evidence, and
@@ -161,17 +161,10 @@ Agents, and the Perplexity Agent API.</li>
 enabled Claude adapter that requires a real bound native transport.</li>
 <li>A ChatGPT/Codex-directed team of capability-routed providers, with Gemini/Antigravity eligible for its
 authorized team mode after enrollment and qualification, and Perplexity supplying bounded
-supplemental research. Membership and allocation attest nothing about whether a provider
+supplemental research. Membership attests nothing about whether a provider
 route is enrolled or live — that is a separate evidence chain, and it is not satisfied by
 configuration.</li>
-<li>Owner-approved <a href="docs/provider-allocation-profiles.html">allocation profiles</a> across all nine
-provider lanes. Engineering defaults to OpenAI 33%, Claude 21%, Z.ai 18%, Cursor 12%, Grok 8%,
-and Antigravity 8% since the owner's 2026-09-27 Z.ai enrollment; other profiles reserve real
-research and enterprise work. A fixed
-real-assignment twenty-slot window maintains historical bounds (non-enforcing after 2026-09-21 owner retirement; for Z.ai since 2026-09-27) and zero-target exclusion,
-with ±3-point normal preference. A zero-target lane is ineligible, not merely unlikely.</li>
-<li>Deterministic accepted-productive-work accounting, an immutable pre-stage packet, rolling
-twenty-assignment preferences, cheap-capable-model selection, and a five-action ordinary
+<li>Deterministic accepted-productive-work accounting, an immutable pre-stage packet, cheap-capable-model selection, and a five-action ordinary
 review-to-merge ceiling. Total effort is telemetry, and pure Director coordination creates
 no production credit — routing work is not authoring it.</li>
 <li>An optional GitHub Copilot hygiene review after required checks are green and the exact
@@ -221,7 +214,7 @@ participation.
 Milestone updates lead with evidence, exact candidate identity, blockers, and one
 next action rather than activity summaries.</p>
 <p>Repository oversight remains scoped. OpenAI production uses a separately assigned,
-attributed lane under the frozen allocation profile; Director coordination creates
+attributed lane under its authorized assignment; Director coordination creates
 no production credit. Material authorship removes independent acceptance and merge
 eligibility for that candidate. Different-provider exact-candidate review, security,
 CI and action-specific approval remain mandatory. Profile selection grants no
@@ -238,7 +231,6 @@ baseline with the baseline, current result, delta, exclusions, and window record
 Provider selection records the eligible candidate set, exclusions, trusted comparable
 costs, selected provider/model, and deterministic tie-break reason. Routing first
 requires scope, capability, readiness, risk, and reviewer independence; applies
-direct-production eligibility and corrective under-band preference, then total-effort
 soft-preference rank (never a share-based eligibility gate), then trusted estimated cost and the deterministic
 tie-breaker. Missing cost
 telemetry is unknown, never zero. Paid routing therefore requires an operator-supplied
@@ -454,7 +446,7 @@ production credit until the owner's activation decision. xAI answers are
 evidence for the calling model; the independent-review bar and every merge
 gate in <code>policy.py</code> are untouched by anything that comes through this server.
 Z.ai's absence from every production provider enum (<code>ProviderName</code>,
-<code>allocation_profiles.LANES</code>, the Postgres <code>provider_lane</code> check) is the
+the Postgres <code>provider_lane</code> check) is the
 structural form of that guarantee, not a gap to fill.</li>
 <li><strong>Timeouts are shorter than the CLI's</strong> (Perplexity 90 s, xAI 120 s, Z.ai
 180 s) because agent hosts time tool calls out; Claude Code honours
