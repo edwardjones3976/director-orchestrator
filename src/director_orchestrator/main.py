@@ -102,10 +102,12 @@ from .chatgpt_bridge import (
 )
 # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | END]]
 from .config import Settings
+from .contact_observations import contact_observations_report
 from .engine import OrchestrationEngine
 from .models import (
     AmbiguousDispatchResolution,
     ClaudeCallback,
+    ContactObservationsReport,
     IntakeAuthentication,
     ManualRunCompletion,
     OracleRecoveryApproval,
@@ -659,6 +661,22 @@ async def run_usage_checks(background: BackgroundTasks) -> JSONResponse:
         # Explicit cooldown response: never advertise an accepted cycle with zero records.
         return JSONResponse(status_code=200, content=payload)
     return JSONResponse(status_code=409, content=payload)
+
+
+@app.get(
+    "/v1/usage-checks/contact-observations",
+    response_model=ContactObservationsReport,
+    dependencies=[Depends(require_auth)],
+)
+def read_contact_observations() -> ContactObservationsReport:
+    """Passive per-contact observations for lanes outside the probe scheduler.
+
+    Read-only: it schedules nothing, calls no provider, and grants no
+    execution, routing or producer capability (WO-20261029-005). Records are
+    derived from existing local receipts only; absent evidence stays
+    not-observed and expired evidence stays stale.
+    """
+    return contact_observations_report()
 
 
 # [[Codex | GPT-5.6 | 2026-08-23 08:31 UTC | BEGIN]]
