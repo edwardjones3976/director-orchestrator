@@ -28,7 +28,7 @@
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
 # Homemade LLM — project subsection
 
-**Project ID:** `homemade-llm` · **Owner:** Ed · **Project Director:** Claude (Claude Fable 5.1), appointed by the owner on 2026-09-24 for this project only · **State:** M0 closed under O-031; M1 closed under O-052 (winner Qwen3-14B); M2 past its 2026-10-29 target with no admitted training rows and no adapter; paused by the owner's stop and handed to Claude on 2026-10-31; direction returned to the Claude project Director (decision-log.html D-M2-65 to D-M2-69), see the [resumption record](director-resumption-20261031.html) and the [Director orders](director-orders-20261031.html)
+**Project ID:** `homemade-llm` · **Owner:** Ed · **Project Director:** Claude (Claude Fable 5.1), appointed by the owner on 2026-09-24 for this project only · **State:** M0 closed under O-031; M1 closed under O-052 (winner Qwen3-14B); M2 past its 2026-10-29 target with no admitted training rows and no adapter; paused by the owner's stop and handed to Claude on 2026-10-31; direction returned to the Claude project Director (decision-log.html D-M2-65 to D-M2-70), see the [resumption record](director-resumption-20261031.html) and the [Director orders](director-orders-20261031.html)
 
 This folder is the project-local record for building two purpose-trained local
 models on the owner's PC "blackbox" (RTX 5070 12 GB): **DIRECTOR**, an
@@ -179,6 +179,7 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
 | [`director-resumption-20261031.html`](director-resumption-20261031.html) | Director resumption and state checkpoint, 2026-10-31: owner direction, where Claude left off, the 2026-10-07 to 2026-10-31 record gap including the owner's stop and handover, outcome numbers, rulings, and the direction proposal awaiting the owner |
 | [`director-orders-20261031.html`](director-orders-20261031.html) | Director decisions under the owner's rolling authorization of 2026-10-31 (D-M2-69) and the first three bounded work orders: host seat intake and packet readout, grading of the twelve staged candidates, and a conditional A10 teacher top-up |
 | [`run-sheet-adapter-v01-20261031.html`](run-sheet-adapter-v01-20261031.html) | One-page run sheet for the first adapter v0.1 session on a rented GPU: pins, pre-GPU checks, the session sequence, post-GPU scoring, stops |
+| [`cursor-host-packet-20261031.html`](cursor-host-packet-20261031.html) | The exact host workload for the Cursor BlackBox worker under the memory-safe tandem of 2026-10-31: steps H0 to H4, memory rules, gates, report format and caps (D-M2-70) |
 | [`project-state-report.md`](project-state-report.md) | Evidence-first milestone report (M0 closed under O-031; record reconciliation pending until PR #293 gates pass) |
 
 ## Milestones
