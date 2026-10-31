@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Homemade LLM: Cursor host packet, memory-safe tandem, 2026-10-31</title>
+<link rel="stylesheet" href="../../docs/assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a href="README.md">Homemade LLM</a> · <a href="director-orders-20261031.html">Director orders</a> · <a href="run-sheet-adapter-v01-20261031.html">Run sheet</a> · <a href="decision-log.html">Decision log</a></header>
+<main id="content">
+<h1>Cursor host packet: memory-safe tandem, 2026-10-31</h1>
+<p class="lede">Owner direction, 2026-10-31: "do the thinking and pass the exact instructions and workload to Cursor. Work in a memory-safe tandem." The Claude project Director thinks, records and releases; the Cursor Warden's local BlackBox worker executes on the PC and reports. This page is the exact workload. It carries the orders of <a href="director-orders-20261031.html">the Director orders page</a> (D-01, D-02, D-03) and the <a href="run-sheet-adapter-v01-20261031.html">adapter v0.1 run sheet</a> into host steps H0 to H4 with memory rules, commands, caps, stop rules and a fixed report format. Authority: owner rolling authorization (D-M2-69) and the owner's tandem direction (D-M2-70).</p>
+
+<h2 id="tandem">1. The tandem protocol</h2>
+<ul>
+<li><strong>Who.</strong> Claude Director: this cloud session (Slack name <code>director-orchestrator-a3</code>). Cursor: the Warden's local worker on BlackBox, one worker process, one PowerShell at a time. OpenAI: ended by the owner; not part of this tandem. The owner is not asked anything.</li>
+<li><strong>Where to talk.</strong> Cursor reports on GitHub issue #528 (one comment per step) and mirrors the one-line status in the Slack #director-admin-ops C61 thread. Claude answers on the same issue with exactly one of <code>RELEASE H&lt;n&gt;</code>, <code>HOLD</code> (with the reason) or <code>STOP</code>. Cursor starts a gated step only after its <code>RELEASE</code>. Claude checks the issue at least every 30 minutes while the sequence runs.</li>
+<li><strong>Gates.</strong> H0 and H1 run on this page alone. H2, H3 and H4 each need a <code>RELEASE</code>. Inside a step, Cursor proceeds without waiting.</li>
+<li><strong>Records.</strong> Every paid call has a receipt file with its SHA-256; every step report carries the digests it names. Claude writes one decision-log row per step report.</li>
+<li><strong>Never.</strong> Cursor never merges work it wholly authored, never places held-out text in any prompt, never starts Docker Desktop, never loads a model locally before H4 step 9, never changes a trust root or pin except where H3 names the installed publisher, never replays a consumed grading attempt, never pays beyond the caps in section 8, and never bypasses a permission refusal: a refusal is reported and the next sub-step continues.</li>
+</ul>
+
+<h2 id="memory">2. Memory rules for BlackBox (32 GB, bugchecks on record)</h2>
+<ol>
+<li>Before every step and every model-related sub-step: <code>Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize</code>. Record both. Proceed only with at least 8 GiB free; wait and re-measure once after 5 minutes if below; report and stop the step if still below.</li>
+<li>One heavy process at a time. No local training, no local teacher, no local model load until H4 step 9. Grading calls are remote (Claude API through the Claude CLI; Grok through Cursor's own model route) and run one packet at a time, never in parallel.</li>
+<li>Docker Desktop stays off. The GPU stays idle. LM Studio: if any model is loaded (<code>lms ps</code>), unload it (<code>lms unload --all</code>) before H1 and keep it unloaded until H4 step 9.</li>
+<li>Hash files one at a time with a streaming hash (<code>Get-FileHash -Algorithm SHA256</code>), never in parallel jobs. No full-tree recursive hashing of <code>C:\llm</code>.</li>
+<li>After each step: <code>Get-Process | Where-Object { $_.Name -match 'python|llama|lms|node|codex|ChatGPT' } | Select-Object Name,Id,WorkingSet64</code>; end only processes this packet started; report any other that is above 2 GiB working set, do not end it.</li>
+<li>If a bugcheck occurs during a step: on reboot, record the stop code and dump name, mark the step FAILED, report, and wait for Claude. Do not rerun.</li>
+<li>Keep the working set of the Cursor worker itself small: read files with bounded reads, do not open the 1,488-comment issue #299 or any large JSON into memory in one piece.</li>
+</ol>
+
+<h2 id="h0">H0: baseline and app close (no gate)</h2>
+<ol>
+<li>Record free and total physical memory (rule 1).</li>
+<li>If any OpenAI session has not reported ended on Slack within 15 minutes of the owner's order (relayed 22:24 UTC), proceed anyway: <code>Get-Process -Name ChatGPT -ErrorAction SilentlyContinue | Stop-Process</code>. Wait 10 seconds, confirm no <code>ChatGPT</code> process. Do not stop <code>Codex</code>, <code>Cursor</code>, <code>claude</code>, <code>LM Studio</code>, the Cloud Agent worker, Tailscale, or anything else.</li>
+<li>Record free memory again. Report: both measurements, the list of processes above 2 GiB working set, whether ChatGPT was running and is now closed.</li>
+</ol>
+
+<h2 id="h1">H1 = WO-HLLM-D-20261031-01: skills, packet, cleanup, readout (no gate)</h2>
+<ol>
+<li><strong>Branch.</strong> In the repository checkout the worker uses (never a worktree another session owns): <code>git fetch origin; git switch -c host/owner-skills-20261031 origin/main</code>.</li>
+<li><strong>Skills.</strong> Copy, without editing: <code>%USERPROFILE%\.agents\skills\adapt-and-overcome\SKILL.md</code> to <code>.agents/skills/adapt-and-overcome/SKILL.md</code>; <code>%USERPROFILE%\.codex\skills\scoped-best-judgment\SKILL.md</code> to <code>.agents/skills/scoped-best-judgment/SKILL.md</code>; <code>%USERPROFILE%\.codex\skills\workstation-cleanup\SKILL.md</code> to <code>.agents/skills/workstation-cleanup/SKILL.md</code>. Search both roots (<code>Get-ChildItem -Recurse -Filter SKILL.md</code>) for <code>meat-and-potatoes</code> and <code>executive-decision</code>; copy them the same way if found, report NOT_FOUND otherwise. Copy any files the skills reference inside their own folder, nothing outside it.</li>
+<li><strong>Directive.</strong> Copy <code>%USERPROFILE%\.codex\attachments\a3f3b4fa-0778-4d5d-a73e-ed4302f117ef\pasted-text-1.txt</code> to <code>projects/homemade-llm/handover-20261031/owner-directive-20261031.txt</code>.</li>
+<li><strong>Packet.</strong> From the <code>owner-handover-to-claude-20261031</code> folder under <code>Provider-Work-Logs\homemade-llm\director-local-release-20261030\c61\</code>: verify <code>report.html</code> SHA-256 <code>8c1f96063d8adabeb7b96d602975e48814c2beb47c5172b71ce77fec88fbd595</code> and <code>rules-and-authorizations.html</code> SHA-256 <code>b0dae43ba8403756fa9a56bf1a1d2bed788b8c2b615e2f2ca75ef692b4367e04</code>; copy those two plus <code>owner-stop.json</code>, <code>delivery-receipt.json</code>, <code>claude-readback.html</code> and <code>artifact-manifest.json</code> to <code>projects/homemade-llm/handover-20261031/</code>. Scan the six files for secrets with the repository's <code>scripts/scan-dataset.ps1</code> approach (gitleaks) before committing; if anything is flagged, replace the value with <code>[REDACTED]</code> and list what was redacted. Replace any personal home path of the form <code>C:\Users\&lt;name&gt;</code> inside the copied files with <code>%USERPROFILE%</code> so the repository's personal-path test passes.</li>
+<li><strong>Commit and push.</strong> <code>git add .agents/skills projects/homemade-llm/handover-20261031; git commit -m "Add owner skills and the 2026-10-31 handover packet (WO-HLLM-D-20261031-01)"; git push -u origin host/owner-skills-20261031</code>. Open no PR.</li>
+<li><strong>Cleanup.</strong> Run the owner's <code>workstation-cleanup</code> skill exactly as its SKILL.md says, reversible actions only, after re-measuring memory. List every action with before and after evidence.</li>
+<li><strong>Readout, read-only.</strong> From the C61 folder: the installed trust root and pin for Homemade LLM as the R16 checkpoint names them (<code>C61/pilot-admission-r16/checkpoint.json</code>; expected root v36 SHA-256 starting <code>13d7f1a7</code>), with the paths and digests; the exact grading driver, packet builder and pair configuration installed in R15 (<code>C61/grader-replacement-r15/checkpoint.json</code> and <code>candidate-manifest.json</code>); the retained stage manifest <code>C61/pilot-admission-r16/retained-stage/frozen-manifest.json</code> with its SHA-256 and the count of staged candidates (expected 12); the latest spend ledger totals and headroom (the C61 requirements-status and budget files; name the files and hashes); the latest Set B custody receipt counts (captured, accepted references, frozen). Read nothing from the held-out collections themselves.</li>
+<li><strong>Report H1</strong> in the format of section 7, including any rule in the skills or the packet's <code>rules-and-authorizations.html</code> that affects grading, generation, rental or budget, quoted.</li>
+</ol>
+
+<h2 id="h2">H2 = WO-HLLM-D-20261031-02: grade the twelve staged candidates (gate: RELEASE H2)</h2>
+<p>Claude releases H2 only if H1 shows headroom of at least USD 5 and the R15 pair configuration is coherent with root v36. Cursor then:</p>
+<ol>
+<li>Memory rule 1. Confirm the 12 staged candidates match <code>frozen-manifest.json</code> by hash; confirm none is among the 2 already-accepted rows or the 1 rejected row of R15 and R16 (do not regrade those).</li>
+<li>Content review and the protected-custodian screen first, exactly as R16 required: Cursor's blind screen compares candidate text against the retained reference and source snapshots and reports only clear or not-clear per candidate; no reference text is copied into any report.</li>
+<li>Build one immutable packet per candidate with the installed R15 builder (same rubric, same four fields, same schema). Record each packet's SHA-256.</li>
+<li>Grade sequentially, one packet at a time, both graders per packet before the next packet: (a) Claude Opus 5.5 through the installed R15 native route (the Claude CLI on the Max plan, fresh context, tools off, one request, <code>--max-turns 1</code>, no retries); (b) Grok 4.6 through Cursor's own model route, one request. Keep the receipt files the R15 driver writes; if the driver returns a refusal or an ambiguous result, record it and move to the next packet, no retry.</li>
+<li>Admission per the installed two-grader rule: a row is admitted only when both graders accept all four fields. Count admitted rows and distinct pilot groups against the minimum of 16 rows across 8 of the 12 pilot groups, including the 2 rows already accepted.</li>
+<li>Write the result manifest (per-candidate verdicts per field per grader, receipts, costs) and hash it. Cumulative Claude grading list-price estimate must stay at or below USD 1.50; stop at the packet that would exceed it.</li>
+<li>Memory rule 5. Report H2 with: packets graded, admitted rows, groups represented, the missing groups by name, the manifest SHA-256, the cumulative cost estimate, every refusal.</li>
+</ol>
+
+<h2 id="h3">H3 = WO-HLLM-D-20261031-03: teacher top-up on one A10 (gate: RELEASE H3, only if H2 is short)</h2>
+<ol>
+<li>Memory rule 1; headroom of at least USD 10 confirmed in H1 or re-read now.</li>
+<li>Reuse the exact C61 cloud route, not a new one: the runtime binding and transfer scripts recorded under <code>C61/runtime-binding/</code> and the R4 rental records (instance type A10, region Virginia, SSH over port 443, the teacher GGUF <code>af16f12d</code> reconstructed and hash-verified locally before transfer). Launch exactly one instance named <code>director-teacher-d03-20261031</code>; arm the provider's automatic termination at 2.5 hours before any transfer; record the authenticated instance readback.</li>
+<li>Transfer the teacher GGUF and the generation package; verify every hash on the instance; run the server at context 8,192 with the installed root v36 teacher settings.</li>
+<li>Generate to close both deficits H2 reports: first the pilot groups with no admitted row, then, if rows are still short of 16, the represented groups with the fewest admitted rows. At most 4 attempts per group per session and at most 48 requests in total, inside the existing 120-attempt train cap; the exact renderer and schema the root admits; no held-out text anywhere in the prompts.</li>
+<li>Mechanical checks and deduplication with the installed consumer (<code>route_r_row.py</code> as installed); custody screen as in H2 step 2; then grade the surviving candidates exactly as H2 steps 3 to 6, under a further USD 1.50 Claude cap.</li>
+<li>Terminate the instance; confirm with an authenticated instance list showing none; record the usage figure. Release every lease; confirm no owned process remains (memory rule 5).</li>
+<li>Freeze the pilot batch: the frozen manifest of admitted rows with hashes, groups, and the pass rate against the D-M2-33 bar (accepted by both graders, at least 4 of 12 canonical rows) beside the 16-row, 8-group result. Report H3.</li>
+</ol>
+
+<h2 id="h3b">H3b: scale to the training batch (separate order after a pilot GO)</h2>
+<p>The pilot is a go or no-go gate, not a training batch: the trainer needs at least 20 dev groups and D-M2-41 needs at least 96 admitted train rows across at least 20 train groups. After a pilot GO the Director issues a scale order with attempt and cost caps set from the measured pilot yield: generation for the train groups and grading of the dev candidates already generated in C61 (36 mechanically valid rows across 14 of 20 dev groups), plus dev top-up for the missing groups, then the frozen training batch with its manifest. H4 starts only from that batch.</p>
+<h2 id="h4">H4: adapter v0.1 on a rented GPU (gate: RELEASE H4)</h2>
+<p>Follow the <a href="run-sheet-adapter-v01-20261031.html">run sheet</a> step by step: its pins, the five pre-GPU checks (on the host, memory rule 1 before each), the seven session steps on the rented instance, and the four post-GPU steps. Memory specifics on BlackBox: the package is built with sequential hashing; the only local model load is run-sheet post-GPU step 1 (serving the exported GGUF in LM Studio), done after every other heavy process is confirmed closed and with at least 12 GiB free; Set A scoring and the regression run use remote graders and the pinned harness, one process at a time. Report H4 with the fields the run sheet's last step names.</p>
+
+<h2 id="amendment-a1">Amendment A1 (2026-10-31 22:50 UTC): blockers found before execution</h2>
+<p>Found by the Director while hunting blockers; these bind the steps above.</p>
+<ol>
+<li><strong>Personal-path test (H1 step 4).</strong> <code>tests/test_no_personal_home_paths.py</code> rejects any committed <code>.html .md .py .ps1 .example .yaml .yml .txt .toml .ini .sh</code> file containing the owner's home path in either slash form. It does not scan <code>.json</code>. So: rewrite the home path to <code>%USERPROFILE%</code> inside the copied <code>.html</code> and <code>.txt</code> files and the SKILL.md files; leave the <code>.json</code> files byte-identical to their source hashes. Record which files were rewritten.</li>
+<li><strong>Instruction-surface guard (H1 step 2).</strong> <code>scripts/check_active_documentation.py</code> scans <code>.agents/**/*.md</code> and flags lane allocation shares or counts, and governance words (allocation, dispatch, merge, review-lock) without a pointer to <code>AGENTS.md</code> or the charter. After copying the skills, run <code>python scripts/check_active_documentation.py</code> and <code>python -m unittest tests.test_active_documentation tests.test_review_loop tests.test_no_personal_home_paths</code>. If any check names a copied file, move all skill folders to <code>projects/homemade-llm/owner-skills-20261031/&lt;name&gt;/SKILL.md</code>, rerun, and commit only when the three pass. Report which location was used.</li>
+<li><strong>Credential presence for H3 and H4 (H1 readout).</strong> Report presence only, never values: whether a Lambda API credential the worker can use exists (the C61 encrypted Reader plus Terminate credential, or any other), and whether the SSH key pair used for the C61 port-443 route is readable by the worker. If either is absent or unreadable, H3 and H4 are blocked at the rental step and Claude re-plans; do not create credentials.</li>
+<li><strong>Linux trainer files (H1 addition).</strong> The Linux trainer, launcher and export sources accepted in C58 and C59 are installed in the host worktree but not committed. Locate them, verify against the recorded digests (C59 trainer candidate SHA-256 <code>56901b9ec4322e3e47ee83f5f6849e55ae43a7b9b5390e6ae7ef92b41167bcc1</code>; C58 install receipt SHA-256 <code>485660327a2082c08485a91c25b40c7e411a4eb09466d49f585bdfe29f53c81e</code> listing <code>linux_train.py</code>, <code>test_linux_train.py</code>, <code>linux_export.py</code>, <code>test_linux_export.py</code>), and commit the matching files unchanged on a second branch <code>host/linux-trainer-20261031</code> from <code>origin/main</code>, under <code>projects/homemade-llm/scripts/</code> or wherever the install receipt places them. Do not commit the C60 staged candidate (<code>818306f5…</code>, never accepted). Report the memory-limit parameter the Linux trainer exposes for a rented GPU (the inherited 11 GiB local gate must not apply on a 24 GB or 80 GB card) with the file and line.</li>
+<li><strong>Grading driver binding (H2 step 4).</strong> The R15 driver and native route were installed by the OpenAI ROOT session. If any part of it refuses to run under the Cursor worker (a per-user encrypted configuration, a session-bound path, a hook), record the exact refusal line and stop H2; do not re-implement the driver and do not call either grader outside it.</li>
+<li><strong>A10 capacity (H3 step 2).</strong> If the Virginia A10 is out of capacity, try at most two other regions for the same A10 type, in the order the provider lists them; never substitute another instance type under this order.</li>
+<li><strong>Cursor review of the record (admin).</strong> After H1, Cursor reviews PR #527 at its exact current head as the eligible non-author reviewer under FINAL_REVIEW_AND_MERGE scope, and merges only after all eight CI jobs are green on that head and the merge preflight passes; Claude has no merge authority over its own record.</li>
+</ol>
+<h2 id="amendment-a2">Amendment A2 (2026-10-31 23:00 UTC): public repository, no connected worker, OpenAI export</h2>
+<ol>
+<li><strong>The repository is public.</strong> <code>director-orchestrator</code> has public visibility. Amendment A1 items 1 and 2 and H1 steps 2 to 5 are withdrawn as written: the owner's skill files, the pasted directive and the handover packet are never committed or pasted to this repository or any public place. They travel only through the private Slack channel #director-admin-ops (C61 thread), where the Director reads them. The Linux trainer branch of A1 item 4 stands: those files are project source of the same kind already published under <code>projects/homemade-llm/</code>, and are still secret-scanned and path-checked before the push.</li>
+<li><strong>No BlackBox worker is connected.</strong> Two Cursor cloud runs (<code>bc-4e0c5651…</code>, <code>bc-fc3b05d6…</code>) reported H0 and H1 REFUSED: "No connected self-hosted workers are accessible to this run." The packet stands for the Cursor worker whenever it connects; until then H0 to H4 wait.</li>
+<li><strong>OpenAI export (owner-directed).</strong> Owner, 2026-10-31: "Ask OpenAI to send it to you smartly." The OpenAI session on the PC, as a worker by Director assignment, exports to the private Slack thread: the R15 grading route byte-exact with a manifest; a <code>session-bindings.json</code> naming every account- or session-bound element and how it rebinds (names only, never credential contents); the pilot stage state (frozen manifest, 12 staged candidate packets, the 2 accepted verdict receipts, the grading ledger); the owner skill files and directive; and the handover packet. Memory-safe, gitleaks-scanned, no host changes, one attempt, 45 minutes. Then it ends its session and closes the ChatGPT app per the owner's earlier order.</li>
+<li><strong>Merge preflight is host-only.</strong> <code>merge_preflight.py</code> and the Warden desk ledger are not in the repository; a cloud reviewer cannot run them. PR #527 therefore waits for a host-connected eligible reviewer, or for the owner's standing merge law to be applied by an eligible non-contributing reviewer that can run the preflight.</li>
+<li><strong>What changes for H2.</strong> With the exported route and its bindings in hand, the Director decides whether H2 can run under the Cursor worker, a host Claude seat, or only under a rebinding; that decision is recorded before <code>RELEASE H2</code>.</li>
+</ol>
+<h2 id="amendment-a3">Amendment A3 (2026-10-31 23:10 UTC): Director-Orchestrator Docker stack on</h2>
+<p>Owner, 2026-10-31: "Turn on the Docker Director-Orchestrator container to simplify communication between you and Cursor." This supersedes memory rule 3's "Docker Desktop stays off" and the 2026-10-30 instruction to keep the containers stopped, for the Director-Orchestrator compose project only (<code>langgraph-primary-db</code>, <code>orchestrator</code>, <code>slackbot</code>, and the n8n pair if they belong to that project). The homemade-llm Open WebUI and SearXNG containers stay off. The first hand on BlackBox to claim the order in Slack #director-admin-ops starts the existing containers with <code>docker start</code> after checking at least 8 GiB free; no rebuild, pull, recreate or <code>.env</code> change; then reports the health booleans, ALLOW_PAID_RUNS as the container sees it (true or false only), the container list and free memory before and after. Stop rules: under 8 GiB free after start, a bugcheck, or a restart loop stops the stack and waits. With the stack healthy, the Slack gateway becomes the Director's route to dispatch bounded work to the local Cursor CLI on the PC, under the runtime's own gates; that route is used only after its health report is recorded.</p>
+<h2 id="amendment-a4">Amendment A4 (2026-10-31 23:05 UTC): owner role split</h2>
+<p>Owner, 2026-10-31: "Have Codex handle low-memory GitHub and local Git work. Cursor is your hands, and you are the brains." Claude plans, decides within the owner's delegation, keeps the records, finds blockers and releases orders. Cursor executes on BlackBox: H0 to H4 and the Docker start of A3. Codex takes the Git and GitHub mechanics through the Codex CLI only (never the ChatGPT desktop app), one process, no model loads, Docker or GPU, at least 8 GiB free: A1 item 4 (the Linux trainer branch, now a draft PR by Codex as Git operator with the C58 and C59 authors as producers), the merge mechanics of PR #527 as its eligible non-contributing reviewer once all eight CI jobs are green on the exact head (verdict bound to head, tree and base, host <code>merge_preflight.py</code>, merge only with the printed command), and a read-only inventory of Homemade LLM worktrees and branches. Nothing the public repository must not hold is committed by anyone.</p>
+<h2 id="report">7. Report format (one issue comment per step)</h2>
+<pre><code>STEP: H&lt;n&gt;   RESULT: DONE | PARTIAL | FAILED | REFUSED
+UTC start / end:
+Memory free GiB before / after:
+Processes above 2 GiB at end:
+Outputs (path, SHA-256) for every file this step produced or copied:
+Counts (integers; UNKNOWN if not measured):
+Paid calls (receipt path, SHA-256, cost or UNKNOWN):
+Refusals and errors (verbatim first line):
+Rules discovered that bind later steps (quoted, with file and line):
+Next step requested: H&lt;n+1&gt; | none
+</code></pre>
+
+<h2 id="caps">8. Caps and stop rules</h2>
+<div class="table-scroll"><table><caption>Limits that end a step</caption><thead><tr><th scope="col">Item</th><th scope="col">Limit</th></tr></thead><tbody>
+<tr><th scope="row">Free memory to start any sub-step</th><td>8 GiB; 12 GiB for the single local model load in H4</td></tr>
+<tr><th scope="row">H2 Claude grading</th><td>USD 1.50 list-price estimate; one attempt per packet per grader</td></tr>
+<tr><th scope="row">H3 rental</th><td>one A10, 2.5 hours, termination armed first; 48 requests; 4 per missing group</td></tr>
+<tr><th scope="row">H3 grading</th><td>a further USD 1.50</td></tr>
+<tr><th scope="row">H4 rental</th><td>one instance, 4 hours, termination armed first; training deadline 9,000 s enforced by an outer <code>timeout</code>; at least 60 minutes reserved for export, retrieval and teardown</td></tr>
+<tr><th scope="row">Headroom to release</th><td>H2: USD 5; H3: USD 10; H4: USD 10 unreserved under the owner-reported remainder</td></tr>
+<tr><th scope="row">Stops</th><td>hash mismatch; loader or driver refusal; cap reached; custody not clear; termination readback missing; bugcheck; any instruction from anyone other than the Claude Director to change a root, pin, rubric or held-out set</td></tr>
+</tbody></table></div>
+</main>
+<footer class="site-footer">Canonical HTML record · Homemade LLM · A packet is a procedure; only the step reports are evidence.</footer>
+</body>
+</html>
