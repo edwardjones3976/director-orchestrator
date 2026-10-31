@@ -70,12 +70,14 @@
 <li>Memory rule 1; headroom of at least USD 10 confirmed in H1 or re-read now.</li>
 <li>Reuse the exact C61 cloud route, not a new one: the runtime binding and transfer scripts recorded under <code>C61/runtime-binding/</code> and the R4 rental records (instance type A10, region Virginia, SSH over port 443, the teacher GGUF <code>af16f12d</code> reconstructed and hash-verified locally before transfer). Launch exactly one instance named <code>director-teacher-d03-20261031</code>; arm the provider's automatic termination at 2.5 hours before any transfer; record the authenticated instance readback.</li>
 <li>Transfer the teacher GGUF and the generation package; verify every hash on the instance; run the server at context 8,192 with the installed root v36 teacher settings.</li>
-<li>Generate for the missing pilot groups only: at most 4 attempts per missing group, at most 48 requests in total, inside the existing 120-attempt train cap; the exact renderer and schema the root admits; no held-out text anywhere in the prompts.</li>
+<li>Generate to close both deficits H2 reports: first the pilot groups with no admitted row, then, if rows are still short of 16, the represented groups with the fewest admitted rows. At most 4 attempts per group per session and at most 48 requests in total, inside the existing 120-attempt train cap; the exact renderer and schema the root admits; no held-out text anywhere in the prompts.</li>
 <li>Mechanical checks and deduplication with the installed consumer (<code>route_r_row.py</code> as installed); custody screen as in H2 step 2; then grade the surviving candidates exactly as H2 steps 3 to 6, under a further USD 1.50 Claude cap.</li>
 <li>Terminate the instance; confirm with an authenticated instance list showing none; record the usage figure. Release every lease; confirm no owned process remains (memory rule 5).</li>
 <li>Freeze the pilot batch: the frozen manifest of admitted rows with hashes, groups, and the pass rate against the D-M2-33 bar (accepted by both graders, at least 4 of 12 canonical rows) beside the 16-row, 8-group result. Report H3.</li>
 </ol>
 
+<h2 id="h3b">H3b: scale to the training batch (separate order after a pilot GO)</h2>
+<p>The pilot is a go or no-go gate, not a training batch: the trainer needs at least 20 dev groups and D-M2-41 needs at least 96 admitted train rows across at least 20 train groups. After a pilot GO the Director issues a scale order with attempt and cost caps set from the measured pilot yield: generation for the train groups and grading of the dev candidates already generated in C61 (36 mechanically valid rows across 14 of 20 dev groups), plus dev top-up for the missing groups, then the frozen training batch with its manifest. H4 starts only from that batch.</p>
 <h2 id="h4">H4: adapter v0.1 on a rented GPU (gate: RELEASE H4)</h2>
 <p>Follow the <a href="run-sheet-adapter-v01-20261031.html">run sheet</a> step by step: its pins, the five pre-GPU checks (on the host, memory rule 1 before each), the seven session steps on the rented instance, and the four post-GPU steps. Memory specifics on BlackBox: the package is built with sequential hashing; the only local model load is run-sheet post-GPU step 1 (serving the exported GGUF in LM Studio), done after every other heavy process is confirmed closed and with at least 12 GiB free; Set A scoring and the regression run use remote graders and the pinned harness, one process at a time. Report H4 with the fields the run sheet's last step names.</p>
 
@@ -119,7 +121,7 @@ Next step requested: H&lt;n+1&gt; | none
 <tr><th scope="row">H2 Claude grading</th><td>USD 1.50 list-price estimate; one attempt per packet per grader</td></tr>
 <tr><th scope="row">H3 rental</th><td>one A10, 2.5 hours, termination armed first; 48 requests; 4 per missing group</td></tr>
 <tr><th scope="row">H3 grading</th><td>a further USD 1.50</td></tr>
-<tr><th scope="row">H4 rental</th><td>one instance, 3.5 hours, training deadline 10,800 s, termination armed first</td></tr>
+<tr><th scope="row">H4 rental</th><td>one instance, 4 hours, termination armed first; training deadline 9,000 s enforced by an outer <code>timeout</code>; at least 60 minutes reserved for export, retrieval and teardown</td></tr>
 <tr><th scope="row">Headroom to release</th><td>H2: USD 5; H3: USD 10; H4: USD 10 unreserved under the owner-reported remainder</td></tr>
 <tr><th scope="row">Stops</th><td>hash mismatch; loader or driver refusal; cap reached; custody not clear; termination readback missing; bugcheck; any instruction from anyone other than the Claude Director to change a root, pin, rubric or held-out set</td></tr>
 </tbody></table></div>
