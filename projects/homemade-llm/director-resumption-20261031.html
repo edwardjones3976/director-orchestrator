@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Homemade LLM: Director resumption and state checkpoint, 2026-10-31</title>
+<link rel="stylesheet" href="../../docs/assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a href="README.md">Homemade LLM</a> · <a href="decision-log.html">Decision log</a> · <a href="../../docs/html-documentation-policy.html">Documentation policy</a></header>
+<main id="content">
+<h1>Director resumption and state checkpoint, 2026-10-31</h1>
+<p class="lede">The owner has returned the Homemade LLM project to its appointed Director, Claude, and rejected the direction it took under OpenAI. This page records that direction, the state Claude last recorded, what the merged record shows happened in between, the verified state at resumption, the Director's rulings, and the proposal that needs the owner's macro approval.</p>
+<p><strong>Grades.</strong> <code>[verified]</code> read from the repository at <code>main</code> <code>fe25119656035bfcafa760457e547fb80898e08b</code> by the Director session on 2026-10-31. <code>[relayed]</code> a pull-request body, issue, comment or report claim, or the owner's words reported by a session. <code>[research]</code> public web research on 2026-10-31 with a source. <code>[unknown]</code> not establishable from the repository; the owner's host under <code>C:\llm</code> is not readable from this session. Nothing on this page certifies a run, a model, a qualification or a merge.</p>
+
+<h2 id="owner-direction">1. Owner direction, 2026-10-31</h2>
+<blockquote><p>"Pick up where we left off with the LLM, and take it back over. I don't like OpenAI's direction."</p><p class="muted">Owner, in the Claude Code session, received 2026-10-31 about 21:08 UTC. Recorded as decision-log row D-M2-65 <code>[relayed]</code>.</p></blockquote>
+<p>The Director reads this as follows.</p>
+<ul>
+<li><strong>Appointment.</strong> Claude's appointment as Director of this project only (O-001, 2026-09-24) was never revoked and now operates directly again. The owner's 2026-10-26 directive for Director-Orchestrator (PR #519, unmerged) concerns that project and leaves this appointment unchanged.</li>
+<li><strong>End of OpenAI's delegated judgment here.</strong> O-055 (scoped M2 decisions) and O-063 ("Use your best judgment to clear the block and move forward") are no longer exercised by Codex for this project. The <code>mission-20261022</code> Foreman work-order stream for Homemade LLM source is closed to new orders. Merged work, in-flight writers, receipts and evidence are retained; nothing is reverted by this record.</li>
+<li><strong>Roles that continue.</strong> Codex remains eligible as a maintenance writer and as a non-author reviewer by Director assignment only, under the charter's maintenance routing. Cursor remains reviewer and eligible merger under its existing eligibility. Perplexity and Firecrawl remain research-only. One writer per file, independence, availability and budget are preserved.</li>
+<li><strong>Who approves what.</strong> The owner approves macro-plan changes (O-066); section 7 asks for them. Individual assignments and subordinate plans are the Director's.</li>
+<li><strong>Unchanged.</strong> Every deterministic gate, budget cap, held-out rule, exact-head review, CI, security and merge control. No GPU run, generation, paid call or qualification is released by this record.</li>
+</ul>
+
+<h2 id="where-we-left-off">2. Where Claude's direction left off</h2>
+<ul>
+<li><strong>2026-09-28.</strong> The owner approved M2 and released GPU time and paid generation within the caps (O-050, O-051). The M1 winner is Qwen3-14B at <code>40c069824f4251a91eefaf281ebe4c544efd3e18</code> (O-045, O-052) <code>[relayed]</code>.</li>
+<li><strong>2026-09-29 18:05 UTC, D-M2-16.</strong> Every M2 code packet was on <code>main</code> with an exact-head non-author ACCEPT: the context contract (M2-C1), the row validator (M2-S1), the trainer (M2-T1) and the exemplar harness (M2-G1). M2 paid spend by those packets was USD 0.53. Eight host steps remained, none started: Set A and Set B context files, the M2-C1 regeneration and grading, M2-D1 real-history rows, M2-D2 owner seeds, the M2-G2 pilot of about 100 rows, M2-Q1 grading, the first real <code>validate_rows.py</code> run, and M2-T2 training (PR #355 comment 5904088674) <code>[relayed]</code>.</li>
+<li><strong>2026-09-29 17:11 to 18:32 UTC, D-M2-17.</strong> Cursor re-read the provider terms and stopped the first cloud exemplar cohort; Codex restated the stop and proposed local open-weight drafting. The log records this as "not an owner decision". The clauses read on 2026-10-31: Anthropic's Commercial Terms bar access to the Services "to build a competing product or service, including to train competing AI models"; Anthropic's help centre says outputs may train models that do not compete with Anthropic's own and that training otherwise needs Anthropic's written permission; OpenAI's Terms of Use bar using Output "to develop models that compete with OpenAI"; Cursor's terms carry a similar clause <code>[research]</code>. Whether a private, local packet-writer for this orchestrator "competes" has never been decided by the owner.</li>
+<li><strong>2026-09-30 09:01 UTC, O-063.</strong> The owner told the Codex Director: "Use your best judgment to clear the block and move forward." Codex chose the local-teacher route (Qwen3-14B and Phi-4 draft exemplars; cloud providers barred). "No owner statement names that route" <code>[relayed]</code>.</li>
+<li><strong>2026-10-02 to 2026-10-05.</strong> A committee chaired by ChatGPT resolved extractive targets from Kubernetes Enhancement Proposals (D-M2-22); the owner approved that plan (O-067). The copy-only test reached 4 of 14 and the owner stopped it (D-M2-26, D-M2-28). Route R, in which the pinned teacher writes the four target fields and providers only grade, was recorded as owner words relayed by the Director (D-M2-32). Revisions 6 to 9 of the qualification plan, trust roots v2r2 to v2r4 and the USD 484.50 ceiling with delegations to the Claude Director followed (D-M2-36 to D-M2-64). Claude's last recorded rulings are D-M2-63 (the T_max + 2048 limit) and D-M2-64 (103 constructed inputs admitted) <code>[verified, decision-log.html]</code>.</li>
+<li><strong>2026-10-06.</strong> The Claude Director dispositioned the trainer slices, the constructor v3 correction and the P7 smoke package (#458, #462, #464, #466, #468, #470, #471, #472). P7 smoke runs 1 and 2 failed before any model load (a link guard over retained fixtures; the HF cache redirect inside the image) and were fixed; run 3 needed a fresh release; seven connector P2s were deferred to #469 and remain unfixed. These are the last Homemade LLM decisions by the Claude Director <code>[verified from the PR threads; outcomes relayed]</code>.</li>
+</ul>
+
+<h2 id="merged-record">3. What the merged record shows, 2026-10-06 to 2026-10-25</h2>
+<p>No decision-log row exists for anything below; the canonical log stops at D-M2-64 (2026-10-05 17:48 UTC). The table reconstructs the direction from the pull requests as merged. Git author fields are worktree identities; the producers are those the PR bodies name. All of it is <code>[relayed]</code> except the presence of the merged files, which is <code>[verified]</code>.</p>
+<div class="table-scroll"><table><caption>Direction encoded by the pull requests merged after the record cutoff</caption><thead><tr><th scope="col">PR</th><th scope="col">Merged (UTC)</th><th scope="col">Direction it encodes</th><th scope="col">Origin and authority as the PR states it</th></tr></thead><tbody>
+<tr><th scope="row">#473</th><td>2026-10-22 16:45</td><td>Qwen3-8B at <code>b968826d</code> becomes the M2 epoch student under trusted-digest manifest v3; the pinned 14B stays the teacher. Export accepts only the two pinned pairs.</td><td>"Carries out the owner's student-base decision (#299 6021237576)" after a host read fault; Codex WO-B2 written in the <code>mission-20261022</code> packets; applied by the Claude Director-Orchestrator session; no Cursor verdict visible on the thread.</td></tr>
+<tr><th scope="row">#486</th><td>2026-10-22 16:46</td><td>A third student, the pre-quantized 4-bit <code>unsloth/Qwen3-8B-unsloth-bnb-4bit</code> at <code>62efd7f9</code>, selected by <code>-Student4Bit</code>, under a manifest v4 draft whose owner approval is <code>null</code>. The commit states "equivalence to on-load quantization is assumed, not measured."</td><td>Owner instruction about 09:05 UTC, "find a better fitting weight load", as quoted by the PR; Codex WO-B3, B3b, B3c. Owner approval of manifest v4 still pending.</td></tr>
+<tr><th scope="row">#483</th><td>2026-10-22 16:46</td><td>Frozen KEP constructor v4 and an offline supply count over the pinned archive: 648 records, 117 allocation-valid before tokenization.</td><td>Codex WO-C1 ruling and WO-C2; "#299 6334537059 (Director decisions)".</td></tr>
+<tr><th scope="row">#490</th><td>2026-10-22 18:12</td><td>Verified-read model loader: cache-bypassing reads, two consecutive matching reads per file, sealed memory files handed to the loader, tensors re-verified on GPU.</td><td>Codex Foreman WO-G32 with amendments, after "the admin memory test of 2026-10-22" found one XOR 0x08 byte flip on reads. The owner's earlier "no memory test" (O-065) is not reconciled anywhere in the record.</td></tr>
+<tr><th scope="row">#497, #498, #503, #509</th><td>2026-10-23</td><td>Tolerances so real artifacts pass the loader: Qwen2 tokenizer rewrites (first 4-bit probe refused), Unsloth pad-row zeroing (second probe refused), a shared 180-second read deadline (a real read took 123.9 s), EOS identity binding. #509 also repairs hosted CI controls.</td><td>Codex Foreman WO-G74 to WO-G87; "owner full override of the quarantine recorded as WO-G82"; "Owner authorized queue clearance" (#299 6372933708). Status recorded on #509: four 8B attempts consumed, zero optimizer updates.</td></tr>
+<tr><th scope="row">#459</th><td>2026-10-23 18:42</td><td>Canonical HTML decision log through D-M2-64, authored by Cursor, reviewed and merged by Claude.</td><td>Record only.</td></tr>
+<tr><th scope="row">#514</th><td>2026-10-24 22:00</td><td>Windows handle-based read identity and commit-hash carry-through; trust root v2r12 cutover (root <code>6ecd2033</code>, pin <code>6fc087c5</code>).</td><td>Cursor accepted and merged; "both leads" approval of the root as the thread states. Producer not named in the body.</td></tr>
+<tr><th scope="row">#515</th><td>2026-10-25 00:48</td><td>A "handoff" diagnostic as the gate before training: eight microsteps, schema-constrained generation on the longest input, eight more microsteps; root v2r14 (<code>a12c7654</code>, pin <code>aaf846b7</code>).</td><td>Cursor accepted and merged. Producer not named in the body.</td></tr>
+<tr><th scope="row">#517</th><td>2026-10-25 02:30</td><td>The first handoff saved a diagnostic adapter and completed one optimizer update, then failed before generation on an lm-format-enforcer import against Transformers 5.17.0. The bridge was authored by Claude Fable 5.1; Codex repinned the launcher.</td><td>Pending as of the PR: real-package CPU validation and a repaired GPU diagnostic, owned by the host session.</td></tr>
+</tbody></table></div>
+<p>Earlier in the window, 2026-10-06, the Claude Director landed the trainer slices, constructor v3 and the P7 smoke route (#458, #460, #461, #462, #464, #466, #468, #470, #471, #472); those are recorded in section 2.</p>
+
+<h2 id="outcome">4. Outcome at resumption</h2>
+<div class="table-scroll"><table><caption>Measured or recorded outcome, with its basis</caption><thead><tr><th scope="col">Measure</th><th scope="col">Value</th><th scope="col">Basis</th></tr></thead><tbody>
+<tr><th scope="row">Admitted training rows</th><td>0</td><td>Last recorded count D-M2-23 (2026-10-02); #515: "probe-only rows are not an admitted epoch dataset" <code>[relayed]</code></td></tr>
+<tr><th scope="row">Qualifying adapters</th><td>0</td><td>#517 pending text <code>[relayed]</code></td></tr>
+<tr><th scope="row">Optimizer updates on the 8B student</th><td>1, in the first handoff, after four attempts with 0</td><td>#509 comment 6373743009; #517 body <code>[relayed]</code></td></tr>
+<tr><th scope="row">Prospective Set B frozen</th><td>0 of 50</td><td>#357 comment 5999698285, 2026-10-05; no later checkpoint exists <code>[verified, issue thread]</code></td></tr>
+<tr><th scope="row">Set A</th><td>14 scored items, frozen</td><td>D-M2-48</td></tr>
+<tr><th scope="row">M2 target date</th><td>2026-10-29, missed</td><td>PLAN.md; workstream-plan-m2.md</td></tr>
+<tr><th scope="row">L1 DIRECTOR launch target</th><td>2026-11-12; not reachable on the current evidence</td><td>PLAN.md section 2</td></tr>
+<tr><th scope="row">M2 paid ceiling</th><td>USD 25, then 40, 110, 205, 285, 484.50</td><td>O-005, O-064, D-M2-44, D-M2-47</td></tr>
+<tr><th scope="row">M2 known spend</th><td>USD 9.15 known, 16.15 upper bound, at 2026-10-02; no later figure in the repository</td><td>D-M2-23; later ledgers live on the host <code>[unknown here]</code></td></tr>
+<tr><th scope="row">Trust-root revisions</th><td>v1 to v2r14 between 2026-10-02 and 2026-10-25</td><td>D-M2-35 to D-M2-54; #514; #515 <code>[relayed]</code></td></tr>
+<tr><th scope="row">Student pins</th><td>3: Qwen3-14B winner, Qwen3-8B bf16, Qwen3-8B 4-bit</td><td>#473, #486</td></tr>
+<tr><th scope="row">Lines added to the project since 2026-10-06</th><td>about 11,000 across 19 PRs</td><td>Sum of the PR diff statistics <code>[verified, PR metadata]</code></td></tr>
+</tbody></table></div>
+
+<h2 id="verified-state">5. Verified state at resumption</h2>
+<p><strong>On <code>main</code> <code>[verified]</code>:</strong> <code>eval/prepare_kep_inputs.py</code> with rules v2, v3 and v4 and <code>eval/kep_constraints_v4.py</code>; <code>eval/validate_rows.py</code>, <code>eval/generate_rows.py</code>, <code>eval/build_inputs.py</code>, <code>eval/generate_candidates.py</code>, <code>eval/score_packets.py</code>, <code>eval/grade_packets.py</code>, <code>eval/item_score.py</code>, <code>eval/dev_selection.py</code>, <code>eval/predict_dev.py</code> and the LM Studio native prediction scripts; <code>train/train_adapter.py</code> (probe, context-probe, handoff and epoch modes; three student pins; the verified-read loader), <code>train/epoch_authority.py</code>, <code>train/prompt_template.py</code>, <code>train/smoke_train.py</code>; <code>scripts/train-adapter.ps1</code>, <code>train-adapter-stage.ps1</code>, <code>export-adapter.ps1</code>, <code>train-smoke.ps1</code>, <code>serve-smoke.ps1</code>, <code>invoke-bounded.ps1</code>, <code>spend_meter.py</code>; the row schema and the provider-roles contract. The decision log on <code>main</code> ends at D-M2-64.</p>
+<p><strong>On the owner's host <code>[unknown here]</code>:</strong> the installed trust root and pin (reported v2r14 <code>a12c7654</code> / <code>aaf846b7</code>), manifests v1 to v4, the constructed 103 and the v4 117 inputs, the held-out collections and custody receipts, the spend ledgers, the <code>mission-20261022</code> packets and every run receipt. These are cited as reported; none was read by this session.</p>
+<div class="table-scroll"><table><caption>Open Homemade LLM issues and the Director's disposition at resumption</caption><thead><tr><th scope="col">Issue</th><th scope="col">State as read 2026-10-31</th><th scope="col">Disposition</th></tr></thead><tbody>
+<tr><th scope="row">#469</th><td>Seven P7 smoke P2s, unfixed; only a routing note since 2026-10-06.</td><td>Open. Required before any non-smoke reuse of the smoke scripts. Fix in one bounded PR when a smoke run is next needed.</td></tr>
+<tr><th scope="row">#463</th><td>Both items implemented by #464 (merged 2026-10-06); no closing comment.</td><td>Close with the #464 evidence.</td></tr>
+<tr><th scope="row">#457, #456</th><td>Consumer-side checks landed in #466; the qualification evidence each demands (the real-row probe measurement) was never recorded on the issue.</td><td>Open pre-epoch blockers. Closed only by the probe record in section 8, action 5.</td></tr>
+<tr><th scope="row">#455</th><td>Unscheduled P2 on the dev scorer.</td><td>Open; schedule with the next scorer change.</td></tr>
+<tr><th scope="row">#447, #440, #439, #419</th><td>Review follow-ups; some items addressed by later PRs (#466, #472, #490) without disposition on the issue.</td><td>One reconciliation pass maps each item to its PR or keeps it open; no new writer until then.</td></tr>
+<tr><th scope="row">#425</th><td>Research complete 2026-10-02; nothing admitted.</td><td>Close as complete; the report stays reference material.</td></tr>
+<tr><th scope="row">#409</th><td>Superseded by manifests v1 to v4 and the 2026-10-02 incident note (D-M2-20).</td><td>Close with those links after the manifest decision in section 7.</td></tr>
+<tr><th scope="row">#359</th><td>COMPANION Stage A screen; held since 2026-09-29.</td><td>Open; M4 is after L1.</td></tr>
+<tr><th scope="row">#357</th><td>Set B 0 of 50 frozen; weekly checkpoints stopped after 2026-10-05.</td><td>Open; counts-only refresh from the custodian (section 8, action 4); size decision in section 7.</td></tr>
+</tbody></table></div>
+<p><strong>Blockers before any training run, as the record stands:</strong> owner approval of manifest v4 if the 4-bit student is kept; CPU validation of the #517 bridge and a repaired GPU diagnostic; the #456 and #457 qualification evidence; custody acknowledgment of all three held-out collections; a frozen batch of at least 96 admitted train rows across at least 20 groups with at least 20 disjoint dev groups (D-M2-41); the regression lock (D-M2-30); budget headroom under the subcaps; a free GPU mutex. None is satisfied by this record.</p>
+
+<h2 id="rulings">6. Director rulings at resumption</h2>
+<ol>
+<li><strong>Direction</strong> is as section 1 states (D-M2-65).</li>
+<li><strong>Hold</strong>, pending the owner's macro decision in section 7: no new trust-root revision, loader tolerance, student pin, handoff variant or constructor expansion is ordered, and no further 8B GPU attempt is released. Merged code stays; maintenance that keeps CI green continues (D-M2-66).</li>
+<li><strong>Continues, direction-neutral:</strong> this record and the decision-log append; the issue reconciliation in section 5; a counts-only Set B supply refresh from the custodian; the spend-meter M2 read-out from the host session; daily briefings with a Homemade LLM line.</li>
+<li><strong>Record discipline:</strong> every Homemade LLM direction decision gets a decision-log row before its work order is issued; a PR body is not the record. The gap from 2026-10-06 to 2026-10-25 is closed by section 3 as a reconstruction, graded relayed, not as ratification.</li>
+<li><strong>Maintenance routing</strong> stays with the charter until the owner answers decision 6 below.</li>
+<li>Nothing here certifies a run, a model or a qualification.</li>
+</ol>
+
+<h2 id="proposal">7. Direction proposal for the owner's macro approval</h2>
+<p class="notice">In one line: since 2026-09-29 the project has built a trust chain and a diagnostic ladder instead of a dataset and an adapter. The data route is defensible under the provider terms, but its heaviest machinery exists to tolerate a host that mis-reads bytes and a student that changed twice in one day.</p>
+<p>The Director recommends the simple path first.</p>
+<ol>
+<li><strong>Host integrity: repair, not tolerate.</strong> The admin memory test of 2026-10-22 reported a one-byte read flip on two drives. Have the machine diagnosed and repaired as a normal PC fault (memory, NVMe, chipset driver) before more GPU time is spent, and keep the two-consecutive-read rule as the check. The alternative is to declare the verified-read loader sufficient and stop extending it. The Director recommends the repair; engineering around the fault is what consumed October. This is the owner's machine and the owner's call.</li>
+<li><strong>Student: the M1 winner first.</strong> Train the first adapter on Qwen3-14B at <code>40c0698</code>. The 2026-09-29 probe reserved 10.4 GiB on short rows (D-M2-14, D-M2-19); run the D-M1-F probe once on real constructed rows. Fall back to the bf16 Qwen3-8B, already pinned under manifest v3, only if that probe fails the 11 GiB gate. Drop the 4-bit pin and its unapproved manifest v4 unless the owner wants it kept as a third fallback.</li>
+<li><strong>Data: run the approved teacher pilot now, and decide the provider question once.</strong> Run the Route R pilot that revision 8 already approved (12 canonical rows, both graders, at least 4 of 12 to proceed, USD 1.50 cap, D-M2-33) with the merged tooling, then scale to the 96-row batch of D-M2-41. In parallel the owner decides the provider-exemplar question in one of three ways: (i) keep provider outputs out of training, the status quo; (ii) ask Anthropic in writing for permission for this private, non-commercial use, which the help centre names as the route; (iii) decide that a private local tool does not "compete" and reopen the M2-G2 provider mix, accepting the terms risk. The Director recommends (i) now with (ii) started in parallel, because written permission removes the dispute entirely.</li>
+<li><strong>Trust chain: freeze.</strong> One installed root, one owner-approved manifest, no new roots until a trained adapter exists. Keep the two-consecutive-read rule and the existing leak wall.</li>
+<li><strong>Dates: re-baseline after the pilot.</strong> L1 on 2026-11-12 is not reachable. Under O-022 the date slips and the bar holds; the Director will propose dates within one week of the pilot result.</li>
+<li><strong>Set B: decide the size for L1.</strong> Zero of 50 frozen at a required pace of 17.5 items a week is not credible. Either a 20-item prospective Set B qualifies L1 with the per-item bar unchanged and the full 50 required for L2, or L1 scores Set A plus the historical reconstructed set as a disclosed proxy. Owner decision.</li>
+</ol>
+<p><strong>Decisions requested from the owner.</strong> (1) Host: repair, or tolerate with the loader as is. (2) Student: 14B first with bf16 8B fallback, or keep the 4-bit 8B. (3) Provider outputs: (i), (ii) or (iii) above. (4) Set B size for L1. (5) Re-baseline the dates after the pilot. (6) Whether OpenAI Codex stays the maintenance writer for this project's trainer and tooling, or that maintenance moves to Cursor or Claude by Director assignment; the charter routes maintenance to Codex, and "I don't like OpenAI's direction" may or may not include its labour.</p>
+
+<h2 id="next-actions">8. Next seven actions</h2>
+<ol>
+<li>Land this record and the decision-log rows D-M2-65 and D-M2-66 through the ordinary review and merge gates (this PR).</li>
+<li>Owner answers the six decisions in section 7; the Director records each answer as a decision-log row.</li>
+<li>Issue reconciliation pass over the thirteen open Homemade LLM issues as dispositioned in section 5, with evidence links; no new writer is assigned by that pass.</li>
+<li>Counts-only Set B supply refresh from the Cursor custodian, and the spend-meter M2 read-out from the host session, both recorded as rows.</li>
+<li>If decision 2 keeps the 14B: one D-M1-F probe on the installed root with real constructed inputs and no training step, reporting row p95, peak reserved memory and the three-epoch estimate; this is also the #456 and #457 qualification evidence.</li>
+<li>Teacher pilot under D-M2-33 after actions 4 and 5: 12 canonical rows, both graders, USD 1.50 cap, result recorded whatever it is.</li>
+<li>Re-baselined M2 and L1 dates recorded after the pilot, bar unchanged.</li>
+</ol>
+
+<h2 id="sources">Sources read for this page</h2>
+<ul>
+<li>Repository at <code>main</code> <code>fe25119</code>: <code>projects/homemade-llm/</code> (decision-log.html and decision-log.md, PLAN.md, README.md, project-profile.yaml, workstream-plan-m2.md, project-state-report.md), <code>CLAUDE.md</code>, <code>AGENTS.md</code>, <code>docs/project-leadership.html</code>.</li>
+<li>GitHub: issue #299 (the shared coordination thread) and issues #357, #359, #409, #419, #425, #439, #440, #447, #455, #456, #457, #463, #469; pull requests #355, #458 to #473, #483, #486, #490, #497, #498, #503, #509, #514, #515, #517, #519.</li>
+<li>Provider terms, read 2026-10-31 through Firecrawl search receipts <code>01a193e1-419e-7124-ae21-c9ee2fa2beeb</code> and <code>01a193e1-4169-750f-8c6d-586209ed2be4</code>: <a href="https://www.anthropic.com/legal/commercial-terms">Anthropic Commercial Terms</a>; <a href="https://support.claude.com/en/articles/12326764-can-i-use-my-outputs-to-train-an-ai-model">Anthropic help centre, "Can I use my Outputs to train an AI model?"</a>; <a href="https://openai.com/policies/row-terms-of-use/">OpenAI Terms of Use</a>. The Cursor clause is cited from the 2026-09-29 re-read (PR #355 comment 5896262105) and was not re-read on 2026-10-31.</li>
+</ul>
+</main>
+<footer class="site-footer">Canonical HTML record · Homemade LLM · A record is not a run, a qualification or a merge.</footer>
+</body>
+</html>
