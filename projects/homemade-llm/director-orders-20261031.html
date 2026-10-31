@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Homemade LLM: Director decisions and orders, 2026-10-31</title>
+<link rel="stylesheet" href="../../docs/assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a href="README.md">Homemade LLM</a> · <a href="decision-log.html">Decision log</a> · <a href="director-resumption-20261031.html">Resumption record</a></header>
+<main id="content">
+<h1>Director decisions and orders, 2026-10-31</h1>
+<p class="lede">Under the owner's rolling authorization of 2026-10-31, the Claude project Director takes the seven decisions the resumption record left open and issues the first three bounded work orders. Every order keeps the project's existing gates: one writer per file, receipts for every paid call, the leak wall, held-out custody, the installed trust root, the retry policy and the caps below. Nothing here is a run result.</p>
+
+<h2 id="authority">Authority</h2>
+<p>Owner, in the Claude Code session at about 22:03 UTC on 2026-10-31, as a session goal: "You have a rolling authorization starting now!", naming the owner's skills <code>meat-and-potatoes</code>, <code>adapt-and-overcome</code>, <code>scoped-best-judgment</code>, <code>workstation-cleanup</code> and <code>executive-decision</code>, and a pasted directive file on the host to be read before continuing. The skill files and the pasted file live on the owner's PC and were not readable by this session; order D-01 below reads them first and returns any rule they add. Recorded as decision-log row D-M2-69 <code>[relayed]</code>. This authorization follows D-M2-65 (direction returned to Claude), D-M2-68 (the owner's stop and handover) and O-066 (the owner approves macro plans; administrators decide assignments). It grants no credential, no new budget beyond the owner-reported remainder, and no bypass of any deterministic gate.</p>
+
+<h2 id="decisions">Decisions taken</h2>
+<div class="table-scroll"><table><caption>The seven open decisions, decided by the Director under the rolling authorization (D-M2-69)</caption><thead><tr><th scope="col">Item</th><th scope="col">Decision</th><th scope="col">Reasoning and limits</th></tr></thead><tbody>
+<tr><th scope="row">1. Resumption and seats</th><td>Runtime work resumes under the Claude Director's orders. Host work is executed by a host-side Claude execution seat on the owner's PC, opened by the owner; if the owner attaches a computer folder to this session through Remote Control, this session executes the orders itself.</td><td>The stop of 2026-10-31 paused runtime; the owner's instruction to this session and the rolling authorization resume it. The readback session 8061f652 is the handover receipt, not a seat.</td></tr>
+<tr><th scope="row">2. Student</th><td>The 4-bit Qwen3-8B (<code>unsloth/Qwen3-8B-unsloth-bnb-4bit</code> at <code>62efd7f9</code>, manifest v4) is the student for adapter v0.1. The 14B winner is tried only after v0.1 exists and only with a probe on the rented card.</td><td>Its probes pass (8.4 GiB at 2,048 tokens); the 14B failed the local gate. The owner approved manifest v4 through WO-G48.</td></tr>
+<tr><th scope="row">3. Graders and compute</th><td>Grading pair: first-party Claude Opus 5.5 plus the Cursor-served Grok 4.6, as the owner chose on 2026-10-31. No Z.ai. Teacher generation and training run on rented Lambda GPUs (A10 proven; H100 when capacity exists); the local card serves and holds custody only.</td><td>Both graders returned valid verdicts on identical packets in C61. Z.ai's three attempts are consumed and its general API is unfunded.</td></tr>
+<tr><th scope="row">4. Provider outputs as training data</th><td>Stay out, as now (option i). In parallel the owner may send the written-permission request drafted below (option ii). Option iii is not taken.</td><td>Anthropic's help centre names written permission as the route; grading is not training data (O-026), so the grading pair is unaffected.</td></tr>
+<tr><th scope="row">5. Set B for L1</th><td>L1 is scored on Set A and on the first 20 frozen prospective Set B items, each at the unchanged per-item bar; the full 50 remain required before L2. Recorded as a disclosed deviation from PLAN v1.3 section 2, reversible by the owner.</td><td>Zero of 50 frozen at a required 17.5 items a week is not credible; the bar per item holds (O-022), the set size for L1 changes.</td></tr>
+<tr><th scope="row">6. OpenAI's place</th><td>Worker by Director assignment only, under the charter's maintenance routing; the data and evaluation lane of 2026-10-06 returns to the Director. No OpenAI session directs, issues orders, holds ROOT, or opens audit-and-proposal rounds on this project.</td><td>The owner removed OpenAI as lead and ROOT on 2026-10-31 and rejected its direction.</td></tr>
+<tr><th scope="row">7. CI</th><td>No action: GitHub Actions started run 41246049389 on PR #527 at 21:59 UTC on 2026-10-31, so the billing lock no longer blocks runs.</td><td>Result pending at the time of writing; the record is corrected when the run finishes.</td></tr>
+</tbody></table></div>
+<p><strong>Standing rules for every order on this page.</strong> One writer per file and one accountable executor per order. Every paid call carries a receipt with its SHA-256 and recorded cost or an explicit unknown-cost placeholder. The installed trust root stays at v36 unless an order says otherwise. No new trust-root revision, loader tolerance, student pin, handoff variant or constructor change. The retry policy is one primary attempt plus at most four retries; consumed attempt limits stay consumed; an ambiguous billed effect is reconciled before any retry. Held-out text never leaves the host. A refusal, a hash mismatch, a custody failure or an exhausted cap stops the order; the executor reports and waits. Each order's result is recorded by the Director as a decision-log row before the next dependent order runs.</p>
+
+<h2 id="wo-d-01">WO-HLLM-D-20261031-01: host seat intake, packet readout and workstation cleanup</h2>
+<dl>
+<dt>Project / work order</dt><dd>homemade-llm; this page; resumption record section 8, actions 2 and 4.</dd>
+<dt>Supervisor and writer</dt><dd>Supervisor: Claude project Director (this session). Executor: the host-side Claude execution seat on the owner's PC, or this session if a computer folder is attached.</dd>
+<dt>Work location and owned paths</dt><dd>Read-only over the handover folder <code>owner-handover-to-claude-20261031</code> under the host's <code>Provider-Work-Logs/homemade-llm/director-local-release-20261030/c61/</code> directory, the owner's pasted directive file, the five owner skills named in the authorization, the installed root v36 and its bindings, the spend ledgers, and the Set B custody receipts. Write access only where the owner's <code>workstation-cleanup</code> skill directs, and only for reversible actions.</dd>
+<dt>Deliverable / checkpoint</dt><dd>One HTML readout in the project's handover folder, with SHA-256, containing: (a) the packet's rules and authorizations and its A to O requirement status, verbatim where short; (b) the exact generation and grading bindings the packet says need reconciliation; (c) the installed root, pin and manifest identities with digests; (d) the spend ledger totals, outstanding reservations and headroom against the owner-reported USD 200 remainder and the USD 1,000 mission ceiling; (e) Set B custody counts (captured, accepted references, frozen) from the custodian's latest receipt; (f) any rule the pasted file or the five skills add, quoted; (g) what the cleanup skill did, as a list of actions with before and after evidence. No paid call, no model load, no GPU, no deletion of project evidence or anything under <code>C:\llm</code>.</dd>
+<dt>Authority and dependencies</dt><dd>Owner rolling authorization 2026-10-31 (D-M2-69); D-M2-65, D-M2-66, D-M2-68. No dependency. Research is not required: this is a read-and-report order.</dd>
+<dt>Acceptance</dt><dd>The readout cites each source by path and SHA-256; counts are integers; unknowns are written as UNKNOWN, never estimated. The Director records the readout as a decision-log row.</dd>
+<dt>Handoff</dt><dd>To the Director, who then releases D-02 if headroom of at least USD 5 is confirmed and the grading bindings are coherent.</dd>
+</dl>
+
+<h2 id="wo-d-02">WO-HLLM-D-20261031-02: grade the twelve staged candidates</h2>
+<dl>
+<dt>Project / work order</dt><dd>homemade-llm; resumption record section 8, action 5; C61 state "12 staged ungraded".</dd>
+<dt>Supervisor and writer</dt><dd>Supervisor: Claude project Director. Executor: the host-side Claude execution seat for dispatch, custody and records; Cursor serves the Grok 4.6 grader and performs the blind custody screen, as in C61 R15. The Claude grader runs in a fresh, tools-off context that is never the executor's own context.</dd>
+<dt>Work location and owned paths</dt><dd>The C61 retained stage (<code>pilot-admission-r16/retained-stage/frozen-manifest.json</code> and the 12 staged candidates), the installed root v36 grading driver and packets, the grading ledger. No source file changes.</dd>
+<dt>Deliverable / checkpoint</dt><dd>One immutable packet per candidate, graded once by each grader; per-field verdicts; admitted rows and represented groups counted against the pilot minimum of 16 rows across 8 of the 12 pilot groups; the two already-accepted rows preserved and not replayed; a frozen result manifest with SHA-256; receipts for every call.</dd>
+<dt>Authority and dependencies</dt><dd>D-M2-69 decisions 3 and 6; D-M2-41 two-grader admission; D-M2-43 budget accounting. Depends on D-01's headroom confirmation (at least USD 5) and coherent bindings. Caps: Claude grading at most USD 1.50 in list-price estimate (recorded C61 estimate about USD 0.07 a packet); Grok through the Cursor subscription at USD 0 against the ceiling; one attempt per candidate per grader, no regrade, no Z.ai. Content review and the protected-custodian screen precede grading, as the C61 R16 checkpoint requires.</dd>
+<dt>Acceptance</dt><dd>Every candidate has two verdict receipts or a recorded refusal; admitted count and group count are integers bound to the frozen manifest; the custody screen is clear; cumulative grading spend is recorded. The Director records the result as a decision-log row.</dd>
+<dt>Handoff</dt><dd>To the Director. If admitted rows reach 16 across 8 groups, the pilot batch is frozen and D-03 is not run; the Director then issues the adapter v0.1 order. Otherwise D-03 runs with the missing groups named.</dd>
+</dl>
+
+<h2 id="wo-d-03">WO-HLLM-D-20261031-03: conditional teacher top-up on one rented A10</h2>
+<dl>
+<dt>Project / work order</dt><dd>homemade-llm; resumption record section 8, action 6. Runs only on the Director's release after D-02 reports fewer than 16 admitted rows or fewer than 8 groups.</dd>
+<dt>Supervisor and writer</dt><dd>Supervisor: Claude project Director. Executor: the host-side Claude execution seat (rental, transfer, generation, teardown); Cursor for the blind custody screen and the Grok grader; the Claude grader as in D-02.</dd>
+<dt>Work location and owned paths</dt><dd>One Lambda A10 instance named for this order; the exact 14B teacher GGUF <code>af16f12d</code> transferred over the port-443 route that worked in C61; the installed root v36 teacher settings at context 8,192; a new generation directory on the host for this order only.</dd>
+<dt>Deliverable / checkpoint</dt><dd>Teacher generation for the missing pilot groups only, at most 4 attempts per missing group and at most 48 requests in all, inside the existing 120-attempt train cap; mechanical checks; deduplication; custody screen; grading by the D-02 pair; the frozen pilot batch with its manifest; the pilot pass rate against the D-M2-33 bar (at least 4 of 12 canonical rows accepted by both graders) reported beside the 16-row, 8-group admission result.</dd>
+<dt>Authority and dependencies</dt><dd>D-M2-69 decisions 1, 3 and 6; the owner's prior A10 authorization in C61. Caps: rental at most 2.5 hours (about USD 3.25 at USD 1.29 an hour) with automatic provider termination armed before generation starts; grading as in D-02, at most USD 1.50 further; headroom of at least USD 10 confirmed by D-01. H100 capacity, if offered, is not taken under this order.</dd>
+<dt>Acceptance</dt><dd>Instance start and termination evidenced by authenticated provider readbacks; every request receipted; all leases released; no file under <code>C:\llm</code> modified outside the order's directory; results bound to the frozen manifest. The Director records the result as a decision-log row.</dd>
+<dt>Handoff</dt><dd>To the Director, who issues the adapter v0.1 order (student per decision 2, rented GPU, one-page run sheet) or, if the pass rate misses the bar, the teacher-change decision.</dd>
+</dl>
+
+<h2 id="permission-draft">Draft for the owner: written-permission request to Anthropic (decision 4, option ii)</h2>
+<p>Send only if you want option (ii) pursued. Suggested text, to Anthropic through the account's support or sales contact:</p>
+<blockquote><p>I am an individual Claude API customer. I am fine-tuning a small open-weight model (Qwen3-8B, Apache-2.0) that runs only on my own PC and writes internal work-packet fields for my own private task orchestrator. I would like to use Claude outputs as training examples for that private model. The model is not offered to anyone else, is not sold or hosted as a service, and does not compete with Anthropic's products. Your help-centre article "Can I use my Outputs to train an AI model?" says such use needs Anthropic's written permission. May I have written permission for this private, non-commercial use? I am happy to describe the setup in more detail.</p></blockquote>
+
+<h2 id="sequence">Sequence</h2>
+<ol>
+<li>D-01 runs first and returns the readout; the Director records it.</li>
+<li>D-02 runs on the Director's release; the Director records admitted rows and groups.</li>
+<li>D-03 runs only if D-02 leaves the pilot short; the Director records the frozen batch and pass rate.</li>
+<li>The adapter v0.1 order follows as a new page, with the one-page run sheet, after the pilot result.</li>
+</ol>
+</main>
+<footer class="site-footer">Canonical HTML record · Homemade LLM · An order is not a run result; nothing here certifies a model or a qualification.</footer>
+</body>
+</html>

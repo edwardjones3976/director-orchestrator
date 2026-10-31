@@ -69,7 +69,7 @@
 <tr><th scope="row">Trust-root revisions</th><td>v1 to v2r14 between 2026-10-02 and 2026-10-25, then v2r19 to v36 between 2026-10-30 and 2026-10-31</td><td>D-M2-35 to D-M2-54; 6381527468; 6387265873; 6389146726; #514; #515; C61 thread <code>[relayed]</code></td></tr>
 <tr><th scope="row">Student pins</th><td>3: Qwen3-14B winner, Qwen3-8B bf16, Qwen3-8B 4-bit</td><td>#473, #486 <code>[verified, main]</code></td></tr>
 <tr><th scope="row">Lines added to the project since 2026-10-06</th><td>about 11,000 across 19 PRs</td><td>Sum of the PR diff statistics <code>[verified, PR metadata]</code></td></tr>
-<tr><th scope="row">Repository CI</th><td>dead: GitHub Actions locked for billing</td><td>6515246929; run 41002490047 <code>[verified thread]</code></td></tr>
+<tr><th scope="row">Repository CI</th><td>GitHub Actions locked for billing through 2026-10-30; run 41246049389 started on PR #527 at 21:59 UTC on 2026-10-31, so runs start again</td><td>6515246929; run 41002490047; run 41246049389 <code>[verified]</code></td></tr>
 </tbody></table></div>
 
 <h2 id="verified-state">5. Verified state at resumption</h2>
@@ -100,6 +100,7 @@
 </ol>
 
 <h2 id="proposal">7. Direction proposal for the owner's macro approval</h2>
+<p class="notice"><strong>Decided.</strong> At about 22:03 UTC the owner gave a rolling authorization and asked for executive decisions. The seven items below are decided and the first three orders are issued on <a href="director-orders-20261031.html">the Director decisions and orders page</a> (D-M2-69). The proposal is kept here as the reasoning.</p>
 <p class="notice">In one line: since 2026-09-29 the project has built thirty-odd trust roots, three student pins, a loader that tolerates a host that corrupts reads, and a series of audits, proposals and holds, but no admitted training rows and no adapter. The cloud A10 run of 2026-10-30 changed the data picture: the 14B teacher at full context produced valid candidates on about half its attempts, and the first rows graded by Claude and Grok passed. What stopped the pilot was grading, a 14-row ceiling against a 16-row minimum, and a process that cut seventeen trust roots in one day. The pilot is within reach with what exists.</p>
 <p>The Director recommends finishing the pilot first, with the smallest possible process.</p>
 <ol>
@@ -115,13 +116,13 @@
 
 <h2 id="next-actions">8. Next seven actions</h2>
 <ol>
-<li>Land this record and the decision-log rows D-M2-65 to D-M2-68 through the ordinary review and merge gates; this waits on decision 7.</li>
-<li>Owner opens a host-side Claude execution seat, which reads the handover packet (report, rules and authorizations, stop record) and returns its A to O requirements and the exact generation and grading bindings to the Director; no acknowledgment is re-requested.</li>
-<li>Owner answers the seven decisions in section 7; the Director records each answer as a decision-log row.</li>
-<li>Counts-only refreshes recorded as rows: Set B supply from the Cursor custodian, the spend ledger and headroom, and the issue reconciliation pass over the thirteen open Homemade LLM issues as dispositioned in section 5.</li>
-<li>One Director order: grade the 12 staged candidates with the Claude and Grok pair; record admitted rows and groups against the 16-row, 8-group minimum.</li>
-<li>If the minimum is unmet: one bounded A10 teacher session for the missing groups only, then the frozen pilot batch and its pass rate against the D-M2-33 bar.</li>
-<li>From the pilot result: the teacher and student path, the adapter v0.1 order, and re-baselined M2 and L1 dates with the bar unchanged.</li>
+<li>WO-HLLM-D-20261031-01: the host-side Claude seat reads the pasted directive, the five owner skills and the handover packet, runs the owner's workstation cleanup, and returns the readout (bindings, root, spend and headroom, Set B counts); the Director records it.</li>
+<li>WO-HLLM-D-20261031-02: grade the 12 staged candidates with the Claude and Grok pair; admitted rows and groups recorded against the 16-row, 8-group minimum.</li>
+<li>WO-HLLM-D-20261031-03, only if the minimum is unmet: one bounded A10 teacher session for the missing groups, then the frozen pilot batch and its pass rate against the D-M2-33 bar.</li>
+<li>Adapter v0.1 order on the 4-bit 8B with a one-page run sheet, after the pilot result.</li>
+<li>Land this record and PR #527 through the ordinary review and merge gates; correct the CI statements when run 41246049389 finishes.</li>
+<li>Counts-only refreshes recorded as rows: Set B supply from the custodian (part of D-01), the spend ledger, and the issue reconciliation pass over the thirteen open Homemade LLM issues as dispositioned in section 5.</li>
+<li>Re-baselined M2 and L1 dates after the pilot result, bar unchanged; the Anthropic written-permission request is the owner's to send.</li>
 </ol>
 
 <h2 id="sources">Sources read for this page</h2>
