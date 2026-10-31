@@ -28,7 +28,7 @@
 <!-- [[Claude Code | Claude Fable 5.1 | 2026-09-24 | 07:55 UTC | BEGIN]] -->
 # Homemade LLM — project subsection
 
-**Project ID:** `homemade-llm` · **Owner:** Ed · **Project Director:** Claude (Claude Fable 5.1), appointed by the owner on 2026-09-24 for this project only · **State:** M0 closed under O-031; M1 closed under O-052 (winner Qwen3-14B); M2 past its 2026-10-29 target with no admitted training rows and no adapter; paused by the owner's stop and handed to Claude on 2026-10-31; direction returned to the Claude project Director (decision-log.html D-M2-65 to D-M2-72), see the [resumption record](director-resumption-20261031.html) and the [Director orders](director-orders-20261031.html)
+**Project ID:** `homemade-llm` · **Owner:** Ed · **Project Director:** Claude (Claude Fable 5.1), appointed by the owner on 2026-09-24 for this project only · **State:** M0 closed under O-031; M1 closed under O-052 (winner Qwen3-14B); M2 past its 2026-10-29 target with no admitted training rows and no adapter; paused by the owner's stop and handed to Claude on 2026-10-31; direction returned to the Claude project Director (decision-log.html D-M2-65 to D-M2-73), see the [resumption record](director-resumption-20261031.html) and the [Director orders](director-orders-20261031.html)
 
 This folder is the project-local record for building two purpose-trained local
 models on the owner's PC "blackbox" (RTX 5070 12 GB): **DIRECTOR**, an
