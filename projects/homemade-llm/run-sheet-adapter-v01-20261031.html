@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Homemade LLM: one-page run sheet, adapter v0.1 on a rented GPU</title>
+<link rel="stylesheet" href="../../docs/assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a href="README.md">Homemade LLM</a> · <a href="director-orders-20261031.html">Director orders</a> · <a href="decision-log.html">Decision log</a></header>
+<main id="content">
+<h1>One-page run sheet: adapter v0.1 on a rented GPU</h1>
+<p class="lede">The single sheet the host seat follows for the first training session, once the pilot batch is frozen (orders D-02 and D-03). It replaces acceptance rounds with a fixed sequence of checks, a run, an export and a teardown. Every number here is a pin or a gate already recorded; nothing here is a run result. Where a value must come from the frozen batch or from the installed root, the sheet names the source instead of guessing it.</p>
+
+<h2 id="pins">Pins (do not retype; copy from the sources named)</h2>
+<div class="table-scroll"><table><caption>Identities the session binds to</caption><thead><tr><th scope="col">Item</th><th scope="col">Value</th><th scope="col">Source</th></tr></thead><tbody>
+<tr><th scope="row">Trainer image</th><td><code>unsloth/unsloth@sha256:1644d635bc7c5b57ed64cabbab1ae00647dfb583c2135fdfb6a461aeeba52739</code></td><td>D-004, D-012; launcher image check (#498)</td></tr>
+<tr><th scope="row">Student</th><td><code>unsloth/Qwen3-8B-unsloth-bnb-4bit</code> at <code>62efd7f9d748e394734a7adae2adf96e13a2abc8</code>, expected-digest list <code>m2-expected-qwen3-8b-4bit-v1.json</code>, manifest v4 root <code>6795b16f0ccfb2ae48b358784b979f92a4f19fb1ef09262fbbd31339dbd79e87</code></td><td>#486; WO-G48 owner approval; D-M2-69 decision 2</td></tr>
+<tr><th scope="row">Merge pairing for the bf16 export</th><td><code>Qwen/Qwen3-8B</code> at <code>b968826d9c46dd6066d109eabc6255188de91218</code></td><td>#473, #486 adapter leaf stamp</td></tr>
+<tr><th scope="row">Trust root and pin</th><td>the installed root at session start (v36 <code>13d7f1a7…</code> at the stop) and the frozen pilot batch's publication binding</td><td>D-01 readout; D-02 or D-03 result row</td></tr>
+<tr><th scope="row">Rows</th><td>the frozen pilot batch: <code>accepted.jsonl</code> from the validator, split <code>train</code> and <code>dev</code>, group-wise, zero leaks, row hashes in the batch manifest</td><td>D-M2-41 freeze; D-02 or D-03 manifest</td></tr>
+<tr><th scope="row">Prompt renderer</th><td><code>train/prompt_template.py</code> at the commit the installed root admits</td><td>D-M2-10; root bindings</td></tr>
+<tr><th scope="row">Context limit</th><td>8,192 tokens on the rented card; <code>--epoch-context-limit</code> set to the measured longest dev prompt plus 2,048, never a default</td><td>D-M2-63; C61 teacher context; #466</td></tr>
+<tr><th scope="row">Training deadline</th><td>at most 10,800 seconds of training inside a 3.5-hour rental; automatic provider termination armed before the first step</td><td>D-M2-CLOUD-MEM v1 (C59); C61 practice</td></tr>
+</tbody></table></div>
+
+<h2 id="before">Before the GPU (on the host, no rental yet)</h2>
+<ol>
+<li><strong>Headroom.</strong> Read the spend ledger; proceed only with at least USD 10 unreserved headroom under the owner-reported remainder. Record the figure.</li>
+<li><strong>Batch.</strong> Confirm the frozen pilot batch manifest hash, row count by split, group count by split, and that every row hash matches <code>accepted.jsonl</code>. Run <code>train_adapter.py --check-only --rows &lt;accepted.jsonl&gt; --report &lt;report&gt;</code> inside the pinned image; it validates rows and exits without a GPU.</li>
+<li><strong>Dev limit.</strong> Measure the longest dev prompt through the admitted renderer; set <code>--epoch-context-limit</code> to that count plus 2,048. Write both numbers down.</li>
+<li><strong>Digests.</strong> Read the student snapshot and the expected-digest list with the two-consecutive-read rule the loader already enforces; keep the receipts. Any mismatch stops here.</li>
+<li><strong>Package.</strong> One archive containing: the pinned image reference, the student digest list, the manifest v4 root, the batch (rows plus manifest), the renderer at its admitted commit, the trainer and its launcher, and this sheet. Hash the archive; record it.</li>
+</ol>
+
+<h2 id="session">The session (one rented GPU, one operator, no other writer)</h2>
+<ol>
+<li><strong>Rent</strong> one instance (A10 24 GB proven; H100 if available), named for this order; arm automatic termination at the 3.5-hour mark before anything else runs. Record instance id, region, start time and the termination readback.</li>
+<li><strong>Transfer</strong> the package over the authenticated route that worked in C61 (SSH over port 443). Verify the archive hash on the instance. Pull the pinned image by digest only; never by tag.</li>
+<li><strong>Load check.</strong> Start the container offline (<code>--network none</code> after the pull), with the snapshot and batch mounted read-only. Confirm the loader's verified-read receipts and the tokenizer and pad-row allowances already merged (#497, #498, #509). Any refusal stops the session; no tolerance is added on the instance.</li>
+<li><strong>Train.</strong> One epoch-mode run: <code>train_adapter.py --rows accepted.jsonl --epochs &lt;1 to 6&gt; --epoch-context-limit &lt;measured&gt; --expected-digests &lt;list&gt; --trusted-digest-root &lt;root&gt; --publication-binding &lt;binding&gt; --report &lt;report.json&gt;</code> with the 4-bit student selected. The trainer's own gates apply unchanged: response-only loss, gradient accumulation 8, learning rate 1e-4, the evaluation at the epoch-1 midpoint and every epoch end, the stop rules of D-M2-39 (stop if the primary metric or any field falls more than 5 points below its best, after two non-improving epoch ends, or at six epochs), checkpoint selection by the exact-item F1 of D-M2-38. Watch the deadline; the trainer stops itself at the limit.</li>
+<li><strong>Export.</strong> Merge the selected checkpoint onto the bf16 pairing and export the Q4_K_M GGUF with the image's prebuilt llama.cpp, exactly as <code>export-adapter.ps1</code> does on the host; hash the adapter leaves and the GGUF twice.</li>
+<li><strong>Retrieve.</strong> Copy report, adapter, GGUF, hashes and the container log back over the same route; verify every hash after the copy.</li>
+<li><strong>Teardown.</strong> Terminate the instance; confirm with an authenticated instance list showing none; record the usage figure the provider shows.</li>
+</ol>
+
+<h2 id="after">After the GPU (on the host)</h2>
+<ol>
+<li>Import the GGUF into LM Studio under a new model name; serve one constrained completion with <code>serve-smoke.ps1 -SingleHost</code> style checks bound to the report; record the response hash.</li>
+<li>Score Set A with the unchanged pipeline (<code>build_inputs.py</code>, <code>generate_candidates.py</code>, <code>score_packets.py</code>, two non-author graders: the Claude and Grok pair); record field-level acceptance against the base model's M1 score as the regression baseline.</li>
+<li>Run the IFEval and GSM8K regression at the pinned harness revision from the regression freeze (D-M2-30); at most a 3-point drop per task.</li>
+<li>Record everything as one decision-log row: pins, batch hashes, epochs run, selected checkpoint, dev metric, Set A result, regression result, rental cost. Then the Director rules on v0.2 or on the teacher change.</li>
+</ol>
+
+<h2 id="stops">Stops</h2>
+<p>Any of these ends the session and is reported, never worked around: a hash mismatch at any step; a loader refusal; headroom below the stated figure; a missing termination readback; a provider or route failure that would need a second rental in the same session (a second rental is a new order); any instruction to add a tolerance, change a pin, or touch held-out text.</p>
+</main>
+<footer class="site-footer">Canonical HTML record · Homemade LLM · A run sheet is a procedure, not evidence that any step ran.</footer>
+</body>
+</html>

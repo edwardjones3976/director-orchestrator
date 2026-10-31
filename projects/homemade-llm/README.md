@@ -178,6 +178,7 @@ merge (owner merge law, 2026-09-26), contribution tags on every submission, and
 | [`decision-log.html`](decision-log.html) | One line per owner or design decision |
 | [`director-resumption-20261031.html`](director-resumption-20261031.html) | Director resumption and state checkpoint, 2026-10-31: owner direction, where Claude left off, the 2026-10-07 to 2026-10-31 record gap including the owner's stop and handover, outcome numbers, rulings, and the direction proposal awaiting the owner |
 | [`director-orders-20261031.html`](director-orders-20261031.html) | Director decisions under the owner's rolling authorization of 2026-10-31 (D-M2-69) and the first three bounded work orders: host seat intake and packet readout, grading of the twelve staged candidates, and a conditional A10 teacher top-up |
+| [`run-sheet-adapter-v01-20261031.html`](run-sheet-adapter-v01-20261031.html) | One-page run sheet for the first adapter v0.1 session on a rented GPU: pins, pre-GPU checks, the session sequence, post-GPU scoring, stops |
 | [`project-state-report.md`](project-state-report.md) | Evidence-first milestone report (M0 closed under O-031; record reconciliation pending until PR #293 gates pass) |
 
 ## Milestones
