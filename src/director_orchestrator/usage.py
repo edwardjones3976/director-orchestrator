@@ -32,6 +32,7 @@ from typing import Any
 import httpx
 
 from .config import Settings
+from .contact_observations import contact_observations_public_summary
 from .contribution_tags import DIRECTOR_SYSTEM_LABEL, wrap_human_submission
 from .models import (
     ProviderName,
@@ -861,6 +862,13 @@ class UsageMonitor:
                 for provider in configured
             },
             "latest": latest,
+            # Additive contact-observation section (WO-20261029-005): passive
+            # receipt-backed records for contacts outside SUPPORTED_PROVIDERS.
+            # Built from local receipt files only; it changes no key above and
+            # probes, gates and schedules nothing. /health is unauthenticated, so
+            # this is the path-free summary (states and counts only); receipt
+            # paths stay on the authenticated observations route.
+            "contact_observations": contact_observations_public_summary(now=now),
         }
 # [[Codex | GPT-5.6 | 2026-08-21 | 23:40 UTC | END]]
 # [[OpenAI Codex | GPT-5.6 | 2026-08-25 | 22:11 UTC | END]]

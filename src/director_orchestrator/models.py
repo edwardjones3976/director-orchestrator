@@ -919,6 +919,123 @@ class UsageCheckRunResponse(BaseModel):
     reason: str | None = Field(default=None, max_length=500)
 
 
+class ContactAuthState(StrEnum):
+    """Authentication evidence for one contact. Not-observed unless a dated
+    receipt shows the authentication outcome itself; a key-name or config
+    entry is never authentication evidence."""
+
+    NOT_OBSERVED = "not-observed"
+    STALE = "stale"
+    OBSERVED_AUTHENTICATED = "observed-authenticated"
+    OBSERVED_AUTHENTICATION_FAILED = "observed-authentication-failed"
+
+
+class ContactQuotaState(StrEnum):
+    """Quota evidence for one contact. A successful task or a plan's existence
+    never implies quota; only a receipt that states a limit or a remaining
+    amount does (Z.ai coding-plan balance errors on valid plans, 2026-10-29)."""
+
+    NOT_OBSERVED = "not-observed"
+    STALE = "stale"
+    OBSERVED_LIMITED = "observed-limited"
+    OBSERVED_AVAILABLE = "observed-available"
+
+
+class ContactPermissionState(StrEnum):
+    """Permission evidence for one contact, recorded per policy scope or from
+    a dated receipt; existence of an executable, route or catalog is never
+    permission evidence."""
+
+    NOT_OBSERVED = "not-observed"
+    STALE = "stale"
+    RECORDED_ISSUES_ONLY = "recorded-issues-only"
+    OBSERVED_TASK_ALLOWED = "observed-task-allowed"
+
+
+class ContactTaskResultState(StrEnum):
+    """Task-result evidence for one contact. Readiness requires the dated
+    observed success member; nothing else ever yields readiness."""
+
+    NOT_OBSERVED = "not-observed"
+    STALE = "stale"
+    OBSERVED_SUCCESS = "observed-success"
+    OBSERVED_FAILURE = "observed-failure"
+    # A dated attempt exists, but its evidence cannot certify the outcome
+    # (text-only output, or a receipt that omits the producer's success
+    # conditions); never a success and never readiness.
+    OBSERVED_UNCONFIRMED = "observed-unconfirmed"
+
+
+class ContactObservationStaleness(StrEnum):
+    """Freshness of a contact's dated evidence against the documented
+    observation freshness window (see contact_observations.py)."""
+
+    NOT_OBSERVED = "not-observed"
+    FRESH = "fresh"
+    STALE = "stale"
+
+
+class ContactObservation(BaseModel):
+    """One contact's passively observed status (WO-20261029-005).
+
+    Every state field is separate on purpose: authentication, quota,
+    permissions and task results are never merged into one verdict, and any
+    of them may be not-observed independently of the others.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contact_id: str = Field(min_length=1, max_length=64)
+    provider_family: str = Field(min_length=1, max_length=64)
+    source: str | None = Field(
+        default=None,
+        max_length=512,
+        description="Receipt path or file reference backing the dated evidence; None when nothing is observed.",
+    )
+    observed_at_utc: datetime | None = Field(
+        default=None,
+        description="When the evidence was produced; None when nothing is observed.",
+    )
+    transport: str | None = Field(
+        default=None,
+        max_length=128,
+        description="How the observed contact was reached, from the receipt itself.",
+    )
+    account_scope: str | None = Field(
+        default=None,
+        max_length=128,
+        description="Account scope where a receipt establishes it; key names and config entries are not account scope.",
+    )
+    auth_state: ContactAuthState = ContactAuthState.NOT_OBSERVED
+    quota_state: ContactQuotaState = ContactQuotaState.NOT_OBSERVED
+    permissions_state: ContactPermissionState = ContactPermissionState.NOT_OBSERVED
+    task_result_state: ContactTaskResultState = ContactTaskResultState.NOT_OBSERVED
+    staleness: ContactObservationStaleness = ContactObservationStaleness.NOT_OBSERVED
+    ready: bool = Field(
+        default=False,
+        description=(
+            "True ONLY when a dated receipt shows a successful task result inside "
+            "the freshness window. NEVER derived from the existence of an "
+            "executable, route, catalog, configuration entry or key name. This "
+            "grants no routing, dispatch or producer authority."
+        ),
+    )
+    note: str | None = Field(default=None, max_length=1_000)
+
+
+class ContactObservationsReport(BaseModel):
+    """Passive per-contact observation report for the usage monitor and its
+    read-only API route. Building it performs no provider call."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    description: str = Field(max_length=500)
+    freshness_window_days: int = Field(ge=1)
+    receipts_root: str = Field(max_length=512)
+    receipts_root_present: bool
+    contacts: list[ContactObservation] = Field(min_length=1)
+
+
 class AssignmentOutcome(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

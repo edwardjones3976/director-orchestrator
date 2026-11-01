@@ -77,6 +77,9 @@ _CONTACT_LANES: tuple[ContactLane, ...] = (
         provider_family="GitHub/Microsoft",
     ),
     ContactLane(lane_id="zai", product="Z.ai (GLM Coding Plan)", provider_family="Z.ai"),
+    # Foreman ruling 2026-10-29 10:25 PDT: ZCode is Z.ai's own product, so it
+    # shares the Z.ai family and never earns independence from the zai lane.
+    ContactLane(lane_id="zcode", product="ZCode", provider_family="Z.ai"),
 )
 
 CONTACT_LANES_BY_ID: dict[str, ContactLane] = {lane.lane_id: lane for lane in _CONTACT_LANES}
