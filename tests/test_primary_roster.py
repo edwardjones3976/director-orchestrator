@@ -23,11 +23,13 @@ from director_orchestrator.primary_roster import (
     KNOWN_LANES,
     RESEARCH_LANES,
     PrimaryRosterHold,
+    IssueRef,
     core_inventory_ready,
     lanes_requiring_cost_rank,
     select_primary_roster,
 )
 from director_orchestrator.primary_workload import admission_reason
+from tests.test_copilot_issue_scope import CopilotIssueScopeTests
 
 class PrimaryRosterTests(unittest.TestCase):
     def select(self, **kw):
@@ -155,15 +157,29 @@ class PrimaryRosterTests(unittest.TestCase):
         self.assertEqual(roster.research, "firecrawl")
         self.assertNotEqual(roster.producer, "antigravity")
 
-    def test_github_copilot_only_explicit_repository_assistance(self):
+    def test_github_copilot_only_explicit_issue_scope(self):
         args = dict(available=("openai", "claude", "cursor", "github-copilot"), allocation_profile="enterprise",
             history=self.ENTERPRISE_IN_BAND,
             trusted_cost_ranks={"openai": 4, "claude": 3, "cursor": 2, "github-copilot": 0})
         self.assertNotEqual(self.select(**args).producer, "github-copilot")
+
+        # repository_assistance alone no longer selects Copilot
         args["required_capabilities"] = ("repository_assistance",)
+        roster_repo = self.select(**args)
+        self.assertNotEqual(roster_repo.producer, "github-copilot")
+
+        # Explicit issue scope capability requires typed issue reference
+        args["required_capabilities"] = ("github_issue_work",)
+        with self.assertRaisesRegex(PrimaryRosterHold, "issue_scope"):
+            self.select(**args)
+
+        # Typed issue reference selects Copilot
+        args["issue_ref"] = IssueRef(repository="owner/repo", issue_number=123, kind="investigation")
         roster = self.select(**args)
         self.assertEqual(roster.producer, "github-copilot")
         self.assertIn(roster.reviewer, {"openai", "claude", "cursor", "grok"})
+
+    test_github_copilot_only_explicit_repository_assistance = test_github_copilot_only_explicit_issue_scope
 
 
 _ACTIVATION_BINDING = {
@@ -305,7 +321,7 @@ class SelectableLaneCostRankTests(unittest.TestCase):
         self.assertEqual(frozenset(), lanes_requiring_cost_rank(()))
         # An identity outside the target table can never be admitted.
         self.assertEqual(frozenset({"openai"}),
-                         lanes_requiring_cost_rank({"openai", "not-a-lane"}))
+                          lanes_requiring_cost_rank({"openai", "not-a-lane"}))
 
     def test_the_dispatch_time_roster_hold_still_fires(self):
         # Proof this is an additional gate, not a replacement: the same partial

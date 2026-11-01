@@ -1050,9 +1050,9 @@ class CompletionGateContractTests(unittest.TestCase):
         # Pin the current exact packet authority, including assignment-specific
         # retry and owned/prohibited-path contracts, so drift cannot pass silently.
         expected = {
-            "model-work-packet-v1.schema.json": "sha256:5bdc88a19f1fdcea13c2953686698f1312a1713ce3f20adfb14ff33d15b68091",
+            "model-work-packet-v1.schema.json": "sha256:db90a839d0366411b301f6a32a5a555fd2841565cc4854c8acab339b7be4d121",
             "model-work-packet-v1.example.json": "sha256:de50d90969eda8eae71807479f1fa3cac80254dfdf2656c79474206aea0f663e",
-            "model-result-packet-v1.schema.json": "sha256:8fec656c0fea5efcc436fe6385416dd521b3dcc2d5e627608ad7198b95961cdb",
+            "model-result-packet-v1.schema.json": "sha256:a613a58be7e762bbae328808e01c0815d2a63a9d947282be2c174dc2b3864da9",
             "model-result-packet-v1.example.json": "sha256:8a761ded8fbbd7033fbd2fba90c0e48c311ccae26a063629e1a1c6cfcc43d3a6",
         }
         for filename, digest in expected.items():

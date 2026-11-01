@@ -775,6 +775,12 @@ def intake(
             detail="Invited committee debates require the LangGraph primary; "
             "Z.ai is unavailable under legacy rollback",
         )
+    if payload.primary_issue_ref is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Issue-scoped requests require the LangGraph primary; "
+            "GitHub issue work is unavailable under legacy rollback",
+        )
     if settings.langgraph_primary_postgres_dsn:
         postgres_module = importlib.import_module(
             ".langgraph_postgres", package=__package__

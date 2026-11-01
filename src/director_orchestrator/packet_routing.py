@@ -83,6 +83,47 @@ def antigravity_directive_objective(directive: AntigravityDirective) -> str:
     )
 
 
+def copilot_issue_context(scope: Mapping[str, Any] | Any) -> dict[str, Any]:
+    """Format structured issue context matching the staging dispatcher's fields."""
+    if isinstance(scope, Mapping):
+        s = dict(scope)
+    elif hasattr(scope, "__dict__"):
+        from dataclasses import asdict, is_dataclass
+        s = asdict(scope) if is_dataclass(scope) else dict(scope.__dict__)
+    else:
+        raise ValueError(f"unsupported issue scope type: {type(scope)}")
+
+    def _field(*keys: str) -> Any:
+        return next((s[k] for k in keys if k in s and s[k] is not None), None)
+
+    repo = _field("repository", "repo")
+    number = _field("issue_number", "issue_reference", "issue")
+    kind = _field("kind")
+    draft = _field("packet", "drafting_packet") if kind == "drafting" else None
+    if isinstance(draft, Mapping):
+        draft_dict = dict(draft)
+    elif hasattr(draft, "__dict__"):
+        from dataclasses import asdict, is_dataclass
+        draft_dict = asdict(draft) if is_dataclass(draft) else dict(draft.__dict__)
+    else:
+        draft_dict = {}
+
+    labels = s.get("labels") or []
+    linked_code_paths = s.get("linked_code_paths") or []
+
+    return {
+        "repository": str(repo) if repo is not None else None,
+        "issue_reference": str(int(number)) if number is not None else "",
+        "kind": str(kind) if kind is not None else "",
+        "title": str(s.get("title") or ""),
+        "body": str(s.get("body") or ""),
+        "labels": [str(x) for x in labels] if isinstance(labels, list) else [str(labels)],
+        "linked_code_paths": [str(x) for x in linked_code_paths] if isinstance(linked_code_paths, list) else [str(linked_code_paths)],
+        "draft_title": str(draft_dict.get("title") or "") if draft_dict else "",
+        "draft_body": str(draft_dict.get("body") or "") if draft_dict else "",
+    }
+
+
 COMPACT_PROVIDER_VIEW_SCHEMA = "director-compact-work-view/v1"
 _COMPACT_VIEW_FIELDS = (
     "task_id", "assignment_id", "idempotency_key", "project", "repository",
@@ -851,6 +892,17 @@ class DirectorPacketTaskRouter:
             objective = antigravity_directive_objective(
                 assignment.antigravity_directive
             )
+        elif assignment.agent.value == "github-copilot":
+            if assignment.issue_scope is None:
+                raise PacketRoutingError(
+                    "GitHub Copilot packet routing requires a typed issue scope"
+                )
+            objective = assignment.task
+        if False:
+            _ = (
+
+                assignment.antigravity_directive
+            )
 
         if (assignment.kind is AssignmentKind.INDEPENDENT_REVIEW
                 and self._read_only_tools is not None and self._read_only_tools(record)):
@@ -922,7 +974,11 @@ class DirectorPacketTaskRouter:
                 ),
                 "source_event_id": record.intake.source_event_id,
                 "slack_thread_ts": record.intake.thread_ts,
-                "github_issue": None,
+                "github_issue": (
+                    copilot_issue_context(assignment.issue_scope)
+                    if assignment.issue_scope is not None
+                    else None
+                ),
                 "github_pull_request": None,
             },
         }

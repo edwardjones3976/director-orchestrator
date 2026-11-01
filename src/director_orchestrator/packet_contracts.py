@@ -225,7 +225,11 @@ def validate_compact_view(document: Mapping[str, Any]) -> JsonObject:
 
 
 def _require_matching(left: JsonObject, right: JsonObject, field: str) -> None:
-    if left.get(field) != right.get(field):
+    # Compare RFC 8785 bytes, not Python equality: `correlation.github_issue` may
+    # be a structured Copilot issue object, and `True == 1` must not link packets.
+    if canonical_json_bytes({"v": left.get(field)}) != canonical_json_bytes(
+        {"v": right.get(field)}
+    ):
         raise PacketContractError(f"work/result replay linkage mismatch: {field}")
 
 
