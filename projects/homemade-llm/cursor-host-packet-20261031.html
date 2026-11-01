@@ -121,7 +121,7 @@ Next step requested: H&lt;n+1&gt; | none
 <div class="table-scroll"><table><caption>Limits that end a step</caption><thead><tr><th scope="col">Item</th><th scope="col">Limit</th></tr></thead><tbody>
 <tr><th scope="row">Free memory to start any sub-step</th><td>8 GiB; 12 GiB for the single local model load in H4</td></tr>
 <tr><th scope="row">H2 Claude grading</th><td>USD 1.50 list-price estimate; one attempt per packet per grader</td></tr>
-<tr><th scope="row">H3 rental</th><td>one A10, 2.5 hours, termination armed first; 48 requests; 4 per missing group</td></tr>
+<tr><th scope="row">H3 rental</th><td>one A10, 2.5 hours, termination armed first; 48 requests; at most 4 attempts per targeted group (missing groups first, then the represented groups with the fewest admitted rows)</td></tr>
 <tr><th scope="row">H3 grading</th><td>a further USD 1.50</td></tr>
 <tr><th scope="row">H4 rental</th><td>one instance, 4 hours, termination armed first; training deadline 9,000 s enforced by an outer <code>timeout</code>; at least 60 minutes reserved for export, retrieval and teardown</td></tr>
 <tr><th scope="row">Headroom to release</th><td>H2: USD 5; H3: USD 10; H4: USD 10 unreserved under the owner-reported remainder</td></tr>
