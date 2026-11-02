@@ -453,11 +453,6 @@ non-author reviewer records exact-head ACCEPT and performs the authorized merge.
 That does not remove provider identity separation required by runtime acceptance
 issuers or completion receipts. Runtime provider evidence must satisfy its actual
 binding contract; a PR comment is not a provider activation receipt.</p>
-<p>Workload targets come from <code>allocation_profiles.py</code>, selected per intake. The
-engineering profile assigns OpenAI/Claude/Cursor/Grok/Antigravity 40/25/15/10/10;
-its other lanes have zero targets. Other profiles enable research or hygiene as
-needed. Preserve the twenty-real-assignment denominator, soft tolerance and hard
-limits; use neither fake assignments nor automatic redistribution.</p>
 <h2 id="active-documentation-guard">Active documentation guard</h2>
 <p><code>python scripts/check_active_documentation.py</code> checks active Markdown and YAML under <code>docs/</code>
 and <code>prompts/</code>, plus root README/agent instructions. It excludes <code>docs/archive/**</code>.
@@ -828,7 +823,7 @@ exception is not production TLS evidence.</p>
 <p>For live Default intake, the configured provider list is an available pool, not a
 requirement to dispatch every provider. Current authenticated app and adapter
 readiness must cover OpenAI orchestration and at least two other primary providers
-capable of implementation and independent review. OpenAI production is explicitly assigned under the frozen allocation profile;
+capable of implementation and independent review. OpenAI production is explicitly assigned under its authorized assignment;
 control-plane work creates no production credit and material authors cannot self-review. The planner freezes one implementation provider and a
 different reviewer before the existing exact-plan execution approval. Every task
 stops there except a small read-only task that a live standing grant
@@ -859,15 +854,7 @@ policy while preserving existing rows. Unknown or incompatible schema/history
 fails closed; the v1-only table still requires explicit remediation before any
 provider attempt. Legacy reservations without frozen profile-admission provenance
 require explicit reconciliation before new admissions, preserving their history.
-Mature windows still assess last nineteen plus the prospective assignment
-against the normal ±3-point band as an advisory preference; the owner retired
-the target+5 rolling-twenty hard ceiling on 2026-09-21.
-The approved Engineering profile replaces the former unsustainable core-only
-allocation: OpenAI35/Claude30/Cursor15/Grok10/Antigravity10. The full matrix,
-role boundaries, zero-target rule and preserved-history profile changes are in
-<a href="provider-allocation-profiles.html">Provider allocation profiles</a>. Real authenticated
-adapter capability and independent review remain prerequisites; percentages alone
-do not prove operational throughput or authorize deployment.</p>
+</p>
 <p>The Default primary application registers this complete assignment DAG in the
 Postgres parallel ledger before an execution approval can cross the provider
 boundary. After approval, the historical single-assignment graph edge is an

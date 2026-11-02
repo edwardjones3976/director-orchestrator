@@ -56,7 +56,6 @@
     "docs/protocol-compliance-audit-2026-09-09.md": "docs/protocol-compliance-audit-2026-09-09.html",
     "docs/provider-acceptance-v2-runtime.md": "docs/provider-acceptance-v2-runtime.html",
     "docs/provider-acceptance-v2.md": "docs/provider-acceptance-v2.html",
-    "docs/provider-allocation-profiles.md": "docs/provider-allocation-profiles.html",
     "docs/provider-connection-audit-2026-09-09.md": "docs/provider-connection-audit-2026-09-09.html",
     "docs/provider-evidence-run-spec.md": "docs/provider-evidence-run-spec.html",
     "docs/provider-profiles/README.md": "docs/provider-profiles/README.html",
@@ -424,12 +423,6 @@
       "target": "docs/provider-acceptance-v2.html",
       "title": "Provider acceptance v2 verification core",
       "source_sha256": "420a1f2b9e8d243d45f3067776830a7aa45ae151bb6225577c4400ac747e8a99"
-    },
-    {
-      "source": "docs/provider-allocation-profiles.md",
-      "target": "docs/provider-allocation-profiles.html",
-      "title": "Provider allocation profiles",
-      "source_sha256": "a01ea972a4ad309a4df27c155efacbac37b80b191f485af2587d0632dbf47d48"
     },
     {
       "source": "docs/provider-connection-audit-2026-09-09.md",

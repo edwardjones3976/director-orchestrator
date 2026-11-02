@@ -17,7 +17,6 @@ authority_granted: "none"
 source_of_truth:
   charter_document: "docs/team-operating-charter.html"
   charter_module: "src/director_orchestrator/team_charter.py"
-  allocation_module: "src/director_orchestrator/allocation_profiles.py"
   deterministic_policy: "src/director_orchestrator/policy.py"
   route_catalog: "docs/provider-profiles/routes.yaml"
   precedence: "charter_code_and_deterministic_policy_override_this_profile"
@@ -70,14 +69,6 @@ roles:
     seatable_in_debate: true
     may_initiate_debate: false
     vote_grants_authority: false
-  allocation:
-    profiles: { mixed: 9, engineering: 12, public_research: 4, enterprise: 4 }
-    default_profile: "engineering"
-    overall_effort_policy: "telemetry_only_no_separate_allocation"
-    capacity_context: "owner_Pro20x_Max5x_not_API_entitlements"
-    accounting_basis: "admitted_assignment_count"
-    zero_target_rule: "ineligible"
-    accounting_status: "direct_production_allocation"
   hygiene_review: null
   openai_functions: null
 

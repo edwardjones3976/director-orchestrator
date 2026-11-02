@@ -27,61 +27,9 @@ not prove a working product, and a completion score does not grant permission to
 dispatch, merge or spend.</p>
 <h2 id="assignment-balance">Assignment balance</h2>
 <p>The <a href="engineering-workload-ledger.html">engineering ledger</a> records actual bounded
-assignments in one local SQLite journal. On 2026-09-12 the owner chose to keep the
-existing five-provider engineering allocation:</p>
-<table>
-<thead>
-<tr>
-<th>Allocation lane</th>
-<th style="text-align:right">Target</th>
-<th style="text-align:right">Target count in twenty</th>
-<th style="text-align:right">Retired hard maximum in twenty (reference only)</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>OpenAI</td>
-<td style="text-align:right">40%</td>
-<td style="text-align:right">8</td>
-<td style="text-align:right">9</td>
-</tr>
-<tr>
-<td>Claude</td>
-<td style="text-align:right">25%</td>
-<td style="text-align:right">5</td>
-<td style="text-align:right">6</td>
-</tr>
-<tr>
-<td>Cursor</td>
-<td style="text-align:right">15%</td>
-<td style="text-align:right">3</td>
-<td style="text-align:right">4</td>
-</tr>
-<tr>
-<td>Direct Grok</td>
-<td style="text-align:right">10%</td>
-<td style="text-align:right">2</td>
-<td style="text-align:right">3</td>
-</tr>
-<tr>
-<td>Gemini / Antigravity</td>
-<td style="text-align:right">10%</td>
-<td style="text-align:right">2</td>
-<td style="text-align:right">3</td>
-</tr>
-</tbody>
-</table>
-<p>The normal tolerance is three percentage points, an advisory routing preference.
-The owner retired the target-plus-five rolling-twenty hard ceiling on 2026-09-21
-as outdated; it no longer blocks or refuses admission. A zero target remains
-ineligible regardless of history. Each assignment contributes five percentage
-points. Failed, cancelled, reserved and ambiguous work stays in history. Retries
-belong to the same assignment and cannot erase its cost or create a new
-allowance. Pure coordination is recorded separately.</p>
+assignments in one local SQLite journal..</p>
 <p>Actual <strong>Grok Bot is a separate product</strong> from direct Grok and from Cursor's Grok
-models. The current allocation has no Grok Bot binding. The journal reports that
-gap instead of attributing its work to a different product. Product identity,
-allocation and reviewer eligibility are separate fields.</p>
+models. Product identity and reviewer eligibility remain separate.</p>
 <p>The journal is not populated with guessed past work. A new installation either
 imports an attested complete last twenty or starts at an explicitly recorded
 quiescent boundary with earlier history marked unknown. Empty slots are visible;

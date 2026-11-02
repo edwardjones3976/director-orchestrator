@@ -413,20 +413,6 @@
   ],
   "provider_id": "grok",
   "roles": {
-    "allocation": {
-      "accounting_basis": "admitted_assignment_count",
-      "accounting_status": "direct_production_allocation",
-      "capacity_context": "owner_Pro20x_Max5x_not_API_entitlements",
-      "default_profile": "engineering",
-      "overall_effort_policy": "telemetry_only_no_separate_allocation",
-      "profiles": {
-        "engineering": 8,
-        "enterprise": 4,
-        "mixed": 8,
-        "public_research": 4
-      },
-      "zero_target_rule": "ineligible"
-    },
     "capability_parity_target": 1.0,
     "charter_workload_lane": "capability_routed_lane",
     "committee": {
@@ -486,7 +472,6 @@
   },
   "schema_version": "director-provider-profile/v1",
   "source_of_truth": {
-    "allocation_module": "src/director_orchestrator/allocation_profiles.py",
     "charter_document": "docs/team-operating-charter.html",
     "charter_module": "src/director_orchestrator/team_charter.py",
     "deterministic_policy": "src/director_orchestrator/policy.py",
@@ -506,10 +491,6 @@
     {
       "anchor": "The Grok adapter has two explicit transports.",
       "document": "docs/provider-setup.html"
-    },
-    {
-      "anchor": "Canonical profile IDs are `mixed`, `engineering`, `public_research`, and",
-      "document": "docs/provider-allocation-profiles.html"
     },
     {
       "anchor": "xAI API, Grok Build CLI, and Grok Bot are separate contacts",

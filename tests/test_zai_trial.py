@@ -182,6 +182,16 @@ class ZaiTrialTests(unittest.TestCase):
         self.assertNotIn("OTHER_KEY", sent["env"])
         self.assertNotIn("ANTHROPIC_API_KEY", sent["env"])
         self.assertIn(b"Welcome aboard, Z.ai", sent["stdin"])
+        welcome = (ROOT / "docs/providers/zai-welcome-aboard.md").read_text(encoding="utf-8")
+        self.assertTrue(sent["stdin"].startswith(welcome.encode("utf-8")))
+        for clause in ("Missing or conflicting authority", "Never expose",
+                       "credentials", "remove approval gates", "No deployment",
+                       "a separate owner activation decision", "No upgrade, recharge, general-API fallback",
+                       "Never\nredispatch an ambiguous paid attempt",
+                       "OpenAI's separate 75% Director-activity rule earns no production credit."):
+            self.assertIn(clause, welcome)
+        for removed in ("conditional", "rolling 20-assignment", "normal tolerance", "target+5"):
+            self.assertNotIn(removed, welcome)
         self.assertNotIn(b"test.secret", sent["stdin"])
         with self.assertRaises(FileExistsError):
             build_zai_trial_adapter(**self.kw).dispatch(self.work, context=self.context)

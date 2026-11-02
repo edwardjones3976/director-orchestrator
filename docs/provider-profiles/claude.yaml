@@ -24,7 +24,6 @@ authority_granted: "none"
 source_of_truth:
   charter_document: "docs/team-operating-charter.html"
   charter_module: "src/director_orchestrator/team_charter.py"
-  allocation_module: "src/director_orchestrator/allocation_profiles.py"
   deterministic_policy: "src/director_orchestrator/policy.py"
   route_catalog: "docs/provider-profiles/routes.yaml"
   precedence: "charter_code_and_deterministic_policy_override_this_profile"
@@ -69,18 +68,6 @@ roles:
     seatable_in_debate: true
     may_initiate_debate: false
     vote_grants_authority: false
-  allocation:
-    profiles:
-      mixed: 27
-      engineering: 21
-      public_research: 21
-      enterprise: 31
-    default_profile: "engineering"
-    overall_effort_policy: "telemetry_only_no_separate_allocation"
-    capacity_context: "owner_Pro20x_Max5x_not_API_entitlements"
-    accounting_basis: "admitted_assignment_count"
-    zero_target_rule: "ineligible"
-    accounting_status: direct_production_allocation
   hygiene_review: null
   openai_functions: null
   director_functions: null
@@ -178,8 +165,8 @@ platform_limitations:
     source: "docs/provider-setup.html; src/director_orchestrator/callbacks.py"
   - limitation: "Live dispatch requires a dedicated callback bearer secret stored only by the orchestrator and the trusted callback sender."
     source: "docs/provider-setup.html"
-  - limitation: "Owner-reported account context is Claude Max 5x. It is a capacity signal for allocation, not an API entitlement, and never proves remaining quota or zero cost."
-    source: "docs/provider-allocation-profiles.html, Capacity, roles, and authority"
+  - limitation: "Owner-reported account context is Claude Max 5x. It is a capacity signal, not an API entitlement, and never proves remaining quota or zero cost."
+    source: "docs/provider-capacity-and-authority.html, Capacity, roles, and authority"
   - limitation: "The native security issuer is dormant: it needs the owner-installed protected runtime, separate broker and worker identities, and a native claude.ai login before it can sign a receipt."
     source: "docs/native-acceptance-issuers.html"
   - limitation: "CLAUDE_ACCOUNT_CONTEXT holds the owner-reported account context string surfaced in the provider strategy; it is informational and never an entitlement, quota, or budget."
@@ -297,7 +284,7 @@ sources:
   anchor: The policy target is a ChatGPT/Codex Director lane for priorities,
 - document: docs/provider-setup.html
   anchor: The supported programmable bridge here is a **Claude Code Routine** with an API trigger.
-- document: docs/provider-allocation-profiles.html
+- document: docs/provider-capacity-and-authority.html
   anchor: The owner's account context is OpenAI Pro 20x and Claude Max 5x; other providers
 - document: docs/native-acceptance-issuers.html
   anchor: Claude owns the security role; Cursor owns independent

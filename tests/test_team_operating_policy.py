@@ -575,7 +575,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
         self.directive = self.charter["director_operating_directive"]
 
     def test_director_duties_are_separate_from_direct_production_share(self):
-        self.assertEqual(self.directive["workload_policy_version"], "capacity-allocation-v1")
+        self.assertNotIn("workload_policy_version", self.directive)
         self.assertEqual(self.directive["director"], "openai")
         self.assertTrue(
             self.directive["duties_excluded_from_direct_production_share"]
@@ -591,12 +591,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
             "milestone_reporting",
             "investigator",
         ])
-        profiles = self.directive["allocation_profiles"]
-        self.assertEqual(profiles["weights"]["engineering"], [33,21,12,8,8,0,0,0,18])
-        self.assertEqual(len(profiles["lane_order"]), 9)
-        self.assertEqual(profiles["lane_order"][-1], "zai")
-        for targets in profiles["weights"].values():
-            self.assertEqual(sum(targets), 100)
+        self.assertNotIn("allocation_profiles", self.directive)
         self.assertEqual(
             self.directive["workload_accounting"]["ledgers"]["overall_effort"],
             "prospective_observed_effort_guard",
@@ -648,20 +643,7 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
             "usage_telemetry_only_not_production_credit",
         )
 
-        enforcement = self.directive["workload_enforcement"]
-        self.assertEqual(enforcement["enforced_measure"], "admitted_assignment_count")
-        self.assertEqual(enforcement["normal_tolerance_percentage_points"], 3)
-        self.assertEqual(
-            enforcement["evaluate"],
-            [
-                "prospective_last20_assignment_count",
-            ],
-        )
-        self.assertFalse(enforcement["overall_effort_can_block_or_route"])
-        self.assertTrue(enforcement["automatic_drift_correction"])
-        self.assertTrue(enforcement["automatic_enforcement_after_shadow"])
-        self.assertEqual(enforcement["share_pressure_action"], "historical_nonenforcing")
-        self.assertEqual(enforcement["startup_denominator"], "twenty_slots_real_assignments_only")
+        self.assertNotIn("workload_enforcement", self.directive)
 
     def test_cheap_capable_coding_team_first_and_prestaging_are_fail_closed(self):
         coding = self.directive["coding_routing"]
@@ -671,8 +653,6 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
             [
                 "exact_scope_allowlists_transport_and_readiness",
                 "task_capability_tools_context_risk_and_independence",
-                "direct_allocation_compliance_and_under_target_preference",
-                "total_effort_eligibility_and_corrective_under_band_preference",
                 "lowest_trusted_estimated_cost",
                 "deterministic_tie_breaker",
             ],
@@ -750,10 +730,10 @@ class DirectorOperatingDirectiveTests(unittest.TestCase):
 
         copilot = self.directive["copilot_lite_hygiene_review"]
         self.assertFalse(copilot["provider_or_committee_member"])
-        self.assertIsNone(copilot["workload_percentage"])
+        self.assertNotIn("workload_percentage", copilot)
         self.assertNotIn(
             "github_copilot_cli_lite",
-            self.directive["allocation_profiles"]["lane_order"],
+            self.directive["workload_lanes"],
         )
         self.assertEqual(
             copilot["attempts"],

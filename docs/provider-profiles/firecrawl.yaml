@@ -7,7 +7,7 @@
 # Provider profile sheet: Firecrawl (director-provider-profile/v1).
 # Descriptive only. Grants no authority. This lane has no charter role profile,
 # committee seat, standing role, or legacy adapter; every field below is derived
-# from code, the allocation profiles, and the primary operations document.
+# from code, provider capabilities, and the primary operations document.
 # Names only: no allowlist, key, token, endpoint, path, or owner identifier values.
 schema_version: "director-provider-profile/v1"
 document_type: "director-provider-profile"
@@ -18,7 +18,6 @@ authority_granted: "none"
 source_of_truth:
   charter_document: "docs/team-operating-charter.html"
   charter_module: "src/director_orchestrator/team_charter.py"
-  allocation_module: "src/director_orchestrator/allocation_profiles.py"
   deterministic_policy: "src/director_orchestrator/policy.py"
   route_catalog: "docs/provider-profiles/routes.yaml"
   precedence: "charter_code_and_deterministic_policy_override_this_profile"
@@ -35,12 +34,12 @@ identifiers:
   charter_workload_lane_key: null
   standing_role_label: "Authorized public web retrieval"
   config_prefixes: ["FIRECRAWL_"]
-  alias_note: "Firecrawl is a LangGraph-primary-only public search lane. It shares Perplexity's fail-closed public research contract and public-search transport class but is its own lane with its own allocation; it is not a Perplexity alias."
+  alias_note: "Firecrawl is a LangGraph-primary-only public search lane. It shares Perplexity's fail-closed public research contract and public-search transport class but is its own lane with its own identity; it is not a Perplexity alias."
 
 roles:
   team: "lane_only"
   lane_class: "public_search_transport"
-  summary: "Public search transport on the LangGraph primary path only, under the same fail-closed public research contract as Perplexity. It has an allocation in the mixed, public research, and enterprise profiles but no charter role, committee seat, or legacy adapter, and a nonzero target is not evidence that the route is operational."
+  summary: "Public search transport on the LangGraph primary path only, under the same fail-closed public research contract as Perplexity. It has no charter role, committee seat, or legacy adapter; its route must pass the actual readiness gates."
   charter_workload_lane: null
   strategy_key: null
   strategy_priority: null
@@ -62,14 +61,6 @@ roles:
     seatable_in_debate: false
     may_initiate_debate: false
     vote_grants_authority: false
-  allocation:
-    profiles: { mixed: 4, engineering: 0, public_research: 12, enterprise: 4 }
-    default_profile: "engineering"
-    overall_effort_policy: "telemetry_only_no_separate_allocation"
-    capacity_context: "owner_Pro20x_Max5x_not_API_entitlements"
-    accounting_basis: "admitted_assignment_count"
-    zero_target_rule: "ineligible"
-    accounting_status: "allocation_without_legacy_adapter"
   hygiene_review: null
   openai_functions: null
 
@@ -134,7 +125,7 @@ authority:
   review_requirement: "Public research evidence is untrusted until OpenAI or another authorized primary-team member evaluates it; Firecrawl inherits the Perplexity contract's review requirement through the shared public-search transport."
   strategy_constraints:
     - "requires its actual capabilities, authorized sources, least privilege, authenticated readiness, and supported adapters"
-    - "a nonzero target is not evidence that a route is operational"
+    - "verify each route's actual readiness"
   separation_of_duties: []
   production_authority_permitted: true
   external_effects:
@@ -150,7 +141,7 @@ platform_limitations:
   - limitation: "No Firecrawl variable appears in .env.example or docs/provider-setup.html; the lane's credential names exist only in the primary transport authentication map."
     source: "src/director_orchestrator/primary_transports.py:_PROVIDER_AUTH_ENVIRONMENT"
   - limitation: "The legacy provider registry has no Firecrawl adapter; the lane can execute only on the LangGraph primary path through the public-search transport."
-    source: "docs/provider-allocation-profiles.html"
+    source: "docs/provider-capacity-and-authority.html"
   - limitation: "Firecrawl is not a supported Windows host-bridge lane and has no browser provider-UI eligibility."
     source: "src/director_orchestrator/host_provider_bridge.py:SUPPORTED_HOST_LANES; docs/team-operating-charter.html"
   - limitation: "The public-search transport rejects every external effect."
@@ -201,14 +192,12 @@ this_profile_does_not_change:
   - "deterministic policy in src/director_orchestrator/policy.py"
 
 sources:
-  - document: "docs/provider-allocation-profiles.html"
-    anchor: "A nonzero target is not evidence that a route is operational."
-  - document: "docs/provider-allocation-profiles.html"
+  - document: "docs/provider-capacity-and-authority.html"
+    anchor: "Verify each route's actual readiness."
+  - document: "docs/provider-capacity-and-authority.html"
     anchor: "The default legacy provider registry does not include OpenAI production, Firecrawl,"
   - document: "docs/langgraph-primary-operations.html"
     anchor: "Perplexity or Firecrawl contact under the frozen profile"
-  - document: "docs/team-operating-charter.html"
-    anchor: "| Firecrawl |"
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]
 # [[OpenAI Codex | GPT-6 Astra | 2026-09-13 | 03:19 UTC | END]]
