@@ -22,13 +22,13 @@ SPEC.loader.exec_module(guard)
 
 
 class ActiveDocumentationTests(unittest.TestCase):
-    def test_current_completion_guidance_has_one_scoped_lead(self):
+    def test_current_director_orchestrator_appointments_are_consistent(self):
         leadership = " ".join(read_document(ROOT / "docs/project-leadership.html").replace("**", "").split())
         staff = " ".join(read_document(ROOT / "docs/team-staff-and-briefings.html").replace("**", "").split())
         for clause in (
-            "Codex remains overall accountable; Claude directs Director-Orchestrator completion priorities",
-            "current owner appointment of Claude as Director-Orchestrator completion lead supersedes earlier Codex-only completion instructions for that scope",
-            "This assignment excludes Homemade LLM and every other project",
+            "OpenAI as Director and distinct Orchestrator, Claude as the full-time sole Foreman, Cursor as Warden, and Antigravity as Secretary",
+            "Adaptive routing is an OpenAI Orchestrator responsibility",
+            "The current owner appointments of OpenAI Director and Orchestrator, Claude sole Foreman, Cursor Warden and Antigravity Secretary",
         ):
             with self.subTest(clause=clause):
                 self.assertIn(clause, leadership)
@@ -37,11 +37,18 @@ class ActiveDocumentationTests(unittest.TestCase):
             "immediate ChatGPT/Codex appointment supersedes historical prose assigning project leadership to Claude",
         ):
             self.assertNotIn(stale, leadership)
-        self.assertIn("| 2 | Claude | Director-Orchestrator completion lead, including while Codex is available", staff)
-        self.assertIn("Claude's current completion appointment does not require Codex's absence", staff)
-        self.assertIn("Claude completion lead / deputy", staff)
-        self.assertNotIn("Director and site foreman; owns outcomes, priorities, routing", staff)
-        self.assertNotIn("| 2 | Claude | Deputy; performs the Director's duties while Codex is unavailable", staff)
+        self.assertIn("| 1 | ChatGPT / Codex | Distinct Director and Orchestrator", staff)
+        self.assertIn("| 2 | Claude | Sole Director-Orchestrator Foreman", staff)
+        self.assertIn("| 3 | Cursor | Warden for Director-Orchestrator PR and issue tracking", staff)
+        self.assertIn("No absence, silence or fallback routing transfers an appointed role", staff)
+        for stale in (
+            "Claude completion lead / deputy",
+            "Claude's current completion appointment",
+            "Claude is the appointed completion Director",
+            "Codex supports that plan while remaining overall Director",
+            "Overall Director and site foreman",
+        ):
+            self.assertNotIn(stale, staff)
 
     def test_mandatory_research_keeps_inter_provider_scope(self):
         leadership = " ".join(read_document(ROOT / "docs/project-leadership.html").split())
@@ -95,18 +102,21 @@ class ActiveDocumentationTests(unittest.TestCase):
             tuple(yaml.safe_load(profile)["team"]["director"][key] for key in ("provider", "appointment")),
         )
 
-    def test_codex_prompt_routes_completion_to_appointed_lead_and_scopes_fallback(self):
+    def test_codex_prompt_assigns_routing_to_orchestrator_and_scopes_fallback(self):
         text = " ".join(read_document(ROOT / "prompts/codex-engineering.md").split())
         for clause in (
-            "owner's 2026-10-02 appointment makes Claude the completion lead through 20/20 plus issue #81, including while Codex is available",
-            "Return Director-Orchestrator completion scope and sequencing decisions to Claude",
-            "This appointment excludes Homemade LLM and other projects",
-            "Outside that scoped completion appointment, retain explicit project appointments",
+            "For Director-Orchestrator, OpenAI retains distinct Director and Orchestrator roles",
+            "Claude is sole Foreman and Cursor is Warden",
+            "OpenAI Orchestrator owns provider-model and reasoning-effort selection for every important task",
+            "keeping low, medium and high as real options",
+            "Escalate only for an evidenced quality limitation, not for missing inputs, tools, environment, permissions, quota or ambiguous effects",
+            "Preserve explicit pins, cumulative attempts, budgets and independent review",
+            "Retain explicit project appointments",
             "Where no project appointment applies, the general deputy arrangement operates",
             "only under the owner's explicit appointment of Claude as second in command",
             "owner directive, 2026-09-22",
             "only while the ChatGPT/Codex Director is unavailable",
-            "it does not limit Claude's separate current Director-Orchestrator completion appointment",
+            "it does not replace OpenAI's current Director-Orchestrator Director and Orchestrator roles",
             "Cursor covers all Director duties when both Codex and Claude are unavailable and retains administrator status while either is present",
             "never remove deterministic gates or permit self-approval or self-merge",
             "Every lane routing still passes capability, authority, availability, budget, repository, and independence checks",
@@ -115,12 +125,14 @@ class ActiveDocumentationTests(unittest.TestCase):
                 self.assertIn(clause, text)
 
         self.assertIn(
-            "Return completion decisions to Claude under the current appointment, "
-            "even when Codex is available. For other work, follow its owner-appointed "
+            "Return work-order and repair-direction questions to Claude Foreman and "
+            "execution-coordination decisions to OpenAI Orchestrator. For other work, follow its owner-appointed "
             "project Director; where none is appointed, follow Codex, then Claude "
             "during Codex's absence, then Cursor when both are unavailable.",
             text,
         )
+        self.assertNotIn("Claude the completion lead", text)
+        self.assertNotIn("Return completion decisions to Claude under the current appointment", text)
         self.assertNotIn("The ChatGPT/Codex Director holds project coordination", text)
         self.assertNotIn("Return scope and sequencing decisions to the acting Director: the ChatGPT/Codex Director", text)
 

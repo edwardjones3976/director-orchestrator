@@ -73,9 +73,9 @@ an applicable tool receipt and source binding; it is not a research exemption.
 Outside Foreman-directed repairs, administrators and providers retain judgment
 and problem-solving freedom within their assignments.
 
-Codex remains overall Director and Foreman; Claude remains completion lead and
-sets completion priorities; Cursor remains administrator #3. Record any acting
-Foreman takeover under existing succession; silence does not establish absence.
+OpenAI remains overall Director and distinct Orchestrator; Claude is the sole
+Foreman; Cursor is Warden. No role transfers through silence, unavailability or
+fallback routing; only an explicit owner reassignment changes these appointments.
 The owner retains macro-plan and expressly reserved decisions. Foreman procedure
 and omission decisions stay within existing authority and preserve independent
 review, contributor eligibility, security, exact-candidate, CI, budget and merge
@@ -125,10 +125,12 @@ Cursor is not a non-admin provider. The owner is above this chain. Codex may
 overrule/delegate to Claude and Cursor; Claude may overrule/delegate to Cursor.
 The owner approves macro plans; administrators decide individual assignments
 and subordinate plans within existing delegation and deterministic gates.
-For the current Director-Orchestrator completion plan, the owner appointed
-**Claude as completion Director**, with Codex providing overall accountability
-and support. This applies while Codex is available too and excludes Homemade LLM
-and other projects. Do not start a competing completion plan. See the canonical
+For Director-Orchestrator, the owner's 2026-10-26 appointment keeps OpenAI as
+the distinct Director and Orchestrator, Claude as sole Foreman, and Cursor as
+Warden. OpenAI Director retains overall leadership and accountability. OpenAI
+Orchestrator coordinates approved execution, dependencies, resources, handoffs,
+and status without creating a competing Foreman queue. Claude alone owns intake,
+work-order issuance, and repair directions. See the canonical
 [administrator definition](docs/project-leadership.html#administrators-and-chain-of-command).
 Perplexity and Firecrawl retain their public-research roles.
 Read `docs/project-leadership.html` before assigning work. Runtime coordination
@@ -145,9 +147,34 @@ authority.
   contributions, receipts, credentials, and Codex Security are never renamed.
 - This leadership decision does not attest live provider routing. The deployed
   runtime keeps its recorded provider until a real replacement passes all gates.
-- Work already in flight keeps its writer and evidence; new assignments follow
-  the responsible Director's direction, currently Claude for Director-Orchestrator
-  completion. Only the sole author and its provider family are barred from reviewing or accepting on authorship grounds; any provider with counted lines may never merge that pull request.
+- Work already in flight keeps its writer and evidence; new Director-Orchestrator
+  execution follows OpenAI Orchestrator coordination and Claude Foreman orders.
+  Only the sole author and its provider family are barred from reviewing or
+  accepting on authorship grounds; any provider with counted lines may never
+  merge that pull request.
+
+## Orchestrator model and effort routing
+
+Selecting and reassessing the provider model and reasoning effort for every
+important task is an explicit **OpenAI Orchestrator responsibility**. The
+Orchestrator chooses the optimal eligible combination from the supported
+task-fit range, including low, medium and high; no provider, model or effort is
+a blanket default. Base the choice on the requested outcome, ambiguity,
+dependencies, modality and tools, consequence of error, verification method,
+latency, cost, availability and remaining budgets. Provider recommendations are
+evidence, not a transfer of routing ownership.
+
+Reassess at delegated results, acceptance failures and meaningful phase changes.
+First distinguish reasoning or implementation limitations from missing inputs,
+unavailable tools, environment failures, permission restrictions, model quota
+and ambiguous effects. Increase capability or effort only for an evidenced
+quality limitation; do not spend a stronger model on an unchanged prerequisite.
+Preserve explicit owner pins, provider appointments, active writers, cumulative
+attempts, budgets and independent review. Record requested, published and
+server-confirmed settings separately, keep execution `UNKNOWN` without
+attestation, and use at most one automatic quality escalation per task within
+the existing cumulative budget. The Orchestrator may coordinate a bounded
+delegate, but it cannot delegate away this responsibility.
 
 Follow [Staff and nightly briefings](docs/team-staff-and-briefings.html): keep the
 staff/contact/task/repair records current and publish the daily briefing at

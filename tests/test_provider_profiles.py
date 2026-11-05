@@ -1109,7 +1109,9 @@ class DiscoveryTests(unittest.TestCase):
         self.assertIn("Cursor is not a non-admin provider", normalized)
         self.assertNotIn("no standing director role", normalized.lower())
         self.assertNotIn("Lead delivery:", claude_instructions)
-        self.assertIn("keep other work within its explicit assignment authority", normalized)
+        self.assertIn("Keep work within the issued order and explicit assignment authority", normalized)
+        self.assertIn("OpenAI Orchestrator selects and reassesses the optimal eligible provider model and effort", normalized)
+        self.assertIn("low, medium and high all available by task fit", normalized)
         self.assertIn("docs/project-leadership.html", claude_instructions)
 
     def test_active_surfaces_avoid_non_exempt_standing_role_language(self):

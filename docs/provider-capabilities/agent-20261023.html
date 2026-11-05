@@ -29,7 +29,7 @@
 
   <section aria-labelledby="task">
     <h2 id="task">Scoped JSON task from the Director</h2>
-    <p>The Director (or acting Foreman) delivers a bounded task object: work-order identifiers, explicit steps, <code>allowed_paths</code>, and stop rules. The agent must call <code>worker_git_status</code> first, read each target path with <code>worker_git_read_file</code> (treating <code>ABSENT</code> as the expected hash for new files), then write only where authorized. A tool <strong>refusal</strong> is final: report it and do not substitute another channel or workaround. Ambiguous effect or unknown native model/session metadata is labeled <strong>UNKNOWN</strong> until reconciled from tool returns.</p>
+    <p>The OpenAI Orchestrator coordinates a bounded task object under a Claude-issued Foreman order: work-order identifiers, explicit steps, <code>allowed_paths</code>, and stop rules. The agent must call <code>worker_git_status</code> first, read each target path with <code>worker_git_read_file</code> (treating <code>ABSENT</code> as the expected hash for new files), then write only where authorized. A tool <strong>refusal</strong> is final: report it and do not substitute another channel or workaround. Ambiguous effect or unknown native model/session metadata is labeled <strong>UNKNOWN</strong> until reconciled from tool returns.</p>
   </section>
 
   <section aria-labelledby="publish">
