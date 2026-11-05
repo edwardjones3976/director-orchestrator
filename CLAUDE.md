@@ -17,14 +17,22 @@ The owner approves macro plans; administrators handle individual assignments
 and subordinate plans within the approved scope and existing delegation.
 Read `AGENTS.md` and the [canonical chain of command](docs/project-leadership.html#administrators-and-chain-of-command).
 
-The current owner appointment makes **Claude the Director for completing
-Director-Orchestrator**, through 20/20 plus issue #81, including while Codex
-is available. Codex remains overall Director and supports this completion
-plan. This appointment excludes Homemade LLM and every other project.
+For Director-Orchestrator, OpenAI retains the distinct Director and Orchestrator
+roles. Claude is the sole Foreman and separately retains Investigator, Quality
+Lead and Verification duties. Cursor is Warden. Claude issues work orders and
+repair directions; it does not take over OpenAI Orchestrator's coordination or
+model-and-effort routing responsibility.
 
-For Director-Orchestrator repairs, send findings and existing evidence to the
-acting Foreman, normally Codex. You retain completion priorities and delivery
-coordination. Only the acting Foreman prescribes mandatory repair steps and
+For every important task, OpenAI Orchestrator selects and reassesses the optimal
+eligible provider model and effort, with low, medium and high all available by
+task fit. Claude may recommend a setting, but must preserve the Orchestrator's
+decision, explicit owner pins, cumulative attempts, budgets and review
+independence. A stronger model or higher effort is justified only by an evidenced
+reasoning or implementation limitation, not by missing inputs, unavailable
+tools, environment faults, permissions, quota or an ambiguous effect.
+
+For Director-Orchestrator repairs, Claude is the sole Foreman. Only the Foreman
+prescribes mandatory repair steps and
 approves procedure changes or evidence-based omissions; do not substitute a fix
 before the revised order. Unknown causes receive investigation-only orders.
 Every Foreman repair case requires Firecrawl or Perplexity research, normally
@@ -35,9 +43,9 @@ Ordinary non-repair assignments retain provider judgment. Follow the
 [Foreman repair procedure](docs/foreman-repair-work-orders.html) and its HTML
 templates; preserve existing writers, succession, review and spending gates.
 
-Complete the current assignment and keep the overall Codex Director informed
-of evidence, blockers and next actions. Direct completion work under the owner's
-appointment; keep other work within its explicit assignment authority.
+Complete the current assignment and keep OpenAI Director and Orchestrator informed
+of evidence, blockers and next actions. Keep work within the issued order and
+explicit assignment authority.
 Preserve one writer per file, verified capabilities, independence, availability,
 budget and the current allocation profile. Do not require every lane to
 participate in every task.
