@@ -44,6 +44,8 @@ class ActiveDocumentationTests(unittest.TestCase):
         for stale in (
             "Claude completion lead / deputy",
             "Claude's current completion appointment",
+            "Claude is the appointed completion Director",
+            "Codex supports that plan while remaining overall Director",
             "Overall Director and site foreman",
         ):
             self.assertNotIn(stale, staff)
