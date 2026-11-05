@@ -95,18 +95,21 @@ class ActiveDocumentationTests(unittest.TestCase):
             tuple(yaml.safe_load(profile)["team"]["director"][key] for key in ("provider", "appointment")),
         )
 
-    def test_codex_prompt_routes_completion_to_appointed_lead_and_scopes_fallback(self):
+    def test_codex_prompt_assigns_routing_to_orchestrator_and_scopes_fallback(self):
         text = " ".join(read_document(ROOT / "prompts/codex-engineering.md").split())
         for clause in (
-            "owner's 2026-10-02 appointment makes Claude the completion lead through 20/20 plus issue #81, including while Codex is available",
-            "Return Director-Orchestrator completion scope and sequencing decisions to Claude",
-            "This appointment excludes Homemade LLM and other projects",
-            "Outside that scoped completion appointment, retain explicit project appointments",
+            "For Director-Orchestrator, OpenAI retains distinct Director and Orchestrator roles",
+            "Claude is sole Foreman and Cursor is Warden",
+            "OpenAI Orchestrator owns provider-model and reasoning-effort selection for every important task",
+            "keeping low, medium and high as real options",
+            "Escalate only for an evidenced quality limitation, not for missing inputs, tools, environment, permissions, quota or ambiguous effects",
+            "Preserve explicit pins, cumulative attempts, budgets and independent review",
+            "Retain explicit project appointments",
             "Where no project appointment applies, the general deputy arrangement operates",
             "only under the owner's explicit appointment of Claude as second in command",
             "owner directive, 2026-09-22",
             "only while the ChatGPT/Codex Director is unavailable",
-            "it does not limit Claude's separate current Director-Orchestrator completion appointment",
+            "it does not replace OpenAI's current Director-Orchestrator Director and Orchestrator roles",
             "Cursor covers all Director duties when both Codex and Claude are unavailable and retains administrator status while either is present",
             "never remove deterministic gates or permit self-approval or self-merge",
             "Every lane routing still passes capability, authority, availability, budget, repository, and independence checks",
@@ -115,12 +118,14 @@ class ActiveDocumentationTests(unittest.TestCase):
                 self.assertIn(clause, text)
 
         self.assertIn(
-            "Return completion decisions to Claude under the current appointment, "
-            "even when Codex is available. For other work, follow its owner-appointed "
+            "Return work-order and repair-direction questions to Claude Foreman and "
+            "execution-coordination decisions to OpenAI Orchestrator. For other work, follow its owner-appointed "
             "project Director; where none is appointed, follow Codex, then Claude "
             "during Codex's absence, then Cursor when both are unavailable.",
             text,
         )
+        self.assertNotIn("Claude the completion lead", text)
+        self.assertNotIn("Return completion decisions to Claude under the current appointment", text)
         self.assertNotIn("The ChatGPT/Codex Director holds project coordination", text)
         self.assertNotIn("Return scope and sequencing decisions to the acting Director: the ChatGPT/Codex Director", text)
 
