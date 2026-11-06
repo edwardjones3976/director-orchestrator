@@ -61,6 +61,16 @@ Repair/revision limits are separate. See [Provider retry policy](docs/provider-r
 
 ## Foreman-controlled repairs
 
+This project distinguishes two order classes. The OpenAI Director issues general
+work orders for initial work, large tasks or changes, projects and other major
+events to any eligible provider. Before dispatch, the OpenAI Orchestrator records
+admission, conditions or a hold and owns workforce sequencing and monitoring.
+Claude's Foreman work order means a **repair work order**: it prescribes a bounded
+repair and is delegated to workers by default. An administrator may receive one
+only under the recorded abnormal-condition rule, with Director/Orchestrator
+concurrence, inherited limits and separate eligible review. See
+[Director work orders and Orchestrator admission](docs/director-work-orders.html).
+
 All Director-Orchestrator repairs are routed to the acting Foreman. Only that
 Foreman issues mandatory, direct repair instructions; providers follow the
 prescribed solution, sequence and boundaries. Recommend alternatives or skipped
@@ -129,8 +139,8 @@ For Director-Orchestrator, the owner's 2026-10-26 appointment keeps OpenAI as
 the distinct Director and Orchestrator, Claude as sole Foreman, and Cursor as
 Warden. OpenAI Director retains overall leadership and accountability. OpenAI
 Orchestrator coordinates approved execution, dependencies, resources, handoffs,
-and status without creating a competing Foreman queue. Claude alone owns intake,
-work-order issuance, and repair directions. See the canonical
+and status without creating a competing Foreman queue. Claude alone owns repair
+intake, repair-work-order issuance, and repair directions. See the canonical
 [administrator definition](docs/project-leadership.html#administrators-and-chain-of-command).
 Perplexity and Firecrawl retain their public-research roles.
 Read `docs/project-leadership.html` before assigning work. Runtime coordination
@@ -148,7 +158,8 @@ authority.
 - This leadership decision does not attest live provider routing. The deployed
   runtime keeps its recorded provider until a real replacement passes all gates.
 - Work already in flight keeps its writer and evidence; new Director-Orchestrator
-  execution follows OpenAI Orchestrator coordination and Claude Foreman orders.
+  execution follows Director general orders after Orchestrator admission, or
+  Claude Foreman repair orders for bounded repair work.
   Only the sole author and its provider family are barred from reviewing or
   accepting on authorship grounds; any provider with counted lines may never
   merge that pull request.

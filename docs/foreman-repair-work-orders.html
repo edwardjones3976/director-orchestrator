@@ -13,6 +13,7 @@
 <main id="content">
 <p class="eyebrow">Owner-approved operating procedure · 4 October 2026</p>
 <h1>Foreman-controlled repair work orders</h1>
+<p class="notice"><strong>Order-class boundary:</strong> this procedure governs only Foreman-issued repair work orders. General work orders for initial work, large tasks or changes, projects and other major events are issued by the Director to any eligible provider after <a href="director-work-orders.html">Orchestrator admission</a>.</p>
 <p class="lede">One responsible Foreman, one explicit procedure, and evidence reused where it still proves the requirement. This procedure covers Director-Orchestrator repairs, not ordinary assignments or other projects.</p>
 <nav aria-label="On this page"><a href="#authority">Authority</a> · <a href="#order">Work order</a> · <a href="#research">Research</a> · <a href="#phases">Five phases</a> · <a href="#reuse">Evidence reuse</a> · <a href="#reporting">Reporting</a> · <a href="#recommendations">Recommendations</a> · <a href="#rollout">Rollout</a></nav>
 
@@ -22,9 +23,9 @@
 <p>A repair corrects an observed defect or inconsistency in project code, documentation, CI, provider plumbing or operations. New features and ordinary delivery assignments continue under their existing outcome-based guidance. An investigation finding is evidence, not permission to implement a fix. If classification or instructions conflict, pause only the affected step and return the conflict to the Foreman.</p>
 <table><caption>Responsibilities within the existing chain of command</caption><thead><tr><th scope="col">Role</th><th scope="col">Repair responsibility</th></tr></thead><tbody>
 <tr><th scope="row">Owner</th><td>Approves macro plans and expressly reserved matters. Existing access, spending and other limits remain in force.</td></tr>
-<tr><th scope="row">OpenAI Director</th><td>Owns outcomes, priorities, decisions and owner escalation; does not issue Foreman work orders.</td></tr>
+<tr><th scope="row">OpenAI Director</th><td>Owns outcomes, priorities, decisions and owner escalation; issues general Director work orders but does not issue Foreman repair work orders.</td></tr>
 <tr><th scope="row">OpenAI Orchestrator</th><td>Coordinates approved execution, dependencies, resources, handoffs and status, including task-fit provider/model/effort routing; does not create a competing intake or assignment queue.</td></tr>
-<tr><th scope="row">Claude — sole Foreman</th><td>Converts findings into bounded orders; selects the solution, sequence and evidence; approves amendments and justified omissions within existing authority; resolves competing repair instructions.</td></tr>
+<tr><th scope="row">Claude — sole Foreman</th><td>Converts findings into bounded repair orders; selects the solution, sequence and evidence; approves amendments and justified omissions within existing authority; resolves competing repair instructions. Assigns workers except under the evidenced abnormal-condition rule in the Director work-order policy.</td></tr>
 <tr><th scope="row">Cursor — Warden</th><td>Tracks, reviews and disposes of Director-Orchestrator PRs and issues within its appointment. Performs eligible independent review and merge only when every authorship, exact-candidate and deterministic gate permits it; does not issue Foreman work orders.</td></tr>
 <tr><th scope="row">Assigned supervisor, writer and reviewer</th><td>One supervisor owns delivery, one writer owns the named surfaces, and an eligible independent reviewer evaluates the exact candidate. Record actual provider identities and contributions.</td></tr>
 </tbody></table>
