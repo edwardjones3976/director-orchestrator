@@ -38,13 +38,13 @@ attributed to the provider that actually produced them.</p>
 <p>Historical coordination decisions remain recorded as evidence only. OpenAI Director
 owns Director-Orchestrator outcomes, priorities and owner escalation. OpenAI
 Orchestrator coordinates approved execution, dependencies, resources, handoffs and
-status. Claude is the sole Foreman for intake, work-order issuance and repair
+status. The Director issues general work orders to any eligible provider after Orchestrator admission. Claude is the sole Foreman for repair intake, repair-work-order issuance and repair
 directions. Cursor is Warden for evidence-based PR and issue oversight. This policy
 update does not claim that a deployed runtime provider changed in production.</p>
 <h2 id="administrators-and-chain-of-command">Administrators and chain of command</h2>
 <p><strong>Foreman tools:</strong> use <a href="site-coordination.html#rea-investigations">REA MCP with the installed reverse-engineer-anything skill</a> for questions about shipped artifacts or runtime behavior that source does not establish. Tool availability does not expand an assignment or establish engine readiness.</p>
 <p><strong>Project maintenance:</strong> OpenAI Orchestrator coordinates ongoing worktree and GitHub repository upkeep, dependencies and shared resources. Cursor Warden owns Director-Orchestrator PR and issue tracking, review and disposition within its appointment. Follow <a href="site-coordination.html#project-maintenance">the maintenance procedure</a>, preserving accountable sessions, recoverable work, current review and release gates.</p>
-<p><strong>Repair authority:</strong> Claude is the full-time and sole Foreman. Claude converts repair findings into mandatory, bounded instructions and resolves conflicting repair directions. OpenAI Orchestrator coordinates issued orders and does not create a competing intake or assignment queue. Providers may propose alternatives or skipped steps but wait for an issued Claude revision. Ordinary assignments retain judgment. No absence, silence or fallback transfers the Foreman appointment; only an explicit owner reassignment does. See <a href="foreman-repair-work-orders.html#authority">the repair authority boundary</a>. Homemade LLM and other project appointments are unchanged.</p>
+<p><strong>Order authority:</strong> the Director issues general work orders for initial work, large tasks or changes, projects and other major events after the Orchestrator records admission and workforce controls. <strong>Repair authority:</strong> Claude is the full-time and sole Foreman. Claude converts repair findings into mandatory, bounded instructions and resolves conflicting repair directions. OpenAI Orchestrator coordinates issued repair orders and does not create a competing repair queue. Foreman repair orders go to workers except under the evidenced abnormal-condition rule. Providers may propose alternatives or skipped steps but wait for an issued Claude revision. Ordinary assignments retain judgment. No absence, silence or fallback transfers the Foreman appointment; only an explicit owner reassignment does. See <a href="director-work-orders.html">the order taxonomy</a> and <a href="foreman-repair-work-orders.html#authority">the repair authority boundary</a>. Homemade LLM and other project appointments are unchanged.</p>
 <p>Owner clarification, 2026-10-02: <strong>the three provider administrators are
 ChatGPT/Codex, Claude and Cursor. Cursor is an administrator, not a non-admin
 provider.</strong> The owner sits above the administrator team.</p>
@@ -106,10 +106,11 @@ separate from administrator status.</p>
 <h3 id="current-director-orchestrator-completion-appointment">Current Director-Orchestrator appointments</h3>
 <p>The owner appointed <strong>OpenAI as Director and distinct Orchestrator, Claude as
 the full-time sole Foreman, Cursor as Warden, and Antigravity as Secretary</strong>.
-Director owns outcomes, priorities and accountability. Orchestrator coordinates
-approved execution, dependencies, resources, handoffs and status without creating
-a competing intake or assignment queue. Claude alone issues Foreman work orders and
-repair directions. Cursor independently tracks, reviews and disposes of PRs and
+Director owns outcomes, priorities and accountability and issues general work orders
+to any eligible provider. Orchestrator admits and coordinates approved execution,
+dependencies, resources, handoffs and status without creating a competing repair
+queue. Claude alone issues Foreman repair work orders and repair directions to
+workers, subject to the recorded abnormal-condition exception. Cursor independently tracks, reviews and disposes of PRs and
 issues within its appointment. This assignment excludes Homemade LLM and every
 other project; their appointments are unchanged.</p>
 <p><strong>Adaptive routing is an OpenAI Orchestrator responsibility.</strong> At task entry
@@ -196,8 +197,12 @@ removes no gate. The canonical rule is the charter's
 <td>OpenAI Orchestrator</td>
 </tr>
 <tr>
-<td>Intake, work-order issuance and repair directions</td>
-<td>Claude, sole Foreman</td>
+<td>General work-order issuance after Orchestrator admission</td>
+<td>OpenAI Director</td>
+</tr>
+<tr>
+<td>Repair intake, repair-work-order issuance and repair directions</td>
+<td>Claude, sole Foreman; workers by default</td>
 </tr>
 <tr>
 <td>PR and issue tracking, independent evidence review and disposition</td>

@@ -19,8 +19,9 @@ Read `AGENTS.md` and the [canonical chain of command](docs/project-leadership.ht
 
 For Director-Orchestrator, OpenAI retains the distinct Director and Orchestrator
 roles. Claude is the sole Foreman and separately retains Investigator, Quality
-Lead and Verification duties. Cursor is Warden. Claude issues work orders and
-repair directions; it does not take over OpenAI Orchestrator's coordination or
+Lead and Verification duties. Cursor is Warden. Claude issues repair work orders
+and repair directions; the Director issues general work orders to any eligible
+provider after Orchestrator admission. Claude does not take over that coordination or
 model-and-effort routing responsibility.
 
 For every important task, OpenAI Orchestrator selects and reassesses the optimal
@@ -42,6 +43,9 @@ reuse; the Foreman records completion and any delayed checkpoint.
 Ordinary non-repair assignments retain provider judgment. Follow the
 [Foreman repair procedure](docs/foreman-repair-work-orders.html) and its HTML
 templates; preserve existing writers, succession, review and spending gates.
+Delegate repair orders to workers. Use an administrator only for an evidenced
+abnormal condition under `docs/director-work-orders.html`, with recorded
+Director/Orchestrator concurrence, inherited limits and separate eligible review.
 
 Complete the current assignment and keep OpenAI Director and Orchestrator informed
 of evidence, blockers and next actions. Keep work within the issued order and
