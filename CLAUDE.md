@@ -95,6 +95,16 @@ An INVESTIGATOR handoff is evidence, not an assignment; act only within your cur
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | END]] -->
 
 
+## Communication system: Agent Room — owner directive, 2026-11-08
+
+Use the Agent Room for administrator and worker conversation. Identities are `provider@device`.
+Ask, answer, debate and acknowledge freely within the published caps. Decisions stay in the
+Foreman register and orders. Slack `#director-admin-ops` is owner-facing summaries and availability
+alerts only. The Foreman inbox takes HTML evidence files only; questions to the Foreman go to a
+room thread addressed to `claude@blackbox`. Scrapped anti-back-and-forth / no-acknowledgment /
+no-polling / no-auto-continue rules are removed (archived). See [Agent Room](docs/agent-room.html)
+and `C:/Users/edwar/Agent-Roles/communication-system.html`.
+
 ## Canonical HTML documentation
 
 Owner direction, 2026-10-03 Pacific: use HTML as the maintained source for the substantial majority of human-facing project documentation, plans, reports, staff records and handoffs. This is not a Markdown-source/HTML-output hybrid. Read [the HTML documentation policy](docs/html-documentation-policy.html) and use [the documentation library](docs/index.html). Keep only machine-required entry points, model prompt contracts and immutable historical evidence in required formats. Update links, consumers and tests together; preserve existing writers and all review/release gates.

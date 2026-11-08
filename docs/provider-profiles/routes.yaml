@@ -168,7 +168,7 @@ routes:
       - document: "docs/slack-collaboration-bus.html"
         anchor: "then relays only a concise"
       - document: "prompts/director-system.md"
-        anchor: "Providers communicate through the Director rather than posting freely."
+        anchor: "Slack `#director-admin-ops` carries owner-facing summaries and provider-availability alerts only."
     enforced_by:
       - "src/director_orchestrator/engine.py"
       - "src/director_orchestrator/slack_bot.py"
@@ -194,7 +194,7 @@ routes:
     default_config_state: "enabled"
     charter_basis:
       - document: "prompts/director-system.md"
-        anchor: "the Director delegates, relays, collects, and records concise structured updates"
+        anchor: "relays declared dependency outcomes"
       - document: "docs/team-operating-charter.html"
         anchor: "The Director sends the initial packet once"
     enforced_by:
@@ -202,7 +202,7 @@ routes:
       - "src/director_orchestrator/antigravity.py"
     prohibition_quote: null
     config: []
-    notes: "This is how one provider's work reaches another: through the Director, as a declared dependency, never as a message between providers."
+    notes: "Declared dependency outcomes still pass through the Director into work packets. Routine administrator and worker conversation between providers uses the Agent Room (docs/agent-room.html); it does not replace packet-bound work handoffs."
 
   - route_id: "review-to-merge-handoff"
     name: "Review-to-merge handoff"
@@ -257,7 +257,7 @@ routes:
       - "src/director_orchestrator/primary_committee.py"
     prohibition_quote: null
     config: [OPENAI_DEBATE_TURN_ESTIMATED_COST_USD]
-    notes: "Each debate's configured denominator is fixed when tallied: 10.0 since the owner's 2026-09-27 Z.ai weight decision, 8.5 for earlier tallies, which are never re-tallied. Positions are exchanged only through the Director as moderator; members never address one another."
+    notes: "Each debate's configured denominator is fixed when tallied: 10.0 since the owner's 2026-09-27 Z.ai weight decision, 8.5 for earlier tallies, which are never re-tallied. Advisory positions and votes are exchanged through the Director as moderator; members may address one another in the Agent Room for ordinary conversation under docs/agent-room.html."
 
   - route_id: "antigravity-invited-debate"
     name: "Antigravity invited debate turn"
@@ -415,7 +415,7 @@ routes:
     default_config_state: "enabled"
     charter_basis:
       - document: "docs/slack-collaboration-bus.html"
-        anchor: "Slack is the Director's primary human-visible coordination room."
+        anchor: "owner-facing summaries and provider-availability alerts only"
     enforced_by:
       - "src/director_orchestrator/slack_bot.py"
       - "src/director_orchestrator/main.py"
@@ -1036,14 +1036,14 @@ routes:
       - document: "docs/templates/project-bootstrap/project-profile.yaml"
         anchor: "provider_messages_relay_through_director: true"
       - document: "prompts/director-system.md"
-        anchor: "Providers communicate through the Director rather than posting freely."
+        anchor: "Uncontrolled direct channels remain prohibited."
     enforced_by:
       - "src/director_orchestrator/interactions.py:ProviderTransport"
       - "src/director_orchestrator/workload_policy.py:Transport"
       - "src/director_orchestrator/primary_transports.py:PrimaryProviderCapability"
     prohibition_quote: "They do not post directly or converse forever."
     config: []
-    notes: "Every exchange between two providers is brokered by the Director through work-packet-dispatch, dependency-outcome-forwarding, review-to-merge-handoff, advisory-debate, or slack-collaboration-relay."
+    notes: "Uncontrolled provider-to-provider loops remain prohibited. The authorized conversation path is the Agent Room MCP (docs/agent-room.html). Work packets, dependency outcomes, review handoffs, moderated debate tallies, and the Slack owner relay stay Director-mediated."
 
 provider_to_provider_rule:
   status: "prohibited"
@@ -1055,7 +1055,7 @@ provider_to_provider_rule:
     - document: "docs/templates/project-bootstrap/project-profile.yaml"
       anchor: "provider_messages_relay_through_director: true"
     - document: "prompts/director-system.md"
-      anchor: "Providers communicate through the Director rather than posting freely."
+      anchor: "Uncontrolled direct channels remain prohibited."
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]
