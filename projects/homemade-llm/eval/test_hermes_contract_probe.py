@@ -1,14 +1,15 @@
 """Fixture-only tests: python -m unittest discover -s projects/homemade-llm/eval -p test_hermes_contract_probe.py -v"""
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
-import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import hermes_contract_probe as hermes
+SPEC = importlib.util.spec_from_file_location("hermes_contract_probe", Path(__file__).with_name("hermes_contract_probe.py"))
+hermes = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(hermes)
 
 
 class HermesContractProbeTests(unittest.TestCase):
@@ -41,6 +42,7 @@ class HermesContractProbeTests(unittest.TestCase):
         for output in (
             '<tool_call>{"name":"lookup","name":"lookup","arguments":{"query":"status"}}</tool_call>',
             '<tool_call>{"name":"lookup","arguments":{"query":NaN}}</tool_call>',
+            '<tool_call>{"name":"lookup","arguments":{"query":1e400}}</tool_call>',
         ):
             with self.subTest(output=output):
                 self.assertIn("STRICT_JSON", {e["code"] for e in hermes.probe(self.contract(output))["errors"]})
@@ -54,6 +56,35 @@ class HermesContractProbeTests(unittest.TestCase):
                 contract = self.contract()
                 contract["tools"][0]["function"]["parameters"][field] = value
                 self.assertIn("TOOL_DECLARATION", {e["code"] for e in hermes.probe(contract)["errors"]})
+
+        for function in (None, [], "lookup"):
+            with self.subTest(function=function):
+                contract = self.contract()
+                contract["tools"][0]["function"] = function
+                self.assertIn("TOOL_DECLARATION", {e["code"] for e in hermes.probe(contract)["errors"]})
+
+        for schema in (None, {"type": "not-a-json-type"}, {"enum": "not-a-list"}):
+            with self.subTest(schema=schema):
+                contract = self.contract()
+                contract["tools"][0]["function"]["parameters"]["properties"]["query"] = schema
+                self.assertIn("TOOL_DECLARATION", {e["code"] for e in hermes.probe(contract)["errors"]})
+
+    def test_validates_nested_object_and_array_arguments(self):
+        contract = self.contract(
+            '<tool_call>{"name":"lookup","arguments":{"query":{"count":"wrong","extra":true}}}</tool_call>'
+        )
+        contract["tools"][0]["function"]["parameters"]["properties"]["query"] = {
+            "type": "object", "properties": {"count": {"type": "integer"}},
+            "required": ["count"], "additionalProperties": False,
+        }
+        codes = {e["code"] for e in hermes.probe(contract)["errors"]}
+        self.assertTrue({"ARGUMENT_TYPE", "UNDECLARED_ARGUMENT"} <= codes)
+
+        contract = self.contract('<tool_call>{"name":"lookup","arguments":{"query":[1,"wrong"]}}</tool_call>')
+        contract["tools"][0]["function"]["parameters"]["properties"]["query"] = {
+            "type": "array", "items": {"type": "integer"},
+        }
+        self.assertIn("ARGUMENT_TYPE", {e["code"] for e in hermes.probe(contract)["errors"]})
 
     def test_effects_require_nonempty_unique_final_evidence(self):
         for final_effects in (None, [], ["effect-1", "effect-1"]):
@@ -71,6 +102,26 @@ class HermesContractProbeTests(unittest.TestCase):
         codes = {error["code"] for error in hermes.probe(contract)["errors"]}
         self.assertIn("STRICT_JSON", codes)
         self.assertNotIn("RESULT_BINDING", codes)
+
+    def test_rejects_duplicate_result_binding_and_malformed_names_and_evidence(self):
+        output = "\n".join([
+            '<tool_call>{"name":"lookup","arguments":{"query":"one"}}</tool_call>',
+            '<tool_call>{"name":"lookup","arguments":{"query":"two"}}</tool_call>',
+        ])
+        contract = self.contract(output)
+        contract["tool_results"] = [
+            {"call_index": 0, "name": "lookup", "effect_id": "effect-1"},
+            {"call_index": 0, "name": "lookup", "effect_id": "effect-2"},
+        ]
+        contract["final_effect_ids"] = ["effect-1", "effect-2"]
+        self.assertIn("RESULT_BINDING", {e["code"] for e in hermes.probe(contract)["errors"]})
+
+        contract = self.contract('<tool_call>{"name":[],"arguments":{"query":"status"}}</tool_call>')
+        self.assertIn("TOOL_CALL_SHAPE", {e["code"] for e in hermes.probe(contract)["errors"]})
+
+        contract = self.contract()
+        contract["final_effect_ids"] = [{}]
+        self.assertIn("FINAL_EVIDENCE", {e["code"] for e in hermes.probe(contract)["errors"]})
 
     def test_cli_writes_hashed_receipt_and_preserves_existing_on_bad_input(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 from pathlib import Path
@@ -28,7 +29,13 @@ def strict_json(raw: str) -> object:
     def constant(value):
         raise ValueError(f"non-finite number: {value}")
 
-    return json.loads(raw, object_pairs_hook=pairs, parse_constant=constant)
+    def finite_float(value):
+        parsed = float(value)
+        if not math.isfinite(parsed):
+            raise ValueError(f"non-finite number: {value}")
+        return parsed
+
+    return json.loads(raw, object_pairs_hook=pairs, parse_constant=constant, parse_float=finite_float)
 
 
 def atomic_json(path: Path, value: dict) -> None:
@@ -36,6 +43,29 @@ def atomic_json(path: Path, value: dict) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     os.replace(temporary, path)
+
+
+def valid_schema(schema: object) -> bool:
+    if not isinstance(schema, dict):
+        return False
+    expected = schema.get("type")
+    if expected is not None and expected not in TYPE_MAP:
+        return False
+    if "enum" in schema and not isinstance(schema["enum"], list):
+        return False
+    properties = schema.get("properties", {})
+    required = schema.get("required", [])
+    if not isinstance(properties, dict) or not all(
+        isinstance(name, str) and valid_schema(child) for name, child in properties.items()
+    ):
+        return False
+    if not isinstance(required, list) or not all(isinstance(name, str) for name in required):
+        return False
+    if "additionalProperties" in schema and not isinstance(schema["additionalProperties"], bool):
+        return False
+    if "items" in schema and not valid_schema(schema["items"]):
+        return False
+    return True
 
 
 def validate_value(value: object, schema: dict, field: str, errors: list[dict]) -> None:
@@ -49,6 +79,20 @@ def validate_value(value: object, schema: dict, field: str, errors: list[dict]) 
             return
     if "enum" in schema and value not in schema["enum"]:
         errors.append({"code": "ARGUMENT_ENUM", "field": field})
+    if isinstance(value, dict):
+        properties = schema.get("properties", {})
+        for required in schema.get("required", []):
+            if required not in value:
+                errors.append({"code": "MISSING_ARGUMENT", "field": f"{field}.{required}"})
+        if schema.get("additionalProperties") is False:
+            for child in value.keys() - properties.keys():
+                errors.append({"code": "UNDECLARED_ARGUMENT", "field": f"{field}.{child}"})
+        for child, child_value in value.items():
+            if child in properties:
+                validate_value(child_value, properties[child], f"{field}.{child}", errors)
+    if isinstance(value, list) and "items" in schema:
+        for index, item in enumerate(value):
+            validate_value(item, schema["items"], f"{field}[{index}]", errors)
 
 
 def probe(contract: dict) -> dict:
@@ -59,14 +103,14 @@ def probe(contract: dict) -> dict:
         tools = []
         errors.append({"code": "TOOL_DECLARATION"})
     for item in tools:
-        function = item.get("function", {}) if isinstance(item, dict) and item.get("type") == "function" else {}
+        function = item.get("function") if isinstance(item, dict) and item.get("type") == "function" else None
+        if not isinstance(function, dict):
+            errors.append({"code": "TOOL_DECLARATION"})
+            continue
         name = function.get("name")
         parameters = function.get("parameters", {})
-        properties = parameters.get("properties", {}) if isinstance(parameters, dict) else None
-        required = parameters.get("required", []) if isinstance(parameters, dict) else None
-        valid_required = isinstance(required, list) and all(isinstance(field, str) for field in required)
-        if (not isinstance(name, str) or not name or name in declared or not isinstance(parameters, dict)
-                or not isinstance(properties, dict) or not valid_required):
+        if (not isinstance(name, str) or not name or name in declared
+                or not valid_schema(parameters) or parameters.get("type") not in (None, "object")):
             errors.append({"code": "TOOL_DECLARATION"})
             continue
         declared[name] = parameters
@@ -87,7 +131,8 @@ def probe(contract: dict) -> dict:
         except (json.JSONDecodeError, ValueError):
             errors.append({"code": "STRICT_JSON", "call_index": index})
             continue
-        if not isinstance(call, dict) or set(call) != {"name", "arguments"} or not isinstance(call.get("arguments"), dict):
+        if (not isinstance(call, dict) or set(call) != {"name", "arguments"}
+                or not isinstance(call.get("name"), str) or not isinstance(call.get("arguments"), dict)):
             errors.append({"code": "TOOL_CALL_SHAPE", "call_index": index})
             continue
         name, arguments = call["name"], call["arguments"]
@@ -112,13 +157,17 @@ def probe(contract: dict) -> dict:
         results = []
         errors.append({"code": "RESULT_COUNT"})
     effects: set[str] = set()
+    bound_indices: set[int] = set()
     for result in results:
         if not isinstance(result, dict):
             errors.append({"code": "RESULT_BINDING"})
             continue
         index, name, effect_id = result.get("call_index"), result.get("name"), result.get("effect_id")
-        if not isinstance(index, int) or isinstance(index, bool) or index not in calls or calls[index]["name"] != name:
+        if (not isinstance(index, int) or isinstance(index, bool) or index not in calls
+                or index in bound_indices or calls[index]["name"] != name):
             errors.append({"code": "RESULT_BINDING"})
+        else:
+            bound_indices.add(index)
         if not isinstance(effect_id, str) or not effect_id or effect_id in effects:
             errors.append({"code": "EFFECT_IDENTITY"})
         else:
@@ -127,9 +176,10 @@ def probe(contract: dict) -> dict:
         errors.append({"code": "RESULT_COUNT"})
 
     final_effects = contract.get("final_effect_ids", [])
-    if (not isinstance(final_effects, list) or len(final_effects) != len(set(final_effects))
+    valid_final_effects = isinstance(final_effects, list) and all(isinstance(effect, str) for effect in final_effects)
+    if (not valid_final_effects or len(final_effects) != len(set(final_effects))
             or (effects and not final_effects)
-            or any(not isinstance(effect, str) or effect not in effects for effect in final_effects)):
+            or any(effect not in effects for effect in final_effects)):
         errors.append({"code": "FINAL_EVIDENCE"})
 
     return {
