@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Provider-owned repairs · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="project-leadership.html">Leadership</a><a href="foreman-repair-work-orders.html">Repair procedure</a></nav></header>
+<main id="content">
+<p class="eyebrow">Owner directive · 8 November 2026 · all projects and providers</p>
+<h1>Provider-owned repairs</h1>
+<p><strong>Owner directive, 8 November 2026.</strong> This applies across all projects, providers, repositories and agent instruction files, from now on. It <strong>supersedes</strong> the three-failure provider repair protocol of 7 November 2026. Where any other document conflicts with this page, this page controls.</p>
+
+<h2 id="rule">The rule</h2>
+<ol>
+<li><strong>The finding provider repairs.</strong> The provider that finds a defect or failure while doing authorized work owns its repair and carries it out itself. This applies whether the provider is an administrator or a worker, and it stays within that provider's existing task, permissions, writable scope and limits. It does not hand the fix to another provider, and it does not ask for a repair order first.</li>
+<li><strong>A repair order exists only when one of these holds:</strong>
+  <ol type="a">
+  <li>the finding provider <strong>cannot reach a solution</strong>, for example because the fix needs authority, access, tools, paths, spend or knowledge it does not have, or the cause stays unknown after investigation; or</li>
+  <li>the finding provider has made <strong>three failed repair attempts on the same issue</strong>.</li>
+  </ol></li>
+<li><strong>Three consecutive unrelated issues do not make a repair request.</strong> Each issue has its own count, and failures on different issues never add up.</li>
+<li>When condition 2 is met, the finding provider files <strong>one repair note</strong> containing every field in <a href="#repair-note">the required repair note</a>. A repair note is intake evidence, not an issued order. The project's appointed authority decides whether to issue a repair order. In Director-Orchestrator that authority is the Claude Foreman.</li>
+</ol>
+
+<h2 id="same-issue">What counts as the same issue</h2>
+<ul>
+<li>Failures are the same issue when they share the <strong>same objective</strong> (the same task outcome or acceptance criterion) <strong>and</strong> the <strong>same failure boundary</strong>: the same component, behaviour or error class, or a direct causal chain where one remedy changes the error but the same goal is still blocked.</li>
+<li>Failures are different issues when they block different objectives or arise from independent causes. That holds even if they occur one after another, in the same session or in the same file.</li>
+<li>Give each issue a short <strong>issue key</strong> (for example <code>WO-123/api-show-digest</code>) and keep it across sessions, models, transports, handoffs and new IDs. A new identifier does not reset the count.</li>
+<li>When unsure, record the reasoning in the task evidence. The reviewing authority may merge or split issues.</li>
+</ul>
+
+<h2 id="attempts">What counts as a failed attempt</h2>
+<ul>
+<li>A failed attempt is one evidence-based remedy that was <strong>actually applied and verified against the original goal</strong>, where the verification failed.</li>
+<li>These do <strong>not</strong> count: transport retries, timeouts or connection errors with no remedy applied; quota or availability faults handled by the model or pool fallback rules; duplicate notifications; re-reading an error; intentionally failing negative tests.</li>
+<li>Each attempt must change something based on new evidence. Re-running the same remedy is not a new attempt.</li>
+<li>Stop early on success, cancellation, or an exhausted time, token, cost, attempt or resource limit. The three-attempt threshold is a ceiling for self-repair, not a quota to spend.</li>
+</ul>
+
+<h2 id="immediate">Immediate reports</h2>
+<p>Some situations must be <strong>reported at once</strong>, on the first occurrence, without waiting for three attempts:</p>
+<ul>
+<li>security or safety concerns;</li>
+<li>destructive or potentially irreversible effects;</li>
+<li>ambiguous external effects;</li>
+<li>authority or ownership conflicts;</li>
+<li>protected-data access;</li>
+<li>major incidents;</li>
+<li>provider availability failures, which go through the existing Slack alert rule.</li>
+</ul>
+<p>Reporting does not take ownership away from the finding provider. Where the remedy is within its authority, it still repairs. Where the remedy is outside its authority, condition 2(a) applies and it files a repair note immediately. Reconcile uncertain effects before any replay.</p>
+
+<h2 id="repair-note">The required repair note</h2>
+<p>A repair note must contain every field below. If a fact is unknown, write <code>UNKNOWN</code> rather than leaving the field blank. Reference retained receipts, and never paste secrets, credentials or protected data.</p>
+<table>
+<thead><tr><th>#</th><th>Field</th><th>Content</th></tr></thead><tbody>
+<tr><td>1</td><td>Issue key and title</td><td>A one-line summary naming the subsystem and the symptom, plus the stable issue key.</td></tr>
+<tr><td>2</td><td>Priority and deadline</td><td><strong>P0</strong>: safety, security or data loss, or all work blocked. <strong>P1</strong>: blocks the critical path or a committed deadline. <strong>P2</strong>: blocks or degrades a non-critical task. <strong>P3</strong>: minor, with a workaround. State the deadline in America/Los_Angeles and UTC, or none.</td></tr>
+<tr><td>3</td><td>Trigger</td><td>Which condition applies: 2(a) cannot reach a solution (and why), or 2(b) three failed attempts on the same issue.</td></tr>
+<tr><td>4</td><td>Use case</td><td>What the provider, user or system was trying to achieve, and why it matters.</td></tr>
+<tr><td>5</td><td>Scope</td><td>Affected components, files and paths, tasks, orders and projects; what is in scope and what is explicitly out of scope.</td></tr>
+<tr><td>6</td><td>Context</td><td>Project, task and order IDs and lineage; repository and branch with commit or file hashes; host and OS build; tool, runtime and model versions; provider, model and session (or UNKNOWN); the responsible writer and any active writers.</td></tr>
+<tr><td>7</td><td>Expected versus actual</td><td>The expected behaviour, and the actual behaviour with sanitized error text.</td></tr>
+<tr><td>8</td><td>All three failures</td><td>For each one: time (UTC), the exact command or action, the observed result or error, and an evidence path with SHA-256 or receipt ID. Under 2(a), list every failure that occurred.</td></tr>
+<tr><td>9</td><td>What was tried</td><td>For each failed attempt: the remedy applied, the reasoning or evidence behind it, how it was verified, and why it failed. Also list remedies considered but not tried, and why.</td></tr>
+<tr><td>10</td><td>Diagnosis</td><td>The known cause versus hypotheses, what has been ruled out, and the confidence level.</td></tr>
+<tr><td>11</td><td>Reproduction</td><td>Minimal steps and environment. For intermittent failures, give frequency and conditions. Say whether the failure is reproducible right now.</td></tr>
+<tr><td>12</td><td>Research done</td><td>Firecrawl, Perplexity or REA queries and receipts, plus primary sources consulted, with relevance noted.</td></tr>
+<tr><td>13</td><td>Effects and current state</td><td>Changes made, side effects, rollback status, unresolved or ambiguous effects that must not be replayed, and the current state of the worktree or system.</td></tr>
+<tr><td>14</td><td>Impact and workaround</td><td>Who or what is blocked, whether a downstream dependency is affected, and any safe workaround in use.</td></tr>
+<tr><td>15</td><td>Limits and cost</td><td>Attempts, time, tokens and spend used; what remains; holds, permissions and budgets in force.</td></tr>
+<tr><td>16</td><td>Duplicate check</td><td>Related issues, orders, PRs or prior repair notes searched, and whether this is new or a continuation.</td></tr>
+<tr><td>17</td><td>Decision or help needed</td><td>The exact decision, access, tool, information or expertise that would unblock the issue.</td></tr>
+<tr><td>18</td><td>Recommended next step</td><td>A proposed remedy and a suitable owner or provider, with acceptance criteria to prove the fix.</td></tr>
+<tr><td>19</td><td>Reporter</td><td>The provider, model and session that filed the note, a UTC timestamp, and the intake route used.</td></tr>
+</tbody></table>
+<p class="note">Template: <a href="templates/html/repair-note.html">repair-note.html</a> (Director-Orchestrator repository). File the note through the project's existing intake route. In Director-Orchestrator, that is an HTML file in the Foreman inbox plus a register note.</p>
+
+<h2 id="unchanged">What does not change</h2>
+<ul>
+<li>Every repair still requires research. Every repair case still needs relevant Firecrawl or Perplexity research, done by the finding provider when it can or bound by the authority issuing a later order.</li>
+<li>Independent exact-candidate review, CI and merge gates, security and protected-path rules, active-writer ownership, budgets, spend authority and release gates all stay as they are. Self-repair never includes self-approval.</li>
+<li>Project appointments stay as they are. In Director-Orchestrator, Claude alone issues and revises Foreman repair orders once a repair note qualifies. OpenAI Director keeps general-order authority after Orchestrator admission, Cursor remains Warden, and Antigravity remains Secretary.</li>
+<li>The <a href="provider-retry-policy.html">eight-correction ceiling</a> per task still applies. It caps total corrections on a task across all its issues. The three-failure threshold on the same issue is what triggers a repair note, and it usually comes first.</li>
+<li>Repair orders already issued before 8 November 2026 continue under their own terms and are not reopened. New defects found while working on them follow this page.</li>
+</ul>
+<p class="note">Research behind this page: Perplexity receipt <code>20261108T190604Z-181216-d52126c37b271920</code>. Engineering escalation practice consistently asks for reproduction, logs, identifiers, impact, prior attempts, a workaround and an explicit decision request.</p>
+</main>
+<footer class="site-footer">Operating policy only. No runtime schema, service, scheduler or permission change. Mirrors the owner's canonical cross-project policy page.</footer>
+</body>
+</html>

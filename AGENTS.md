@@ -59,9 +59,27 @@ Stop on success and reconcile ambiguous effects before retrying. Fallback and
 transport changes do not reset the budget; keep nested native retries disabled.
 Repair/revision limits are separate. See [Provider retry policy](docs/provider-retry-policy.html).
 
+## Provider-owned repairs (owner directive, 2026-11-08)
+
+The provider that finds a defect while doing authorized work repairs it itself,
+within its existing task, permissions, writable scope and limits. It does not
+hand the fix off or ask for a repair order first. A repair order exists only when
+the finding provider cannot reach a solution or has made three failed,
+evidence-based repair attempts on the SAME issue. Three consecutive unrelated
+issues never make a repair request; each issue keeps its own count under a stable
+issue key. The repair note must include all three failures, the use case, scope,
+context, what each failed remedy tried and why it failed, priority (P0-P3) and
+deadline, and the further fields in
+[Provider-owned repairs](docs/repair-ownership-policy.html) (template:
+[repair note](docs/templates/html/repair-note.html)). Security or safety
+concerns, destructive or ambiguous effects, authority conflicts, protected-data
+access and availability failures are still reported immediately. Research,
+independent review (no self-approval), active writers, budgets and appointments
+are unchanged. This supersedes the 2026-11-07 three-failure protocol.
+
 ## Foreman-controlled repairs
 
-All Director-Orchestrator repairs are routed to the acting Foreman. Only that
+Repair orders that qualify under the provider-owned repair rule above are routed to the acting Foreman. Only that
 Foreman issues mandatory, direct repair instructions; providers follow the
 prescribed solution, sequence and boundaries. Recommend alternatives or skipped
 steps with evidence, but wait for a revised Foreman order before acting on them.

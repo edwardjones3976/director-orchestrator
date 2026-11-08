@@ -31,7 +31,14 @@ independence. A stronger model or higher effort is justified only by an evidence
 reasoning or implementation limitation, not by missing inputs, unavailable
 tools, environment faults, permissions, quota or an ambiguous effect.
 
-For Director-Orchestrator repairs, Claude is the sole Foreman. Only the Foreman
+Provider-owned repairs (owner directive 2026-11-08): the provider that finds a defect
+repairs it itself within its existing authority. A repair order exists only when
+that provider cannot reach a solution or has failed three times on the SAME issue;
+three unrelated issues never qualify. The repair note carries every field in
+[Provider-owned repairs](docs/repair-ownership-policy.html) (all three failures,
+use case, scope, context, remedies tried, priority and more).
+
+For Director-Orchestrator repair orders, Claude is the sole Foreman. Only the Foreman
 prescribes mandatory repair steps and
 approves procedure changes or evidence-based omissions; do not substitute a fix
 before the revised order. Unknown causes receive investigation-only orders.
