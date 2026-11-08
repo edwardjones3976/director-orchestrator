@@ -98,6 +98,7 @@ LANES = tuple(PRIMARY_PROVIDER_LANES)
 COMMITTEE_LANES = ("antigravity", "claude", "cursor", "grok", "openai", "zai")
 DEBATE_SEATS = COMMITTEE_LANES
 PROPOSED_ROUTES = {
+    "agent-room-mcp",
     "claude-director-injected-native-packet",
     "grok-bot",
     "claude-native-acceptance-issuer",
@@ -1215,19 +1216,23 @@ class RouteCatalogTests(unittest.TestCase):
             "Agents do not address each other through uncontrolled chat loops.", anchors
         )
         self.assertIn("provider_messages_relay_through_director: true", anchors)
-        basis = {
-            reference["anchor"]
-            for reference in self.catalog["provider_to_provider_rule"]["basis"]
-        }
-        self.assertTrue(anchors.issubset(basis) or basis.issubset(anchors))
+        rule = self.catalog["provider_to_provider_rule"]
+        self.assertEqual(rule["status"], "authorized")
+        self.assertIn(
+            "Provider-to-provider conversation uses the Agent Room once it is commissioned under WO-20261108-006",
+            {reference["anchor"] for reference in rule["basis"]},
+        )
         for lane in LANES:
             for other in LANES:
                 if lane == other:
                     continue
                 status, direct, mediated = pp.peer_status(lane, other, self.catalog)
                 with self.subTest(lane=lane, other=other):
-                    self.assertEqual(status, "prohibited")
-                    self.assertEqual(direct, [pp.PEER_RULE_ROUTE_ID])
+                    self.assertEqual(status, "authorized")
+                    self.assertCountEqual(
+                        direct,
+                        [pp.AGENT_ROOM_ROUTE_ID, pp.PEER_RULE_ROUTE_ID],
+                    )
                     self.assertTrue(mediated)
 
     def test_mediated_routes_cover_every_lane(self):

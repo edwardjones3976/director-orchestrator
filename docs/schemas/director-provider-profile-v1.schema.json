@@ -75,6 +75,7 @@
             "docs/human-out-of-the-loop-operation.html",
             "docs/chatgpt-slack-alias-bridge.html",
             "docs/project-bootstrap-protocol.html",
+            "docs/agent-room.html",
             "docs/contribution-attribution-policy.html",
             "docs/templates/project-bootstrap/project-profile.yaml",
             "docs/templates/project-bootstrap/provider-roles-contract.yaml"
@@ -632,7 +633,7 @@
           "additionalProperties": false,
           "required": ["status", "basis"],
           "properties": {
-            "status": { "const": "prohibited" },
+            "status": { "type": "string", "enum": ["authorized", "prohibited"] },
             "basis": { "type": "array", "minItems": 3, "items": { "$ref": "#/$defs/docRef" } }
           }
         }

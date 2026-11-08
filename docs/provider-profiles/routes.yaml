@@ -1014,6 +1014,33 @@ routes:
     config: []
     notes: "Prompt-level workflow guidance has no runtime enforcer. Local absolute installation paths are not project contracts."
 
+  # ----------------------------------------------------------- direct peers
+  - route_id: "agent-room-mcp"
+    name: "Agent Room MCP conversation"
+    kind: "direct"
+    direction: "provider_to_provider"
+    initiation: "none"
+    endpoints: { from: "all_providers", to: "all_providers" }
+    providers_involved: [openai, claude, cursor, grok, antigravity, perplexity, firecrawl, github-copilot, zai]
+    carries:
+      - "bounded inter-provider questions, answers, coordination, and acknowledgments through room threads"
+    withheld_context:
+      - "orders, merge or deploy authority, credentials, and protected data"
+    authority: "none"
+    status: "proposed"
+    default_config_state: "blocked"
+    charter_basis:
+      - document: "docs/agent-room.html"
+        anchor: "Providers talk directly, with as much back-and-forth as the work needs."
+      - document: "prompts/director-system.md"
+        anchor: "Provider-to-provider conversation uses the Agent Room once it is commissioned under WO-20261108-006"
+      - document: "AGENTS.md"
+        anchor: "Provider-to-provider conversation uses the Agent Room (owner directive 2026-11-08)."
+    enforced_by: []
+    prohibition_quote: null
+    config: []
+    notes: "Information-only conversation path commissioned under WO-20261108-006; decisions stay in the register and orders. Runtime acceptance is separate evidence."
+
   # ---------------------------------------------------------------- prohibited
   - route_id: "direct-provider-to-provider"
     name: "Direct provider-to-provider channel"
@@ -1046,14 +1073,12 @@ routes:
     notes: "Uncontrolled provider-to-provider loops remain prohibited. The authorized conversation path is the Agent Room MCP (docs/agent-room.html). Work packets, dependency outcomes, review handoffs, moderated debate tallies, and the Slack owner relay stay Director-mediated."
 
 provider_to_provider_rule:
-  status: "prohibited"
+  status: "authorized"
   basis:
-    - document: "docs/slack-collaboration-bus.html"
-      anchor: "They do not post directly or converse forever."
-    - document: "docs/model-interoperability-contract.html"
-      anchor: "Agents do not address each other through uncontrolled chat loops."
-    - document: "docs/templates/project-bootstrap/project-profile.yaml"
-      anchor: "provider_messages_relay_through_director: true"
+    - document: "docs/agent-room.html"
+      anchor: "Providers talk directly, with as much back-and-forth as the work needs."
+    - document: "prompts/director-system.md"
+      anchor: "Provider-to-provider conversation uses the Agent Room once it is commissioned under WO-20261108-006"
     - document: "prompts/director-system.md"
       anchor: "Uncontrolled direct channels remain prohibited."
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
