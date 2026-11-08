@@ -33,7 +33,9 @@ POLICY_FILES = frozenset(
 )
 SCORER_FILES = frozenset(
     {
+        "projects/homemade-llm/eval/hermes_contract_probe.py",
         "projects/homemade-llm/eval/score_packets.py",
+        "projects/homemade-llm/eval/test_hermes_contract_probe.py",
         "projects/homemade-llm/eval/test_score_packets.py",
     }
 )
@@ -192,7 +194,7 @@ def run_focused(suite_name: str) -> int:
         for pattern in POLICY_TESTS:
             suite.addTests(loader.discover("tests", pattern=pattern))
     elif suite_name == "scorer":
-        for pattern in ("test_score_packets.py", "test_generate_candidates.py"):
+        for pattern in ("test_score_packets.py", "test_generate_candidates.py", "test_hermes_contract_probe.py"):
             suite.addTests(loader.discover("projects/homemade-llm/eval", pattern=pattern))
     else:
         raise ValueError(f"unknown focused suite: {suite_name}")
