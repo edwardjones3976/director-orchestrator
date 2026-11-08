@@ -15,6 +15,8 @@ TYPE_MAP = {
     "string": str, "integer": int, "number": (int, float), "boolean": bool,
     "array": list, "object": dict, "null": type(None),
 }
+SCHEMA_KEYS = frozenset({"type", "enum", "properties", "required", "additionalProperties", "items"})
+ANNOTATION_KEYS = frozenset({"title", "description", "default", "examples", "$comment", "deprecated", "readOnly", "writeOnly"})
 
 
 def strict_json(raw: str) -> object:
@@ -47,6 +49,8 @@ def atomic_json(path: Path, value: dict) -> None:
 
 def valid_schema(schema: object) -> bool:
     if not isinstance(schema, dict):
+        return False
+    if not schema.keys() <= SCHEMA_KEYS | ANNOTATION_KEYS:
         return False
     expected = schema.get("type")
     if expected is not None and expected not in TYPE_MAP:

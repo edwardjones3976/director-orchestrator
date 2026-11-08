@@ -69,6 +69,16 @@ class HermesContractProbeTests(unittest.TestCase):
                 contract["tools"][0]["function"]["parameters"]["properties"]["query"] = schema
                 self.assertIn("TOOL_DECLARATION", {e["code"] for e in hermes.probe(contract)["errors"]})
 
+        for unsupported in ({"type": "string", "minLength": 10}, {"type": "integer", "minimum": 1}):
+            with self.subTest(unsupported=unsupported):
+                contract = self.contract()
+                contract["tools"][0]["function"]["parameters"]["properties"]["query"] = unsupported
+                self.assertIn("TOOL_DECLARATION", {e["code"] for e in hermes.probe(contract)["errors"]})
+
+        contract = self.contract()
+        contract["tools"][0]["function"]["parameters"]["properties"]["query"]["description"] = "Lookup query"
+        self.assertEqual(hermes.probe(contract)["status"], "PASS")
+
     def test_validates_nested_object_and_array_arguments(self):
         contract = self.contract(
             '<tool_call>{"name":"lookup","arguments":{"query":{"count":"wrong","extra":true}}}</tool_call>'
