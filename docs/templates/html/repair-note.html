@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Repair note template · Director Orchestrator</title>
+<link rel="stylesheet" href="../../assets/documentation.css">
+</head><body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="../../index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Repair documents"><a href="../../repair-ownership-policy.html">Provider-owned repairs</a><a href="../../foreman-repair-work-orders.html">Repair procedure</a><a href="repair-work-order.html">Work-order template</a></nav></header>
+<main id="content">
+<p class="eyebrow">Template · no result claimed</p><h1>Repair note: [issue key] · [one-line summary]</h1>
+<p class="notice">File this note only when the finding provider cannot reach a solution, or after three failed, evidence-based repair attempts on the <strong>same</strong> issue. Three unrelated issues never qualify. Fill every field. Write UNKNOWN when a fact is unknown, and never paste secrets or protected data. This note is intake evidence, not an issued order. Policy: <a href="../../repair-ownership-policy.html">provider-owned repairs</a>.</p>
+<dl>
+<dt>1. Issue key and title</dt><dd>[A one-line summary naming the subsystem and the symptom, plus the stable issue key.]</dd>
+<dt>2. Priority and deadline</dt><dd>[P0: safety, security or data loss, or all work blocked. P1: blocks the critical path or a committed deadline. P2: blocks or degrades a non-critical task. P3: minor, with a workaround. State the deadline in America/Los_Angeles and UTC, or none.]</dd>
+<dt>3. Trigger</dt><dd>[Which condition applies: 2(a) cannot reach a solution (and why), or 2(b) three failed attempts on the same issue.]</dd>
+<dt>4. Use case</dt><dd>[What the provider, user or system was trying to achieve, and why it matters.]</dd>
+<dt>5. Scope</dt><dd>[Affected components, files and paths, tasks, orders and projects; what is in scope and what is explicitly out of scope.]</dd>
+<dt>6. Context</dt><dd>[Project, task and order IDs and lineage; repository and branch with commit or file hashes; host and OS build; tool, runtime and model versions; provider, model and session (or UNKNOWN); the responsible writer and any active writers.]</dd>
+<dt>7. Expected versus actual</dt><dd>[The expected behaviour, and the actual behaviour with sanitized error text.]</dd>
+<dt>8. All three failures</dt><dd>[For each one: time (UTC), the exact command or action, the observed result or error, and an evidence path with SHA-256 or receipt ID. Under 2(a), list every failure that occurred.]</dd>
+<dt>9. What was tried</dt><dd>[For each failed attempt: the remedy applied, the reasoning or evidence behind it, how it was verified, and why it failed. Also list remedies considered but not tried, and why.]</dd>
+<dt>10. Diagnosis</dt><dd>[The known cause versus hypotheses, what has been ruled out, and the confidence level.]</dd>
+<dt>11. Reproduction</dt><dd>[Minimal steps and environment. For intermittent failures, give frequency and conditions. Say whether the failure is reproducible right now.]</dd>
+<dt>12. Research done</dt><dd>[Firecrawl, Perplexity or REA queries and receipts, plus primary sources consulted, with relevance noted.]</dd>
+<dt>13. Effects and current state</dt><dd>[Changes made, side effects, rollback status, unresolved or ambiguous effects that must not be replayed, and the current state of the worktree or system.]</dd>
+<dt>14. Impact and workaround</dt><dd>[Who or what is blocked, whether a downstream dependency is affected, and any safe workaround in use.]</dd>
+<dt>15. Limits and cost</dt><dd>[Attempts, time, tokens and spend used; what remains; holds, permissions and budgets in force.]</dd>
+<dt>16. Duplicate check</dt><dd>[Related issues, orders, PRs or prior repair notes searched, and whether this is new or a continuation.]</dd>
+<dt>17. Decision or help needed</dt><dd>[The exact decision, access, tool, information or expertise that would unblock the issue.]</dd>
+<dt>18. Recommended next step</dt><dd>[A proposed remedy and a suitable owner or provider, with acceptance criteria to prove the fix.]</dd>
+<dt>19. Reporter</dt><dd>[The provider, model and session that filed the note, a UTC timestamp, and the intake route used.]</dd>
+</dl>
+</main>
+<footer class="site-footer">Template only. It grants no attempts, permissions, spend or review authority.</footer>
+</body></html>
