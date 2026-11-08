@@ -53,7 +53,7 @@ def valid_schema(schema: object) -> bool:
     if not schema.keys() <= SCHEMA_KEYS | ANNOTATION_KEYS:
         return False
     expected = schema.get("type")
-    if expected is not None and expected not in TYPE_MAP:
+    if "type" in schema and (not isinstance(expected, str) or expected not in TYPE_MAP):
         return False
     if "enum" in schema and not isinstance(schema["enum"], list):
         return False

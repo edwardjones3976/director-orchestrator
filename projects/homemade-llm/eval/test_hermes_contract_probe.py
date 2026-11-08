@@ -63,7 +63,8 @@ class HermesContractProbeTests(unittest.TestCase):
                 contract["tools"][0]["function"] = function
                 self.assertIn("TOOL_DECLARATION", {e["code"] for e in hermes.probe(contract)["errors"]})
 
-        for schema in (None, {"type": "not-a-json-type"}, {"enum": "not-a-list"}):
+        for schema in (None, {"type": "not-a-json-type"}, {"type": None}, {"type": []},
+                       {"enum": "not-a-list"}):
             with self.subTest(schema=schema):
                 contract = self.contract()
                 contract["tools"][0]["function"]["parameters"]["properties"]["query"] = schema
