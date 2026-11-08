@@ -1,0 +1,8 @@
+---
+description: Owner directive 2026-11-08, provider-owned repairs and the repair-note threshold
+alwaysApply: true
+---
+
+# Provider-owned repairs
+
+The provider that finds a defect repairs it itself within its existing authority. Open a repair request (a repair note) only when you cannot reach a solution, or after three failed, evidence-based attempts on the SAME issue. Three unrelated issues never qualify. The note must include every field in `docs/repair-ownership-policy.html`, using the `docs/templates/html/repair-note.html` template: all three failures, use case, scope, context, the remedies tried, priority and the other fields. Report safety, destructive-effect, authority, protected-data and availability problems immediately. Research, independent review, active writers, budgets and appointments are unchanged.
