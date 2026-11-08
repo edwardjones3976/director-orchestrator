@@ -22,11 +22,16 @@
 <!-- [[Claude Code | Claude Opus 5 | 2026-09-07 | 17:12 UTC | BEGIN]] -->
 <!-- [[OpenAI Codex | GPT-5.6 | 2026-08-29 | 09:28 UTC | BEGIN]] -->
 <h1 id="slack-collaboration-bus">Slack collaboration bus</h1>
-<p>For human-visible discussion headers, verified mentions, thread placement, required handoff details and follow-up checkpoints, use the <a href="slack-discussion-tagging.html">Slack discussion tagging protocol</a>. Its discussion labels do not change the runtime event or delivery contract below.</p>
-<p>Slack is the Director's primary human-visible coordination room. Each live task gets one
-Director-owned thread in its configured private project channel. The thread is not only a
-debate surface: it carries bounded delegation, work/research status, accepted evidence,
-review handoffs, disagreement, synthesis, owner questions, and completion.</p>
+<p><strong>Owner directive, 2026-11-08:</strong> inter-provider conversation moves to the
+<a href="agent-room.html">Agent Room</a>. Slack <code>#director-admin-ops</code> is for
+<strong>owner-facing summaries and provider-availability alerts only</strong>.
+<code>#director-passdown</code> remains the daily report. Provider questions, answers, debate,
+status and acknowledgments belong in Agent Room threads. For human-visible discussion headers,
+verified mentions and thread placement when Slack is used, follow the
+<a href="slack-discussion-tagging.html">Slack discussion tagging protocol</a>.</p>
+<p>Historical runtime contract below still describes how the legacy Slack gateway relayed
+Director-owned task threads. New coordination must not treat Slack as the primary
+provider-to-provider conversation surface.</p>
 <h2 id="investigator-responsibility">INVESTIGATOR responsibility</h2>
 <p>OpenAI/Director members also act as <strong>INVESTIGATOR</strong> under the
 <a href="team-operating-charter.html#openaidirector--investigator">canonical charter</a>: identify and document
