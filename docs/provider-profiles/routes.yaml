@@ -168,7 +168,7 @@ routes:
       - document: "docs/slack-collaboration-bus.html"
         anchor: "then relays only a concise"
       - document: "prompts/director-system.md"
-        anchor: "Providers communicate through the Director rather than posting freely."
+        anchor: "Slack `#director-admin-ops` carries owner-facing summaries and provider-availability alerts only."
     enforced_by:
       - "src/director_orchestrator/engine.py"
       - "src/director_orchestrator/slack_bot.py"
@@ -194,7 +194,7 @@ routes:
     default_config_state: "enabled"
     charter_basis:
       - document: "prompts/director-system.md"
-        anchor: "the Director delegates, relays, collects, and records concise structured updates"
+        anchor: "relays declared dependency outcomes"
       - document: "docs/team-operating-charter.html"
         anchor: "The Director sends the initial packet once"
     enforced_by:
@@ -1036,7 +1036,7 @@ routes:
       - document: "docs/templates/project-bootstrap/project-profile.yaml"
         anchor: "provider_messages_relay_through_director: true"
       - document: "prompts/director-system.md"
-        anchor: "Providers communicate through the Director rather than posting freely."
+        anchor: "Uncontrolled direct channels remain prohibited."
     enforced_by:
       - "src/director_orchestrator/interactions.py:ProviderTransport"
       - "src/director_orchestrator/workload_policy.py:Transport"
@@ -1055,7 +1055,7 @@ provider_to_provider_rule:
     - document: "docs/templates/project-bootstrap/project-profile.yaml"
       anchor: "provider_messages_relay_through_director: true"
     - document: "prompts/director-system.md"
-      anchor: "Providers communicate through the Director rather than posting freely."
+      anchor: "Uncontrolled direct channels remain prohibited."
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 20:50 UTC | END]]

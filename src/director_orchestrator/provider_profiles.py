@@ -87,7 +87,10 @@ class TagIdentity:
 
     def tag(self, boundary: str) -> str:
         return render_contribution_tag(
-            self.contributor, self.system, boundary, at=self.at  # type: ignore[arg-type]
+            self.contributor,
+            self.system,
+            boundary,
+            at=self.at,  # type: ignore[arg-type]
         )
 
     @property
@@ -123,13 +126,17 @@ class _StrictLoader(yaml.SafeLoader):
         return super().construct_mapping(node, deep=deep)
 
 
-def load_yaml_document(path: str | Path, *, max_bytes: int = MAX_YAML_BYTES) -> JsonObject:
+def load_yaml_document(
+    path: str | Path, *, max_bytes: int = MAX_YAML_BYTES
+) -> JsonObject:
     document_path = Path(path)
     try:
         with document_path.open("rb") as handle:
             raw = handle.read(max_bytes + 1)
     except OSError as exc:
-        raise ProviderProfileError(f"cannot read YAML document: {document_path}") from exc
+        raise ProviderProfileError(
+            f"cannot read YAML document: {document_path}"
+        ) from exc
     if len(raw) > max_bytes:
         raise ProviderProfileError(f"YAML document exceeds the {max_bytes}-byte limit")
     try:
@@ -184,7 +191,9 @@ def validate_document(document: Mapping[str, Any]) -> None:
     if kind == PROFILE_DOCUMENT_TYPE:
         has_modes = "execution_modes" in document
         if has_modes != (document.get("provider_id") == "antigravity"):
-            raise ProviderProfileError("execution_modes is required only for Antigravity")
+            raise ProviderProfileError(
+                "execution_modes is required only for Antigravity"
+            )
     validators = _validators()
     if kind not in validators:
         raise ProviderProfileError(
@@ -198,7 +207,8 @@ def validate_document(document: Mapping[str, Any]) -> None:
         return
     error = errors[0]
     location = "$" + "".join(
-        f"[{part}]" if isinstance(part, int) else f".{part}" for part in error.absolute_path
+        f"[{part}]" if isinstance(part, int) else f".{part}"
+        for part in error.absolute_path
     )
     raise ProviderProfileError(
         f"{kind} document fails schema at {location} ({error.validator}): {error.message}"
@@ -256,10 +266,12 @@ def cross_validate(
     problems: list[str] = []
     repo_root = root or _ROOT
     references: dict[Path, str] = {}
+
     def reference_text(path: Path) -> str:
         if path not in references:
             references[path] = read_document(path)
         return references[path]
+
     order = lane_order()
     lanes = set(order)
     if list(catalog["lanes"]) != order:
@@ -273,15 +285,22 @@ def cross_validate(
         problems.append(f"catalog must define the {PEER_RULE_ROUTE_ID} route")
 
     for route in catalog["routes"]:
-        if (route["status"] == "authorized" and not route["enforced_by"]
-                and route["route_id"] != "shared-workflow-skills"):
-            problems.append(f"{route['route_id']}: authorized route requires an enforcer")
+        if (
+            route["status"] == "authorized"
+            and not route["enforced_by"]
+            and route["route_id"] != "shared-workflow-skills"
+        ):
+            problems.append(
+                f"{route['route_id']}: authorized route requires an enforcer"
+            )
         for reference in route["charter_basis"]:
             document = repo_root / reference["document"]
             try:
                 text = reference_text(document)
             except (OSError, ValueError):
-                problems.append(f"{route['route_id']}: missing document {reference['document']}")
+                problems.append(
+                    f"{route['route_id']}: missing document {reference['document']}"
+                )
                 continue
             if reference["anchor"] not in text:
                 problems.append(
@@ -291,7 +310,9 @@ def cross_validate(
         for code_ref in route["enforced_by"]:
             path_part = code_ref.split(":", 1)[0]
             if not (repo_root / path_part).is_file():
-                problems.append(f"{route['route_id']}: enforced_by path missing: {path_part}")
+                problems.append(
+                    f"{route['route_id']}: enforced_by path missing: {path_part}"
+                )
         if peer_rule is not None and route is not peer_rule:
             if route["kind"] == "direct" and _is_peer_route(route, lanes):
                 problems.append(
@@ -302,14 +323,18 @@ def cross_validate(
     for lane, profile in profiles.items():
         identifiers = profile["identifiers"]
         if profile["provider_id"] != lane or identifiers["lane_id"] != lane:
-            problems.append(f"{lane}: provider_id and identifiers.lane_id must equal the lane")
+            problems.append(
+                f"{lane}: provider_id and identifiers.lane_id must equal the lane"
+            )
         expected_backend = "gemini" if lane == "antigravity" else lane
         if identifiers["backend_identity"] != expected_backend:
             problems.append(f"{lane}: backend_identity must be {expected_backend!r}")
         for transport in profile["transports"]:
             route_id = transport["route_id"]
             if route_id is not None and route_id not in routes_by_id:
-                problems.append(f"{lane}: transport {transport['transport_id']} names unknown route {route_id}")
+                problems.append(
+                    f"{lane}: transport {transport['transport_id']} names unknown route {route_id}"
+                )
         if peer_rule is not None and lane not in peer_rule["providers_involved"]:
             problems.append(f"{lane}: missing from the {PEER_RULE_ROUTE_ID} route")
         mediated = [
@@ -326,7 +351,9 @@ def cross_validate(
             try:
                 text = reference_text(document)
             except (OSError, ValueError):
-                problems.append(f"{lane}: missing source document {reference['document']}")
+                problems.append(
+                    f"{lane}: missing source document {reference['document']}"
+                )
                 continue
             if reference["anchor"] not in text:
                 problems.append(
@@ -405,7 +432,10 @@ def _code(value: Any) -> str:
 
 
 def _table(headers: list[str], rows: list[list[Any]]) -> list[str]:
-    lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join("---" for _ in headers) + " |"]
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
     for row in rows:
         lines.append("| " + " | ".join(_cell(item) for item in row) + " |")
     return lines
@@ -461,7 +491,9 @@ _ROUTE_HEADERS = [
 ]
 
 
-def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, Any]) -> str:
+def render_profile_markdown(
+    profile: Mapping[str, Any], catalog: Mapping[str, Any]
+) -> str:
     lane = profile["provider_id"]
     identifiers = profile["identifiers"]
     roles = profile["roles"]
@@ -495,10 +527,20 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
         modes = profile["execution_modes"]
         team = modes["team"]
         lines += ["## Execution modes", ""]
-        lines += _kv_table([(key, _code(value)) for key, value in team.items() if key != "required_gates"])
+        lines += _kv_table(
+            [
+                (key, _code(value))
+                for key, value in team.items()
+                if key != "required_gates"
+            ]
+        )
         lines += ["", "Required team admission gates:", ""]
         lines += _bullets(team["required_gates"])
-        lines += ["", "The sections below mirror the preserved restricted mode. Their no-repository-context and no-review-verdict rules do not describe the separately authorized team contract. Team eligibility is not operational qualification or a live activation claim.", ""]
+        lines += [
+            "",
+            "The sections below mirror the preserved restricted mode. Their no-repository-context and no-review-verdict rules do not describe the separately authorized team contract. Team eligibility is not operational qualification or a live activation claim.",
+            "",
+        ]
     lines.append("## Identity and aliases")
     lines.append("")
     lines += _kv_table(
@@ -510,7 +552,10 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
             ("Legacy accounting agent", _code(identifiers["legacy_accounting_agent"])),
             ("Accounting note", identifiers["legacy_accounting_note"]),
             ("Committee member key", _code(identifiers["committee_member_key"])),
-            ("Charter workload lane key", _code(identifiers["charter_workload_lane_key"])),
+            (
+                "Charter workload lane key",
+                _code(identifiers["charter_workload_lane_key"]),
+            ),
             ("Standing role label", identifiers["standing_role_label"]),
             ("Configuration prefixes", _code(identifiers["config_prefixes"])),
             ("Alias note", identifiers["alias_note"]),
@@ -543,20 +588,35 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
         ]
     )
     lines.append("")
-    lines.append("Direct-production allocation targets by profile (percent of the rolling twenty-assignment window):")
+    lines.append(
+        "Direct-production allocation targets by profile (percent of the rolling twenty-assignment window):"
+    )
     lines.append("")
     profiles = allocation["profiles"]
     lines += _table(
         ["Mixed", "Engineering (default)", "Public research", "Enterprise"],
-        [[profiles["mixed"], profiles["engineering"], profiles["public_research"], profiles["enterprise"]]],
+        [
+            [
+                profiles["mixed"],
+                profiles["engineering"],
+                profiles["public_research"],
+                profiles["enterprise"],
+            ]
+        ],
     )
     lines.append("")
     lines.append("## Roles and responsibilities")
     lines.append("")
     lines += _kv_table(
         [
-            ("Eligible responsibility areas", _code(roles["eligible_responsibility_areas"])),
-            ("Excluded responsibility areas", _code(roles["excluded_responsibility_areas"])),
+            (
+                "Eligible responsibility areas",
+                _code(roles["eligible_responsibility_areas"]),
+            ),
+            (
+                "Excluded responsibility areas",
+                _code(roles["excluded_responsibility_areas"]),
+            ),
             ("Eligible complexity", _code(roles["eligible_complexity"])),
             ("Capability parity target", roles["capability_parity_target"]),
             ("Comparison peers", _code(roles["comparison_peers"])),
@@ -576,8 +636,14 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
     director_functions = roles.get("director_functions")
     legacy_openai_functions = roles.get("openai_functions")
     if director_functions is not None and legacy_openai_functions is not None:
-        raise ProviderProfileError("A profile cannot claim both current and legacy Director functions")
-    functions = director_functions if director_functions is not None else legacy_openai_functions
+        raise ProviderProfileError(
+            "A profile cannot claim both current and legacy Director functions"
+        )
+    functions = (
+        director_functions
+        if director_functions is not None
+        else legacy_openai_functions
+    )
     if functions is not None:
         lines.append("")
         lines.append(
@@ -602,10 +668,15 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
         )
     if roles["hygiene_review"] is not None:
         lines.append("")
-        lines.append("Hygiene review contract (mirrors the charter copilot_lite_hygiene_review block):")
+        lines.append(
+            "Hygiene review contract (mirrors the charter copilot_lite_hygiene_review block):"
+        )
         lines.append("")
         lines += _kv_table(
-            [(key, _code(value) if value is not None else "-") for key, value in sorted(roles["hygiene_review"].items())]
+            [
+                (key, _code(value) if value is not None else "-")
+                for key, value in sorted(roles["hygiene_review"].items())
+            ]
         )
     lines.append("")
     lines.append("## Capabilities")
@@ -625,21 +696,37 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
             ("May deploy or publish", capabilities["may_deploy_or_publish"]),
             ("May post to Slack", capabilities["may_post_to_slack"]),
             ("May cast committee vote", capabilities["may_cast_committee_vote"]),
-            ("Receives repository context", capabilities["receives_repository_context"]),
+            (
+                "Receives repository context",
+                capabilities["receives_repository_context"],
+            ),
             ("Receives task prose", capabilities["receives_task_prose"]),
             ("Web-grounded research", capabilities["web_grounded_research"]),
             ("Tool use", capabilities["tool_use"]),
             ("Charter allowed work", _code(capabilities["charter_allowed"])),
             ("Required evidence", _code(capabilities["required_evidence"])),
-            ("Antigravity capabilities", _code(capabilities["antigravity_capabilities"])),
-            ("Antigravity interaction kinds", _code(capabilities["antigravity_interaction_kinds"])),
+            (
+                "Antigravity capabilities",
+                _code(capabilities["antigravity_capabilities"]),
+            ),
+            (
+                "Antigravity interaction kinds",
+                _code(capabilities["antigravity_interaction_kinds"]),
+            ),
         ]
     )
     lines.append("")
     lines.append("## Models and effort")
     lines.append("")
     lines += _table(
-        ["Variable", "Role", "Settings field", "Default", "In .env.example", "Value recorded"],
+        [
+            "Variable",
+            "Role",
+            "Settings field",
+            "Default",
+            "In .env.example",
+            "Value recorded",
+        ],
         [
             [
                 _code(item["variable"]),
@@ -655,7 +742,14 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
     )
     lines.append("")
     lines += _table(
-        ["Effort variable", "Settings field", "Default", "Allowed values", "In .env.example", "Value recorded"],
+        [
+            "Effort variable",
+            "Settings field",
+            "Default",
+            "Allowed values",
+            "In .env.example",
+            "Value recorded",
+        ],
         [
             [
                 _code(item["variable"]),
@@ -670,12 +764,21 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
         or [["-", "-", "-", "-", "-", "-"]],
     )
     lines.append("")
-    lines += _bullets([f"Catalog check: {models['catalog_check'] or 'none'}", models["note"]])
+    lines += _bullets(
+        [f"Catalog check: {models['catalog_check'] or 'none'}", models["note"]]
+    )
     lines.append("")
     lines.append("## Budgets and limits")
     lines.append("")
     lines += _table(
-        ["Variable", "Kind", "Settings field", "Default", "In .env.example", "Value recorded"],
+        [
+            "Variable",
+            "Kind",
+            "Settings field",
+            "Default",
+            "In .env.example",
+            "Value recorded",
+        ],
         [
             [
                 _code(item["variable"]),
@@ -705,13 +808,24 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
             ("Health key", _code(gating["health_key"])),
             ("Readiness function", _code(gating["readiness_function"])),
             ("Readiness keys", _code(gating["readiness_keys"])),
-            ("Primary lane authentication source", gating["primary_lane_authentication_source"]),
+            (
+                "Primary lane authentication source",
+                gating["primary_lane_authentication_source"],
+            ),
             ("Verification rule", gating["verification_rule"]),
         ]
     )
     lines.append("")
     lines += _table(
-        ["Variable", "Kind", "Required value", "Readiness key", "In .env.example", "Verify", "Value recorded"],
+        [
+            "Variable",
+            "Kind",
+            "Required value",
+            "Readiness key",
+            "In .env.example",
+            "Verify",
+            "Value recorded",
+        ],
         [
             [
                 _code(item["variable"]),
@@ -729,7 +843,10 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
     lines.append("")
     lines += _table(
         ["Allowlist variable", "Scope", "Value recorded"],
-        [[_code(item["variable"]), item["scope"], item["values_recorded"]] for item in gating["allowlist_variables"]]
+        [
+            [_code(item["variable"]), item["scope"], item["values_recorded"]]
+            for item in gating["allowlist_variables"]
+        ]
         or [["-", "-", "-"]],
     )
     lines.append("")
@@ -737,9 +854,18 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
     lines.append("")
     lines += _kv_table(
         [
-            ("Primary lane credential allowlist (names)", _code(credentials["primary_lane_allowlist"])),
-            ("Host bridge credential allowlist (names)", _code(credentials["host_bridge_allowlist"])),
-            ("Settings credential fields", _code(credentials["settings_credential_fields"])),
+            (
+                "Primary lane credential allowlist (names)",
+                _code(credentials["primary_lane_allowlist"]),
+            ),
+            (
+                "Host bridge credential allowlist (names)",
+                _code(credentials["host_bridge_allowlist"]),
+            ),
+            (
+                "Settings credential fields",
+                _code(credentials["settings_credential_fields"]),
+            ),
             ("Values policy", credentials["values_policy"]),
             ("Child environment rule", credentials["child_environment_rule"]),
         ]
@@ -749,15 +875,32 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
     lines.append("")
     lines += _kv_table(
         [
-            ("Universal prohibited actions", _code(authority["universal_prohibited_actions"])),
+            (
+                "Universal prohibited actions",
+                _code(authority["universal_prohibited_actions"]),
+            ),
             ("Denied authorities", _code(authority["denied_authorities"])),
             ("Withheld context", _code(authority["withheld_context"])),
             ("Charter prohibited", _code(authority["charter_prohibited"])),
             ("Review requirement", authority["review_requirement"]),
-            ("Production authority permitted", authority["production_authority_permitted"]),
-            ("External effects that may be granted", _code(authority["external_effects"]["may_be_granted"])),
-            ("Public research lane rejects all effects", authority["external_effects"]["public_research_lane_rejects_all_effects"]),
-            ("External effect grant source", authority["external_effects"]["grant_source"]),
+            (
+                "Production authority permitted",
+                authority["production_authority_permitted"],
+            ),
+            (
+                "External effects that may be granted",
+                _code(authority["external_effects"]["may_be_granted"]),
+            ),
+            (
+                "Public research lane rejects all effects",
+                authority["external_effects"][
+                    "public_research_lane_rejects_all_effects"
+                ],
+            ),
+            (
+                "External effect grant source",
+                authority["external_effects"]["grant_source"],
+            ),
             (
                 "Acceptance issuer role",
                 "-"
@@ -770,7 +913,10 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
                 ),
             ),
             ("Self review", authority["self_review"]),
-            ("Owner recovery text grants review or merge authority", authority["owner_recovery_text_grants_review_or_merge_authority"]),
+            (
+                "Owner recovery text grants review or merge authority",
+                authority["owner_recovery_text_grants_review_or_merge_authority"],
+            ),
             ("Output trust", authority["output_trust"]),
         ]
     )
@@ -787,14 +933,28 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
     lines.append("")
     lines += _table(
         ["Limitation", "Source"],
-        [[item["limitation"], item["source"]] for item in profile["platform_limitations"]]
+        [
+            [item["limitation"], item["source"]]
+            for item in profile["platform_limitations"]
+        ]
         or [["-", "-"]],
     )
     lines.append("")
     lines.append("## Transports and contacts")
     lines.append("")
     lines += _table(
-        ["Transport", "Kind", "Runtime", "Enum value", "Observed kind", "Status", "Route status", "Direction", "Config (names)", "Route"],
+        [
+            "Transport",
+            "Kind",
+            "Runtime",
+            "Enum value",
+            "Observed kind",
+            "Status",
+            "Route status",
+            "Direction",
+            "Config (names)",
+            "Route",
+        ],
         [
             [
                 _code(item["transport_id"]),
@@ -813,7 +973,9 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
     )
     lines.append("")
     for item in profile["transports"]:
-        lines.append(f"- {_code(item['transport_id'])}: {_cell(item['authority_note'])}")
+        lines.append(
+            f"- {_code(item['transport_id'])}: {_cell(item['authority_note'])}"
+        )
         for constraint in item["current_transport_constraints"]:
             lines.append(f"  - {_cell(constraint)}")
         if item["browser_policy"] is not None:
@@ -829,12 +991,14 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
     lines += _bullets(
         [
             f"Relay rule: {profile['communication']['relay_rule']}.",
-            "Direct provider-to-provider channels exist: no.",
+            "Authorized provider-to-provider conversation: Agent Room MCP once commissioned under WO-20261108-006.",
         ]
         + list(profile["communication"]["notes"])
     )
     lines.append("")
-    lines += _table(_ROUTE_HEADERS, [_route_row(route) for route in routes_for(lane, catalog)])
+    lines += _table(
+        _ROUTE_HEADERS, [_route_row(route) for route in routes_for(lane, catalog)]
+    )
     lines.append("")
     lines.append("## Routes to other providers")
     lines.append("")
@@ -844,7 +1008,9 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
             continue
         status, direct, mediated = peer_status(lane, other, catalog)
         peer_rows.append([_code(other), status, _code(direct), _code(mediated)])
-    lines += _table(["Peer", "Direct channel status", "Direct route ids", "Mediated via"], peer_rows)
+    lines += _table(
+        ["Peer", "Direct channel status", "Direct route ids", "Mediated via"], peer_rows
+    )
     lines.append("")
     lines.append("## This profile does not change")
     lines.append("")
@@ -852,7 +1018,9 @@ def render_profile_markdown(profile: Mapping[str, Any], catalog: Mapping[str, An
     lines.append("")
     lines.append("## Sources")
     lines.append("")
-    lines += _bullets([f"{_code(item['document'])}: {item['anchor']}" for item in profile["sources"]])
+    lines += _bullets(
+        [f"{_code(item['document'])}: {item['anchor']}" for item in profile["sources"]]
+    )
     return _finish(lines, label=f"{lane} sheet")
 
 
@@ -863,7 +1031,9 @@ def render_index_markdown(
     lines: list[str] = []
     lines.append("# Provider profile sheets")
     lines.append("")
-    lines.append(GENERATED_MARKER.format(source="docs/provider-profiles/*.yaml and routes.yaml"))
+    lines.append(
+        GENERATED_MARKER.format(source="docs/provider-profiles/*.yaml and routes.yaml")
+    )
     lines.append("")
     lines.append("## Authority notice")
     lines.append("")
@@ -874,19 +1044,25 @@ def render_index_markdown(
             "and default state records explicit enable switches and code blockers rather than credential presence.",
             "If a sheet and the team operating charter, configuration defaults, or adapter constants disagree, "
             "the charter and code win and the sheet is wrong.",
-            "No direct provider-to-provider channel exists. Every exchange between providers is brokered by the Director.",
+            "Provider-to-provider conversation uses the Agent Room once commissioned under WO-20261108-006; "
+            "uncontrolled direct channels remain prohibited.",
             "Values are never recorded: allowlists, keys, tokens, endpoints, paths, and owner identifiers appear only as variable names.",
         ]
     )
     lines.append("")
-    lines += ["Antigravity has two distinct modes: the roster below mirrors the retained restricted route; its separately owner-authorized team contract admits engineering and independent review only after explicit grants, monetary admission and host qualification. The team mode is default off and not live. See [Antigravity execution modes](antigravity.profile.md#execution-modes).", ""]
+    lines += [
+        "Antigravity has two distinct modes: the roster below mirrors the retained restricted route; its separately owner-authorized team contract admits engineering and independent review only after explicit grants, monetary admission and host qualification. The team mode is default off and not live. See [Antigravity execution modes](antigravity.profile.md#execution-modes).",
+        "",
+    ]
     lines.append("## Roster")
     lines.append("")
     roster_rows: list[list[Any]] = []
     for lane in lanes:
         profile = profiles.get(lane)
         if profile is None:
-            roster_rows.append([_code(lane), "missing", "-", "-", "-", "-", "-", "-", "-"])
+            roster_rows.append(
+                [_code(lane), "missing", "-", "-", "-", "-", "-", "-", "-"]
+            )
             continue
         identifiers = profile["identifiers"]
         roles = profile["roles"]
@@ -904,7 +1080,17 @@ def render_index_markdown(
             ]
         )
     lines += _table(
-        ["Lane", "Sheet", "ProviderName enum", "Backend identity", "Legacy accounting agent", "Team", "Lane class", "Committee weight", "Health key"],
+        [
+            "Lane",
+            "Sheet",
+            "ProviderName enum",
+            "Backend identity",
+            "Legacy accounting agent",
+            "Team",
+            "Lane class",
+            "Committee weight",
+            "Health key",
+        ],
         roster_rows,
     )
     lines.append("")
@@ -913,21 +1099,30 @@ def render_index_markdown(
     lines += _table(
         _ROUTE_HEADERS[:7] + ["Providers involved", "Enforced by"],
         [
-            _route_row(route)[:7] + [_code(route["providers_involved"]) if route["providers_involved"] else "-", _route_row(route)[7]]
+            _route_row(route)[:7]
+            + [
+                _code(route["providers_involved"])
+                if route["providers_involved"]
+                else "-",
+                _route_row(route)[7],
+            ]
             for route in catalog["routes"]
         ],
     )
     lines.append("")
     lines.append("Endpoints:")
     lines.append("")
-    lines += _bullets([f"{_code(item['id'])}: {item['description']}" for item in catalog["endpoints"]])
+    lines += _bullets(
+        [f"{_code(item['id'])}: {item['description']}" for item in catalog["endpoints"]]
+    )
     lines.append("")
     lines.append("## Route-by-lane matrix")
     lines.append("")
     lines += _table(
         ["Route"] + [_code(lane) for lane in lanes],
         [
-            [_code(route["route_id"])] + ["x" if _route_involves(route, lane) else "" for lane in lanes]
+            [_code(route["route_id"])]
+            + ["x" if _route_involves(route, lane) else "" for lane in lanes]
             for route in catalog["routes"]
         ],
     )
@@ -937,7 +1132,11 @@ def render_index_markdown(
     lines += _table(
         ["From \\ To"] + [_code(lane) for lane in lanes],
         [
-            [_code(lane)] + ["-" if lane == other else peer_status(lane, other, catalog)[0] for other in lanes]
+            [_code(lane)]
+            + [
+                "-" if lane == other else peer_status(lane, other, catalog)[0]
+                for other in lanes
+            ]
             for lane in lanes
         ],
     )
@@ -945,7 +1144,10 @@ def render_index_markdown(
     lines.append("## Provider-to-provider rule")
     lines.append("")
     rule = catalog["provider_to_provider_rule"]
-    lines += _bullets([f"Status: {rule['status']}."] + [f"{_code(item['document'])}: {item['anchor']}" for item in rule["basis"]])
+    lines += _bullets(
+        [f"Status: {rule['status']}."]
+        + [f"{_code(item['document'])}: {item['anchor']}" for item in rule["basis"]]
+    )
     lines.append("")
     lines.append("## How to regenerate")
     lines.append("")
@@ -1024,7 +1226,12 @@ def compose_tagged_document(
     already_outer = (
         outer_begin is not None
         and outer_end is not None
-        and (outer_begin.contributor, outer_begin.system, outer_begin.date, outer_begin.time)
+        and (
+            outer_begin.contributor,
+            outer_begin.system,
+            outer_begin.date,
+            outer_begin.time,
+        )
         == identity.key
         and (outer_end.contributor, outer_end.system, outer_end.date, outer_end.time)
         == identity.key
@@ -1041,88 +1248,236 @@ def compose_tagged_document(
 def _html_value(value: Any) -> str:
     """Render structured source directly, escaping every untrusted scalar."""
     if isinstance(value, Mapping):
-        return '<dl>' + ''.join(
-            f'<dt>{escape(str(key))}</dt><dd>{_html_value(item)}</dd>'
-            for key, item in value.items()) + '</dl>'
+        return (
+            "<dl>"
+            + "".join(
+                f"<dt>{escape(str(key))}</dt><dd>{_html_value(item)}</dd>"
+                for key, item in value.items()
+            )
+            + "</dl>"
+        )
     if isinstance(value, (list, tuple)):
-        return '<ul>' + ''.join(f'<li>{_html_value(item)}</li>' for item in value) + '</ul>' if value else '<p>None listed.</p>'
-    text = json.dumps(value) if value is None or isinstance(value, (bool, int, float)) else str(value)
-    if isinstance(value, str) and re.fullmatch(r'(?:docs/|prompts/|src/|scripts/)[A-Za-z0-9_./-]+(?:#[A-Za-z0-9_-]+)?', value):
-        return '<a href="../../' + escape(value, quote=True) + '">' + escape(value) + '</a>'
-    return '<span>' + escape(text) + '</span>'
+        return (
+            "<ul>"
+            + "".join(f"<li>{_html_value(item)}</li>" for item in value)
+            + "</ul>"
+            if value
+            else "<p>None listed.</p>"
+        )
+    text = (
+        json.dumps(value)
+        if value is None or isinstance(value, (bool, int, float))
+        else str(value)
+    )
+    if isinstance(value, str) and re.fullmatch(
+        r"(?:docs/|prompts/|src/|scripts/)[A-Za-z0-9_./-]+(?:#[A-Za-z0-9_-]+)?", value
+    ):
+        return (
+            '<a href="../../'
+            + escape(value, quote=True)
+            + '">'
+            + escape(value)
+            + "</a>"
+        )
+    return "<span>" + escape(text) + "</span>"
 
 
 def _html_table(caption: str, headers: list[str], rows: list[list[Any]]) -> str:
-    return ('<div class="table-scroll"><table><caption>' + escape(caption) + '</caption><thead><tr>' +
-            ''.join('<th scope="col">' + escape(header) + '</th>' for header in headers) +
-            '</tr></thead><tbody>' + ''.join('<tr>' + ''.join(
-                ('<th scope="row">' + _html_value(cell) + '</th>' if index == 0 else
-                 '<td>' + _html_value(cell) + '</td>') for index, cell in enumerate(row)) + '</tr>' for row in rows) +
-            '</tbody></table></div>')
+    return (
+        '<div class="table-scroll"><table><caption>'
+        + escape(caption)
+        + "</caption><thead><tr>"
+        + "".join('<th scope="col">' + escape(header) + "</th>" for header in headers)
+        + "</tr></thead><tbody>"
+        + "".join(
+            "<tr>"
+            + "".join(
+                (
+                    '<th scope="row">' + _html_value(cell) + "</th>"
+                    if index == 0
+                    else "<td>" + _html_value(cell) + "</td>"
+                )
+                for index, cell in enumerate(row)
+            )
+            + "</tr>"
+            for row in rows
+        )
+        + "</tbody></table></div>"
+    )
 
 
-def _html_document(title: str, source: str, sections: list[tuple[str, str, str]]) -> str:
+def _html_document(
+    title: str, source: str, sections: list[tuple[str, str, str]]
+) -> str:
     # No Markdown source or conversion participates in canonical rendering.
-    navigation = ''.join(f'<li><a href="#{escape(key, quote=True)}">{escape(label)}</a></li>'
-                         for key, label, _ in sections)
-    body = '\n'.join(f'<section aria-labelledby="{key}"><h2 id="{key}">{escape(label)}</h2>{content}</section>'
-                     for key, label, content in sections)
-    return ('<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
-            '<meta name="viewport" content="width=device-width, initial-scale=1">'
-            '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'self\'; '
-            'script-src \'self\'; img-src \'self\' data:; base-uri \'none\'; form-action \'none\'">'
-            f'<title>{escape(title)}</title><link rel="stylesheet" href="../assets/documentation.css">'
-            '</head><body><a class="skip-link" href="#main">Skip to content</a>\n' +
-            GENERATED_MARKER.format(source=source) + '\n' +
-            f'<header class="site-header"><h1>{escape(title)}</h1><p>Descriptive guidance; this document grants no authority.</p>'
-            '<a href="README.html">Provider roster</a></header>' +
-            f'<nav class="toc" aria-label="On this page"><ul>{navigation}</ul></nav><main id="main">{body}</main>'
-            '<footer class="site-footer"><p>Edit the canonical YAML and run scripts/render_provider_profiles.py --write. '
-            'Verify with --check. No contribution envelope is required.</p></footer></body></html>\n')
+    navigation = "".join(
+        f'<li><a href="#{escape(key, quote=True)}">{escape(label)}</a></li>'
+        for key, label, _ in sections
+    )
+    body = "\n".join(
+        f'<section aria-labelledby="{key}"><h2 id="{key}">{escape(label)}</h2>{content}</section>'
+        for key, label, content in sections
+    )
+    return (
+        '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'self'; "
+        "script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'\">"
+        f'<title>{escape(title)}</title><link rel="stylesheet" href="../assets/documentation.css">'
+        '</head><body><a class="skip-link" href="#main">Skip to content</a>\n'
+        + GENERATED_MARKER.format(source=source)
+        + "\n"
+        + f'<header class="site-header"><h1>{escape(title)}</h1><p>Descriptive guidance; this document grants no authority.</p>'
+        '<a href="README.html">Provider roster</a></header>'
+        + f'<nav class="toc" aria-label="On this page"><ul>{navigation}</ul></nav><main id="main">{body}</main>'
+        '<footer class="site-footer"><p>Edit the canonical YAML and run scripts/render_provider_profiles.py --write. '
+        "Verify with --check. No contribution envelope is required.</p></footer></body></html>\n"
+    )
 
 
 def render_profile_html(profile: Mapping[str, Any], catalog: Mapping[str, Any]) -> str:
     """Lossless field presentation from YAML, with explicit section anchors."""
-    labels = {'identifiers': ('identity-and-aliases', 'Identity and aliases'),
-              'roles': ('team-and-allocation', 'Team and allocation'),
-              'models_and_effort': ('models-and-effort', 'Models and effort'),
-              'source_of_truth': ('source-of-truth', 'Source of truth')}
-    sections = [('authority-notice', 'Authority notice',
-                 '<p>Documenting a route never authorizes it. The charter and code win over a conflicting sheet. '
-                 'No direct provider-to-provider channel exists; route every exchange through the Director.</p>')]
+    labels = {
+        "identifiers": ("identity-and-aliases", "Identity and aliases"),
+        "roles": ("team-and-allocation", "Team and allocation"),
+        "models_and_effort": ("models-and-effort", "Models and effort"),
+        "source_of_truth": ("source-of-truth", "Source of truth"),
+    }
+    sections = [
+        (
+            "authority-notice",
+            "Authority notice",
+            "<p>Documenting a route never authorizes it. The charter and code win over a conflicting sheet. "
+            "Provider-to-provider conversation uses the Agent Room once commissioned under WO-20261108-006. "
+            "Uncontrolled direct channels remain prohibited. Packets, dependency outcomes, review handoffs, "
+            "and moderated debate tallies stay Director-mediated. Slack #director-admin-ops is for owner-facing "
+            "summaries and availability alerts only; decisions stay in the register and orders.</p>",
+        )
+    ]
     for key, value in profile.items():
-        anchor, label = labels.get(key, (key.replace('_', '-'), key.replace('_', ' ').capitalize()))
+        anchor, label = labels.get(
+            key, (key.replace("_", "-"), key.replace("_", " ").capitalize())
+        )
         content = _html_value(value)
-        if key == 'execution_modes':
-            content = '<p>The preserved restricted mode remains distinct from team eligibility; eligibility is not live qualification.</p>' + content
+        if key == "execution_modes":
+            content = (
+                "<p>The preserved restricted mode remains distinct from team eligibility; eligibility is not live qualification.</p>"
+                + content
+            )
         sections.append((anchor, label, content))
-    routes = [route for route in catalog['routes'] if _route_involves(route, profile['provider_id'])]
-    sections.append(('route-catalog', 'Route catalog', _html_value(routes)))
-    return _html_document(f"Provider profile: {profile['display_name']} ({profile['provider_id']})",
-                          f"docs/provider-profiles/{profile['provider_id']}.yaml", sections)
+    routes = [
+        route
+        for route in catalog["routes"]
+        if _route_involves(route, profile["provider_id"])
+    ]
+    sections.append(("route-catalog", "Route catalog", _html_value(routes)))
+    return _html_document(
+        f"Provider profile: {profile['display_name']} ({profile['provider_id']})",
+        f"docs/provider-profiles/{profile['provider_id']}.yaml",
+        sections,
+    )
 
 
-def render_index_html(profiles: Mapping[str, Mapping[str, Any]], catalog: Mapping[str, Any]) -> str:
-    lanes = list(catalog['lanes'])
-    links = '<ul>' + ''.join(f'<li><a href="{escape(lane)}{SHEET_SUFFIX}">{escape(profiles[lane]["display_name"])} ({escape(lane)})</a></li>'
-                            for lane in lanes) + '</ul>'
-    rows = [[lane, profiles[lane]['identifiers']['backend_identity'], profiles[lane]['roles']['team'],
-             profiles[lane]['roles']['lane_class'], profiles[lane]['roles']['committee']['voting_power']]
-            for lane in lanes]
-    sections = [('authority-notice', 'Authority notice',
-                 '<p>These sheets grant no authority. Documenting a route never authorizes it. '
-                 'Every provider exchange is brokered by the Director; route status does not prove live readiness.</p>'),
-                ('roster', 'Roster', links + _html_table('Provider roster', ['Lane', 'Backend', 'Team', 'Lane class', 'Committee weight'], rows)),
-                ('execution-modes', 'Execution modes', '<p>Antigravity has distinct restricted and team modes. '
-                 '<a href="antigravity.profile.html#execution-modes">Read their separate eligibility and qualification boundaries.</a></p>'),
-                ('route-by-lane-matrix', 'Route-by-lane matrix', _html_table('Route membership', ['Route', *lanes],
-                 [[route['route_id'], *['Yes' if _route_involves(route, lane) else 'No' for lane in lanes]] for route in catalog['routes']])),
-                ('peer-matrix', 'Peer matrix', _html_table('Direct channel status', ['From / To', *lanes],
-                 [[lane, *['Same provider' if lane == other else peer_status(lane, other, catalog)[0] for other in lanes]] for lane in lanes]))]
+def render_index_html(
+    profiles: Mapping[str, Mapping[str, Any]], catalog: Mapping[str, Any]
+) -> str:
+    lanes = list(catalog["lanes"])
+    links = (
+        "<ul>"
+        + "".join(
+            f'<li><a href="{escape(lane)}{SHEET_SUFFIX}">{escape(profiles[lane]["display_name"])} ({escape(lane)})</a></li>'
+            for lane in lanes
+        )
+        + "</ul>"
+    )
+    rows = [
+        [
+            lane,
+            profiles[lane]["identifiers"]["backend_identity"],
+            profiles[lane]["roles"]["team"],
+            profiles[lane]["roles"]["lane_class"],
+            profiles[lane]["roles"]["committee"]["voting_power"],
+        ]
+        for lane in lanes
+    ]
+    sections = [
+        (
+            "authority-notice",
+            "Authority notice",
+            "<p>These sheets grant no authority. Documenting a route never authorizes it. "
+            "Provider-to-provider conversation uses the Agent Room once commissioned under WO-20261108-006; "
+            "packets, dependency outcomes, review handoffs, and moderated debate tallies stay Director-mediated. "
+            "Route status does not prove live readiness.</p>",
+        ),
+        (
+            "roster",
+            "Roster",
+            links
+            + _html_table(
+                "Provider roster",
+                ["Lane", "Backend", "Team", "Lane class", "Committee weight"],
+                rows,
+            ),
+        ),
+        (
+            "execution-modes",
+            "Execution modes",
+            "<p>Antigravity has distinct restricted and team modes. "
+            '<a href="antigravity.profile.html#execution-modes">Read their separate eligibility and qualification boundaries.</a></p>',
+        ),
+        (
+            "route-by-lane-matrix",
+            "Route-by-lane matrix",
+            _html_table(
+                "Route membership",
+                ["Route", *lanes],
+                [
+                    [
+                        route["route_id"],
+                        *[
+                            "Yes" if _route_involves(route, lane) else "No"
+                            for lane in lanes
+                        ],
+                    ]
+                    for route in catalog["routes"]
+                ],
+            ),
+        ),
+        (
+            "peer-matrix",
+            "Peer matrix",
+            _html_table(
+                "Direct channel status",
+                ["From / To", *lanes],
+                [
+                    [
+                        lane,
+                        *[
+                            "Same provider"
+                            if lane == other
+                            else peer_status(lane, other, catalog)[0]
+                            for other in lanes
+                        ],
+                    ]
+                    for lane in lanes
+                ],
+            ),
+        ),
+    ]
     # Retain every catalog field, not only the subset visible in summary tables.
-    sections.extend(('catalog-' + key.replace('_', '-'), key.replace('_', ' ').capitalize(), _html_value(value))
-                    for key, value in catalog.items())
-    return _html_document('Provider profile sheets', 'docs/provider-profiles/*.yaml and routes.yaml', sections)
+    sections.extend(
+        (
+            "catalog-" + key.replace("_", "-"),
+            key.replace("_", " ").capitalize(),
+            _html_value(value),
+        )
+        for key, value in catalog.items()
+    )
+    return _html_document(
+        "Provider profile sheets",
+        "docs/provider-profiles/*.yaml and routes.yaml",
+        sections,
+    )
 
 
 def planned_outputs(
@@ -1136,7 +1491,9 @@ def planned_outputs(
         raise ProviderProfileError("; ".join(problems))
     outputs: dict[Path, str] = {}
     for lane, profile in profiles.items():
-        outputs[profile_root / f"{lane}{SHEET_SUFFIX}"] = render_profile_html(profile, catalog)
+        outputs[profile_root / f"{lane}{SHEET_SUFFIX}"] = render_profile_html(
+            profile, catalog
+        )
     outputs[profile_root / INDEX_FILENAME] = render_index_html(profiles, catalog)
     if EXAMPLE_PROVIDER in profiles:
         outputs[EXAMPLE_PATH] = render_example_json(profiles[EXAMPLE_PROVIDER])
@@ -1157,7 +1514,9 @@ def check_outputs(*, root: Path | None = None) -> list[str]:
     return problems
 
 
-def write_outputs(identity: TagIdentity | None = None, *, root: Path | None = None) -> list[Path]:
+def write_outputs(
+    identity: TagIdentity | None = None, *, root: Path | None = None
+) -> list[Path]:
     written: list[Path] = []
     for path, text in planned_outputs(identity, root=root).items():
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1165,6 +1524,8 @@ def write_outputs(identity: TagIdentity | None = None, *, root: Path | None = No
             handle.write(text)
         written.append(path)
     return written
+
+
 # [[Claude Code | Claude Fable 5.1 | 2026-09-04 | 20:30 UTC | END]]
 # [[Claude Code | Claude Fable 5.1 | 2026-09-06 | 19:10 UTC | END]]
 # [[OpenAI Codex | GPT-6 | 2026-09-06 | 18:54 UTC | END]]

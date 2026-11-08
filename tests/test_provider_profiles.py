@@ -1633,7 +1633,7 @@ class DiscoveryTests(unittest.TestCase):
         self.assertIn("docs/provider-profiles/", prompt)
         self.assertIn("grant no authority", prompt)
         self.assertIn(
-            "No direct provider-to-provider channel exists; route every exchange through the Director.",
+            "Provider-to-provider conversation uses the Agent Room once it is commissioned under WO-20261108-006",
             prompt,
         )
         readme = (ROOT / "README.html").read_text(encoding="utf-8")
