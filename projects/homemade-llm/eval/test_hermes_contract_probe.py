@@ -86,6 +86,15 @@ class HermesContractProbeTests(unittest.TestCase):
         }
         self.assertIn("ARGUMENT_TYPE", {e["code"] for e in hermes.probe(contract)["errors"]})
 
+    def test_validates_root_argument_constraints_and_json_enum_identity(self):
+        contract = self.contract()
+        contract["tools"][0]["function"]["parameters"]["enum"] = [{"query": "only-permitted"}]
+        self.assertIn("ARGUMENT_ENUM", {e["code"] for e in hermes.probe(contract)["errors"]})
+
+        contract = self.contract('<tool_call>{"name":"lookup","arguments":{"query":1}}</tool_call>')
+        contract["tools"][0]["function"]["parameters"]["properties"]["query"] = {"enum": [True]}
+        self.assertIn("ARGUMENT_ENUM", {e["code"] for e in hermes.probe(contract)["errors"]})
+
     def test_effects_require_nonempty_unique_final_evidence(self):
         for final_effects in (None, [], ["effect-1", "effect-1"]):
             with self.subTest(final_effects=final_effects):

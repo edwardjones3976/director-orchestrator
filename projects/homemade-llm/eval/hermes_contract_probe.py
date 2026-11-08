@@ -68,6 +68,18 @@ def valid_schema(schema: object) -> bool:
     return True
 
 
+def json_equal(left: object, right: object) -> bool:
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    if isinstance(left, dict) or isinstance(right, dict):
+        return (isinstance(left, dict) and isinstance(right, dict) and left.keys() == right.keys()
+                and all(json_equal(left[key], right[key]) for key in left))
+    if isinstance(left, list) or isinstance(right, list):
+        return (isinstance(left, list) and isinstance(right, list) and len(left) == len(right)
+                and all(json_equal(a, b) for a, b in zip(left, right)))
+    return left == right
+
+
 def validate_value(value: object, schema: dict, field: str, errors: list[dict]) -> None:
     expected = schema.get("type")
     if expected:
@@ -77,7 +89,7 @@ def validate_value(value: object, schema: dict, field: str, errors: list[dict]) 
         if not valid:
             errors.append({"code": "ARGUMENT_TYPE", "field": field, "expected": expected})
             return
-    if "enum" in schema and value not in schema["enum"]:
+    if "enum" in schema and not any(json_equal(value, member) for member in schema["enum"]):
         errors.append({"code": "ARGUMENT_ENUM", "field": field})
     if isinstance(value, dict):
         properties = schema.get("properties", {})
@@ -140,16 +152,7 @@ def probe(contract: dict) -> dict:
         if schema is None:
             errors.append({"code": "UNKNOWN_TOOL", "call_index": index})
             continue
-        properties = schema.get("properties", {})
-        for required in schema.get("required", []):
-            if required not in arguments:
-                errors.append({"code": "MISSING_ARGUMENT", "call_index": index, "field": required})
-        if schema.get("additionalProperties") is False:
-            for field in arguments.keys() - properties.keys():
-                errors.append({"code": "UNDECLARED_ARGUMENT", "call_index": index, "field": field})
-        for field, value in arguments.items():
-            if field in properties:
-                validate_value(value, properties[field], field, errors)
+        validate_value(arguments, schema, "arguments", errors)
         calls[index] = {"name": name}
 
     results = contract.get("tool_results", [])
