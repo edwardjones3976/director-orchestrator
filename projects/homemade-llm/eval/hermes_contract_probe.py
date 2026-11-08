@@ -62,7 +62,11 @@ def probe(contract: dict) -> dict:
         function = item.get("function", {}) if isinstance(item, dict) and item.get("type") == "function" else {}
         name = function.get("name")
         parameters = function.get("parameters", {})
-        if not isinstance(name, str) or not name or name in declared or not isinstance(parameters, dict):
+        properties = parameters.get("properties", {}) if isinstance(parameters, dict) else None
+        required = parameters.get("required", []) if isinstance(parameters, dict) else None
+        valid_required = isinstance(required, list) and all(isinstance(field, str) for field in required)
+        if (not isinstance(name, str) or not name or name in declared or not isinstance(parameters, dict)
+                or not isinstance(properties, dict) or not valid_required):
             errors.append({"code": "TOOL_DECLARATION"})
             continue
         declared[name] = parameters
@@ -123,7 +127,9 @@ def probe(contract: dict) -> dict:
         errors.append({"code": "RESULT_COUNT"})
 
     final_effects = contract.get("final_effect_ids", [])
-    if not isinstance(final_effects, list) or any(not isinstance(effect, str) or effect not in effects for effect in final_effects):
+    if (not isinstance(final_effects, list) or len(final_effects) != len(set(final_effects))
+            or (effects and not final_effects)
+            or any(not isinstance(effect, str) or effect not in effects for effect in final_effects)):
         errors.append({"code": "FINAL_EVIDENCE"})
 
     return {

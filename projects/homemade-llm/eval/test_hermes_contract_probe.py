@@ -48,6 +48,23 @@ class HermesContractProbeTests(unittest.TestCase):
         contract["final_effect_ids"] = ["stale"]
         self.assertIn("FINAL_EVIDENCE", {e["code"] for e in hermes.probe(contract)["errors"]})
 
+    def test_malformed_tool_schemas_fail_without_raising(self):
+        for field, value in (("properties", []), ("required", True), ("required", None)):
+            with self.subTest(field=field, value=value):
+                contract = self.contract()
+                contract["tools"][0]["function"]["parameters"][field] = value
+                self.assertIn("TOOL_DECLARATION", {e["code"] for e in hermes.probe(contract)["errors"]})
+
+    def test_effects_require_nonempty_unique_final_evidence(self):
+        for final_effects in (None, [], ["effect-1", "effect-1"]):
+            with self.subTest(final_effects=final_effects):
+                contract = self.contract()
+                if final_effects is None:
+                    contract.pop("final_effect_ids")
+                else:
+                    contract["final_effect_ids"] = final_effects
+                self.assertIn("FINAL_EVIDENCE", {e["code"] for e in hermes.probe(contract)["errors"]})
+
     def test_result_binding_uses_original_call_index(self):
         contract = self.contract('<tool_call>{bad}</tool_call>\n<tool_call>{"name":"lookup","arguments":{"query":"status"}}</tool_call>')
         contract["tool_results"] = [{"call_index": 1, "name": "lookup", "effect_id": "effect-1"}]
