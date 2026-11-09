@@ -214,7 +214,7 @@ communication:
   agent_room_conversation: "authorized_once_commissioned"
   uncontrolled_direct_channels_exist: false
   notes:
-    - "A Copilot finding reaches the producer only as a Director-relayed, independently validated observation; Copilot never addresses another provider."
+    - "A Copilot finding reaches the producer only as a Director-relayed, independently validated observation; Copilot converses with other providers only through Agent Room threads once commissioned, never through an uncontrolled channel."
     - "Copilot never posts to the Slack thread; the Director records the attempt, format, quota state, validated findings, and any material authorship."
 
 this_profile_does_not_change:
