@@ -103,7 +103,7 @@ Foreman register and orders. Slack `#director-admin-ops` is owner-facing summari
 alerts only. The Foreman inbox takes HTML evidence files only; questions to the Foreman go to a
 room thread addressed to `claude@blackbox`. Scrapped anti-back-and-forth / no-acknowledgment /
 no-polling / no-auto-continue rules are removed (archived). See [Agent Room](docs/agent-room.html)
-and `C:/Users/edwar/Agent-Roles/communication-system.html`.
+and `%USERPROFILE%/Agent-Roles/communication-system.html`.
 
 ## Canonical HTML documentation
 
