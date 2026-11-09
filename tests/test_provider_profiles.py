@@ -1302,9 +1302,15 @@ class DescriptiveOnlyTests(unittest.TestCase):
                 self.assertFalse(profile["capabilities"]["may_deploy_or_publish"])
                 self.assertFalse(profile["capabilities"]["may_post_to_slack"])
                 self.assertFalse(
-                    profile["communication"][
-                        "direct_provider_to_provider_channels_exist"
-                    ]
+                    profile["communication"]["uncontrolled_direct_channels_exist"]
+                )
+                self.assertEqual(
+                    profile["communication"]["agent_room_conversation"],
+                    "authorized_once_commissioned",
+                )
+                self.assertEqual(
+                    profile["communication"]["relay_rule"],
+                    "work_handoffs_relay_through_director_conversation_through_agent_room",
                 )
                 for value in _walk_keys(profile, "values_recorded"):
                     self.assertIs(value, False)

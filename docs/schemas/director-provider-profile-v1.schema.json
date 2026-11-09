@@ -574,10 +574,11 @@
         "communication": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["relay_rule", "direct_provider_to_provider_channels_exist", "notes"],
+          "required": ["relay_rule", "agent_room_conversation", "uncontrolled_direct_channels_exist", "notes"],
           "properties": {
-            "relay_rule": { "const": "provider_messages_relay_through_director" },
-            "direct_provider_to_provider_channels_exist": { "const": false },
+            "relay_rule": { "const": "work_handoffs_relay_through_director_conversation_through_agent_room" },
+            "agent_room_conversation": { "const": "authorized_once_commissioned" },
+            "uncontrolled_direct_channels_exist": { "const": false },
             "notes": { "$ref": "#/$defs/textList" }
           }
         },

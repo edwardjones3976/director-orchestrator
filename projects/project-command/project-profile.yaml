@@ -1,0 +1,88 @@
+schema_version: "director-project-profile/v1"
+project:
+  id: "project-command"
+  name: "Project COMMAND — COMMAND Reveille MAX"
+  proposition: "Personal Android-first execution coach: real alarms, approved handshakes, spoken first actions, and honest self-reported task states without mandatory proof collection in P0."
+  state: "framing"
+  owner: "Edward Jones (repository owner)"
+  created_at: "2026-10-29T21:49:00Z"
+  updated_at: "2026-10-29T22:08:00Z"
+  foreman_intake: "foreman-intake.html"
+source_context:
+  thread: "Slack #director-admin-ops — owner priority request 2026-10-29 Pacific; scope refinement same day."
+  inherited_authority: false
+  discard:
+    - "Director-Orchestrator runtime dispatch, repair workload, and completion-Director appointment scope."
+    - "Mandatory Mission Receipts, proof verification, or surveillance in the initial personal release."
+outcomes:
+  desired:
+    - value: "Installable Android personal pilot: alarm → handshake → TTS directive → optional 5-minute starter → one-tap self-reported status with distinct acknowledged / started / completed semantics."
+      status: "confirmed"
+    - value: "Assertive coaching tone (Nudge / Steady / Command / Reveille MAX) without compliance paperwork in P0."
+      status: "confirmed"
+  non_goals:
+    - "Mandatory code diffs, study tests, photos, workout proofs, or other receipt collection in P0."
+    - "File inspection, camera evidence, activity surveillance, or verified completion gates."
+    - "Calendar-first or slideware-only experience."
+    - "Unstoppable alarms or unsafe OS override."
+  evidence_standard:
+    - "Debug or signed APK build receipt when a dedicated app repository exists."
+    - "Owner-device screenshots or recording for alarm, handshake, and TTS only when actually performed — not proof of task truth."
+    - "Self-reported task states labelled explicitly as user-reported, not verified."
+  stopping_point: "Stop before merge or store release until dedicated repository, project lead, Android toolchain, and owner device checks exist; do not claim overnight success without device receipts."
+surfaces:
+  deployment:
+    intent: "analysis_only"
+    status: "not_activated_for_this_project"
+  slack:
+    status: "coordination_only"
+    channel: "C0C5Y0E3SHK"
+    note: "Intake and status in #director-admin-ops; not a COMMAND runtime surface."
+  repositories:
+    - name: "pending — dedicated private GitHub repository required"
+      starting_ref: "pending"
+      status: "unknown"
+  systems_and_data:
+    classification: "private"
+    allowed_sources:
+      - "Project COMMAND intake under projects/project-command/ in director-orchestrator (coordination only)."
+      - "Future dedicated COMMAND application repository once named."
+    prohibited_sources:
+      - "Owner personal files, unrelated repositories, or Director-Orchestrator application code mixed into the Android app tree."
+  external_effects:
+    mode: "explicitly_scoped"
+    allowed:
+      - "Foreman intake updates and coordination records in director-orchestrator."
+    prohibited:
+      - "Paid provider dispatch, new subscriptions, credentials, spending, host elevation, or launch claims without separate gates."
+modules:
+  discovery: "enabled"
+  design_and_decision: "enabled"
+  implementation: "optional"
+  quality_and_security: "optional"
+  review_to_merge: "optional"
+  operations: "disabled"
+team:
+  director:
+    provider: "openai_codex"
+    appointment: "Site Director #1 — Foreman intake routing; Project COMMAND implementation lead not yet owner-appointed."
+    responsibilities: ["intake", "routing", "blocker identification"]
+  lanes:
+    - { provider: "cursor", role: "producer", scope: "Android Kotlin/Compose prototype once destination repository and toolchain are authorized" }
+  note: "Claude completion-Director appointment excludes non–Director-Orchestrator projects."
+coordination:
+  canonical_review_and_merge: "github"
+  live_transport: "not_configured"
+  provider_messages_relay_through_director: true
+controls:
+  paid_provider_dispatch: "disabled — no new Project COMMAND budget authorization on 2026-10-29 refinement"
+  separate_review_required: true
+  no_self_merge: true
+  runtime_project_allowlist: "not_configured"
+  runtime_repository_allowlist: "not_configured"
+fallbacks:
+  - "Keep intake authoritative in HTML/YAML until a dedicated repository exists."
+  - "Defer Mission Receipts to a documented post-P0 opt-in module."
+next:
+  action: "Owner or Codex names dedicated repository and project lead; Cursor scaffolds Android P0 against revised intake."
+  responsible_party: "owner with Codex Foreman routing"

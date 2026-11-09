@@ -1000,7 +1000,10 @@ def render_profile_markdown(
     lines += _bullets(
         [
             f"Relay rule: {profile['communication']['relay_rule']}.",
-            "Authorized provider-to-provider conversation: Agent Room MCP once commissioned under WO-20261108-006.",
+            f"Provider-to-provider conversation: {profile['communication']['agent_room_conversation']} (Agent Room MCP, WO-20261108-006).",
+            "Uncontrolled direct provider-to-provider channels: "
+            + ("exist" if profile["communication"]["uncontrolled_direct_channels_exist"] else "none (prohibited)")
+            + ".",
         ]
         + list(profile["communication"]["notes"])
     )

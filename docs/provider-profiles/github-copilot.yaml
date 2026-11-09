@@ -210,8 +210,9 @@ transports:
     browser_policy: null
 
 communication:
-  relay_rule: "provider_messages_relay_through_director"
-  direct_provider_to_provider_channels_exist: false
+  relay_rule: "work_handoffs_relay_through_director_conversation_through_agent_room"
+  agent_room_conversation: "authorized_once_commissioned"
+  uncontrolled_direct_channels_exist: false
   notes:
     - "A Copilot finding reaches the producer only as a Director-relayed, independently validated observation; Copilot never addresses another provider."
     - "Copilot never posts to the Slack thread; the Director records the attempt, format, quota state, validated findings, and any material authorship."

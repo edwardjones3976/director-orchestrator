@@ -305,8 +305,9 @@ transports:
       enforcement: "charter policy and workload_policy.Transport rank only; no runtime adapter"
 
 communication:
-  relay_rule: "provider_messages_relay_through_director"
-  direct_provider_to_provider_channels_exist: false
+  relay_rule: "work_handoffs_relay_through_director_conversation_through_agent_room"
+  agent_room_conversation: "authorized_once_commissioned"
+  uncontrolled_direct_channels_exist: false
   notes:
     - "The restricted fixture contact receives no dependency outcomes, task prose, or repository context; its artifact reaches an eligible independently assigned verifier only through a Director-declared dependency."
     - "The debate seat is the one prose-bearing envelope, admitted only by a persisted Director invitation."

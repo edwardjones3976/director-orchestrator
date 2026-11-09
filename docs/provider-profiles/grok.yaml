@@ -273,10 +273,11 @@ transports:
       enforcement: "charter policy and workload_policy.Transport rank only; no runtime adapter"
 
 communication:
-  relay_rule: "provider_messages_relay_through_director"
-  direct_provider_to_provider_channels_exist: false
+  relay_rule: "work_handoffs_relay_through_director_conversation_through_agent_room"
+  agent_room_conversation: "authorized_once_commissioned"
+  uncontrolled_direct_channels_exist: false
   notes:
-    - "Grok reaches Claude, Cursor, OpenAI, and every other lane only through Director-authored packets, declared dependency outcomes, review handoffs, and moderated debate turns."
+    - "Grok converses with Claude, Cursor, OpenAI, and every other lane through Agent Room threads once commissioned; work still moves only through Director-authored packets, declared dependency outcomes, review handoffs, and moderated debate turns."
     - "Grok never posts to the Slack thread; the Director relays a concise assignment-correlated summary."
     - "Grok Bot, if ever implemented, would be a Director-to-Grok contact, not a peer channel."
 
