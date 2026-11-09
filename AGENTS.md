@@ -442,7 +442,7 @@ anti-back-and-forth, no-acknowledgment, no-polling, no-auto-continue, no-new-cha
 no-multi-provider-debate and one-consolidated-update rules are removed by owner directive
 2026-11-08 (archived; the owner may restore them). Repository description:
 [Agent Room](docs/agent-room.html). Host canonical:
-`C:/Users/edwar/Agent-Roles/communication-system.html`.
+`%USERPROFILE%/Agent-Roles/communication-system.html`.
 
 ## Canonical HTML documentation
 

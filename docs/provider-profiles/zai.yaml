@@ -242,10 +242,11 @@ transports:
     browser_policy: null
 
 communication:
-  relay_rule: "provider_messages_relay_through_director"
-  direct_provider_to_provider_channels_exist: false
+  relay_rule: "work_handoffs_relay_through_director_conversation_through_agent_room"
+  agent_room_conversation: "authorized_once_commissioned"
+  uncontrolled_direct_channels_exist: false
   notes:
-    - "Z.ai reaches every other lane only through Director-authored packets, declared dependency outcomes, review handoffs, and Director-invited advisory debate turns dispatched as primary work packets and tallied at weight 1.5."
+    - "Z.ai converses with every other lane through Agent Room threads once commissioned; work still moves only through Director-authored packets, declared dependency outcomes, review handoffs, and Director-invited advisory debate turns dispatched as primary work packets and tallied at weight 1.5."
     - "Z.ai never posts to Slack; the Director relays a concise assignment-correlated summary through the existing Slack thread relay, preserving thread_ts."
     - "Trial-lane results never reach another provider as production evidence."
 

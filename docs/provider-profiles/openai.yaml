@@ -300,8 +300,9 @@ transports:
     browser_policy: null
 
 communication:
-  relay_rule: "provider_messages_relay_through_director"
-  direct_provider_to_provider_channels_exist: false
+  relay_rule: "work_handoffs_relay_through_director_conversation_through_agent_room"
+  agent_room_conversation: "authorized_once_commissioned"
+  uncontrolled_direct_channels_exist: false
   notes:
   - ChatGPT/Codex directs project coordination; packets, dependency outcomes, and review handoffs stay brokered and
     accurately attributed.

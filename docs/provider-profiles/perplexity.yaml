@@ -235,8 +235,9 @@ transports:
     browser_policy: null
 
 communication:
-  relay_rule: "provider_messages_relay_through_director"
-  direct_provider_to_provider_channels_exist: false
+  relay_rule: "work_handoffs_relay_through_director_conversation_through_agent_room"
+  agent_room_conversation: "authorized_once_commissioned"
+  uncontrolled_direct_channels_exist: false
   notes:
     - "Perplexity evidence reaches Claude, Cursor, Grok, or OpenAI only as a Director-declared dependency outcome after a primary-team member evaluates it."
     - "Perplexity never posts to the Slack thread and never receives another provider's output."

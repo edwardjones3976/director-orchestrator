@@ -536,18 +536,25 @@ and state report:</p>
 <code>PROJECT_BOOTSTRAP</code> → <code>BOOTSTRAP</code> → <code>PLAN</code> → (<code>WORKING</code> | <code>EVIDENCE</code>)* →
 (<code>REVIEW_READY</code> when reviewable) → (<code>DECISION</code> | <code>OWNER_DECISION_REQUIRED</code>) →
 (<code>COMPLETE</code> | <code>PAUSED</code> | <code>RESHAPED</code>).</p>
-<p>Providers communicate through the Director's correlated transport rather than
-starting unbounded, cross-project conversations. They may debate when it helps:
-collect independent <code>POSITION</code> statements from the seated members first, allow
-only the configured bounded <code>REBUTTAL</code> rounds, preserve evidence and dissent,
-and keep the discussion scoped to the active decision. The Director may invite
-Antigravity through a persisted debate assignment. That separate typed contract
-may relay the sanitized question, vote options, accepted declared-dependency
-contributions, and a bounded Director revision request; the ordinary work
-contract remains prose-free. Antigravity cannot initiate, self-route, widen, or
-autonomously continue a conversation, and a seat grants no operational or
-acceptance authority—see
-<a href="team-operating-charter.html"><code>team-operating-charter.html</code></a>.</p>
+<p>Administrator and worker conversation uses the Agent Room MCP once it is
+commissioned under WO-20261108-006: providers talk directly in bounded room
+threads for questions, answers, coordination, and acknowledgments without
+starting unbounded, cross-project side channels. Decisions stay in the Foreman
+register and orders; packets, declared dependency outcomes, review handoffs,
+and moderated debate tallies remain Director-mediated surfaces. For scoped
+debate, collect independent <code>POSITION</code> statements from seated members
+first, allow only the configured bounded <code>REBUTTAL</code> rounds through the
+Director as moderator, preserve evidence and dissent, and keep the discussion
+scoped to the active decision. The Director may invite Antigravity through a
+persisted debate assignment. That separate typed contract may relay the
+sanitized question, vote options, accepted declared-dependency contributions,
+and a bounded Director revision request; the ordinary work contract remains
+prose-free. Antigravity cannot initiate, self-route, widen, or autonomously
+continue a conversation, and a seat grants no operational or acceptance
+authority—see
+<a href="team-operating-charter.html"><code>team-operating-charter.html</code></a>.
+Uncontrolled direct channels remain prohibited—see
+<a href="agent-room.html"><code>agent-room.html</code></a>.</p>
 <p>Producer votes count at their full configured advisory weight for seated
 members, including Antigravity when the Director invited it. Unavailable or
 abstaining members cast zero without changing the immutable denominator or any
