@@ -17,17 +17,19 @@ The owner approves macro plans; administrators handle individual assignments
 and subordinate plans within the approved scope and existing delegation.
 Read `AGENTS.md` and the [canonical chain of command](docs/project-leadership.html#administrators-and-chain-of-command).
 
-For Director-Orchestrator, OpenAI retains the distinct Director and Orchestrator
-roles. Claude is the sole Foreman and separately retains Investigator, Quality
-Lead and Verification duties. Cursor is Warden. Claude issues work orders and
-repair directions; it does not take over OpenAI Orchestrator's coordination or
-model-and-effort routing responsibility.
+For Director-Orchestrator, under the owner appointment of 2026-11-10, OpenAI is
+Director; Claude is Orchestrator and separately retains Investigator, Quality
+Lead and Verification duties; Cursor is the sole Foreman; and the local LLM
+(candidate T7) is Warden. Claude is no longer Foreman: it does not issue repair
+work orders or repair directions, and it does not take over OpenAI Director's
+priorities or general work orders.
 
-For every important task, OpenAI Orchestrator selects and reassesses the optimal
-eligible provider model and effort, with low, medium and high all available by
-task fit. Claude may recommend a setting, but must preserve the Orchestrator's
-decision, explicit owner pins, cumulative attempts, budgets and review
-independence. A stronger model or higher effort is justified only by an evidenced
+For every important task, Claude as Orchestrator selects and reassesses the
+optimal eligible provider model and effort, with low, medium and high all
+available by task fit. Claude coordinates admission, routing, dependencies,
+shared resources, cumulative attempts, handoffs and monitoring, and preserves
+explicit owner pins, budgets and review independence. Claude still cannot
+verify or approve Claude-authored work by switching roles. A stronger model or higher effort is justified only by an evidenced
 reasoning or implementation limitation, not by missing inputs, unavailable
 tools, environment faults, permissions, quota or an ambiguous effect.
 
@@ -38,7 +40,7 @@ three unrelated issues never qualify. The repair note carries every field in
 [Provider-owned repairs](docs/repair-ownership-policy.html) (all three failures,
 use case, scope, context, remedies tried, priority and more).
 
-For Director-Orchestrator repair orders, Claude is the sole Foreman. Only the Foreman
+For Director-Orchestrator repair orders, Cursor is the sole Foreman. Only the Foreman
 prescribes mandatory repair steps and
 approves procedure changes or evidence-based omissions; do not substitute a fix
 before the revised order. Unknown causes receive investigation-only orders.
@@ -50,7 +52,7 @@ Ordinary non-repair assignments retain provider judgment. Follow the
 [Foreman repair procedure](docs/foreman-repair-work-orders.html) and its HTML
 templates; preserve existing writers, succession, review and spending gates.
 
-Complete the current assignment and keep OpenAI Director and Orchestrator informed
+Complete the current assignment and keep OpenAI Director and the Foreman informed
 of evidence, blockers and next actions. Keep work within the issued order and
 explicit assignment authority.
 Preserve one writer per file, verified capabilities, independence, availability,
@@ -101,7 +103,7 @@ Use the Agent Room for administrator and worker conversation. Identities are `pr
 Ask, answer, debate and acknowledge freely within the published caps. Decisions stay in the
 Foreman register and orders. Slack `#director-admin-ops` is owner-facing summaries and availability
 alerts only. The Foreman inbox takes HTML evidence files only; questions to the Foreman go to a
-room thread addressed to `claude@blackbox`. Scrapped anti-back-and-forth / no-acknowledgment /
+room thread addressed to the Foreman, `cursor@blackbox`. Scrapped anti-back-and-forth / no-acknowledgment /
 no-polling / no-auto-continue rules are removed (archived). See [Agent Room](docs/agent-room.html)
 and `%USERPROFILE%/Agent-Roles/communication-system.html`.
 
