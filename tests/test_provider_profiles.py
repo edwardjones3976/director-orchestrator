@@ -111,6 +111,9 @@ SECRET_NAME = re.compile(
 )
 
 
+_SECRET_NAME = re.compile(r"(API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)", re.IGNORECASE)
+
+
 def _settings() -> Settings:
     with patch.dict(
         os.environ,
@@ -1074,6 +1077,16 @@ class ConfigMirrorTests(unittest.TestCase):
                         self.assertEqual(json.loads(expected), dict(actual))
                     elif isinstance(actual, (list, tuple)):
                         self.assertEqual(json.loads(expected), list(actual))
+                    elif _SECRET_NAME.search(name):
+                        # Settings reads secrets from the host environment at import time, so a
+                        # host that sets this variable cannot show the default. Never put the
+                        # value in a failure message: compare without echoing it.
+                        if os.environ.get(name):
+                            continue
+                        self.assertTrue(
+                            str(actual) == str(expected),
+                            f"{name}: configured default differs (value redacted)",
+                        )
                     else:
                         self.assertEqual(str(actual), str(expected))
 
@@ -1589,10 +1602,12 @@ class DiscoveryTests(unittest.TestCase):
             "Keep work within the issued order and explicit assignment authority",
             normalized,
         )
+        # Owner appointment 2026-11-10: the Orchestrator is Claude, not OpenAI.
         self.assertIn(
-            "OpenAI Orchestrator selects and reassesses the optimal eligible provider model and effort",
+            "selects and reassesses the optimal eligible provider model and effort",
             normalized,
         )
+        self.assertNotIn("OpenAI Orchestrator", normalized)
         self.assertIn("low, medium and high all available by task fit", normalized)
         self.assertIn("docs/project-leadership.html", claude_instructions)
 

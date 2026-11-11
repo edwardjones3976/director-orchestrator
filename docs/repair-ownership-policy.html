@@ -24,7 +24,7 @@
   <li>the finding provider has made <strong>three failed repair attempts on the same issue</strong>.</li>
   </ol></li>
 <li><strong>Three consecutive unrelated issues do not make a repair request.</strong> Each issue has its own count, and failures on different issues never add up.</li>
-<li>When condition 2 is met, the finding provider files <strong>one repair note</strong> containing every field in <a href="#repair-note">the required repair note</a>. A repair note is intake evidence, not an issued order. The project's appointed authority decides whether to issue a repair order. In Director-Orchestrator that authority is the Claude Foreman.</li>
+<li>When condition 2 is met, the finding provider files <strong>one repair note</strong> containing every field in <a href="#repair-note">the required repair note</a>. A repair note is intake evidence, not an issued order. The project's appointed authority decides whether to issue a repair order. In Director-Orchestrator that authority is the Cursor Foreman.</li>
 </ol>
 
 <h2 id="same-issue">What counts as the same issue</h2>
@@ -86,7 +86,7 @@
 <ul>
 <li>Every repair still requires research. Every repair case still needs relevant Firecrawl or Perplexity research, done by the finding provider when it can or bound by the authority issuing a later order.</li>
 <li>Independent exact-candidate review, CI and merge gates, security and protected-path rules, active-writer ownership, budgets, spend authority and release gates all stay as they are. Self-repair never includes self-approval.</li>
-<li>Project appointments stay as they are. In Director-Orchestrator, Claude alone issues and revises Foreman repair orders once a repair note qualifies. OpenAI Director keeps general-order authority after Orchestrator admission, Cursor remains Warden, and Antigravity remains Secretary.</li>
+<li>Project appointments stay as they are. In Director-Orchestrator, Cursor alone issues and revises Foreman repair orders once a repair note qualifies (owner appointment of 10 November 2026). OpenAI Director keeps general-order authority after Orchestrator admission, Claude is Orchestrator, the local LLM (T7) is Warden, and Antigravity remains Secretary.</li>
 <li>The <a href="provider-retry-policy.html">eight-correction ceiling</a> per task still applies. It caps total corrections on a task across all its issues. The three-failure threshold on the same issue is what triggers a repair note, and it usually comes first.</li>
 <li>Repair orders already issued before 8 November 2026 continue under their own terms and are not reopened. New defects found while working on them follow this page.</li>
 </ul>
