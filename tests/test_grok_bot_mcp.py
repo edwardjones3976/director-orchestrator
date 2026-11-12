@@ -67,14 +67,14 @@ class GrokBotMcpTests(unittest.TestCase):
             with patch.object(bot, "ARTIFACT_ROOT", Path(temp)), \
                     patch.dict(bot.os.environ, {"GROK_BOT_DESKTOP_INPUT_ENABLED": "true"}), \
                     patch.object(bot, "dispatch", return_value={"action": "paste"}) as dispatch:
-                packet.write_text(f"task\nAUTHOR: PATCH-B64 bound to {base}\nmore\n", encoding="ascii")
+                packet.write_text(f"task\nAUTHOR: PATCH bound to {base}\nmore\n", encoding="ascii")
                 bot.paste(str(packet))
                 dispatch.assert_called_once_with("paste", Packet=str(packet.resolve()))
                 dispatch.reset_mock()
-                packet.write_text(f"task AUTHOR: PATCH-B64 bound to {base}\n", encoding="ascii")
+                packet.write_text(f"task AUTHOR: PATCH bound to {base}\n", encoding="ascii")
                 with self.assertRaisesRegex(ValueError, "AUTHOR line"):
                     bot.paste(str(packet))
-                packet.write_text(f"AUTHOR: PATCH-B64 bound to {base[:12]}\n", encoding="ascii")
+                packet.write_text(f"AUTHOR: PATCH bound to {base[:12]}\n", encoding="ascii")
                 with self.assertRaisesRegex(ValueError, "AUTHOR line"):
                     bot.paste(str(packet))
                 dispatch.assert_not_called()

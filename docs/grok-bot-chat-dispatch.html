@@ -111,7 +111,7 @@ Grok's line pins can run +/-2; it sometimes posts a self-correction message.</p>
 <p>Grok Bot can write code in its own sandbox; it cannot see local clones. An
 <strong>author packet</strong> asks it for a patch against an exact base commit. Instead of the
 VERDICT line, it carries the whole line
-<code>AUTHOR: PATCH-B64 bound to &lt;40-hex base commit&gt;</code>. Both <code>paste</code> and the MCP's
+<code>AUTHOR: PATCH bound to &lt;40-hex base commit&gt;</code>. Both <code>paste</code> and the MCP's
 <code>grok_bot_paste_review</code> accept either line; every other packet check (ASCII,
 at most 24 KB, under the artifact folder, no credential-like text) is unchanged.
 Paste, preview and send work exactly as for a review packet.</p>

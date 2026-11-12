@@ -14,14 +14,14 @@ import sys
 from pathlib import Path
 
 PROTOCOL = "2025-03-26"
-SCRIPT_SHA256 = "4c7667dd1a2e0d654be0405fa3e70238cfca07b31ae5dce846ee2d8a11f39400"
+SCRIPT_SHA256 = "0b625e76b56c5e6840109efc0adc63819af31dadfbf593a0167e7390a284dd21"
 SCRIPT = Path(os.environ.get("GROK_BOT_DISPATCH_SCRIPT", str(Path(__file__).resolve().parent / "grok-bot-chat" / "grok_bot_chat.ps1")))
 APP = Path(os.environ.get("GROK_BOT_EXECUTABLE", str(Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Grok Bot" / "Grok Bot.exe")))
 ARTIFACT_ROOT = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "director-orchestrator" / "grok-bot"
 VERDICT = re.compile(r"(?m)^VERDICT: ACCEPT \| CHANGES_REQUIRED \| SERIOUS_SAFETY_STOP bound to [0-9a-f]{40}\s*$")
 # An author packet asks Grok Bot for a patch against an exact base commit; its reply is read back
 # with grok_bot_read_reply (copy_code true saves each code block's exact text).
-AUTHOR = re.compile(r"(?m)^AUTHOR: PATCH-B64 bound to [0-9a-f]{40}\s*$")
+AUTHOR = re.compile(r"(?m)^AUTHOR: PATCH bound to [0-9a-f]{40}\s*$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 

@@ -21,7 +21,7 @@
 #                                                       code text; the owner's clipboard is restored
 #
 # Author packets (2026-11-12): besides the review VERDICT line, paste accepts the author
-# line "AUTHOR: PATCH-B64 bound to <40-hex base commit>" as a whole line. Such a packet asks
+# line "AUTHOR: PATCH bound to <40-hex base commit>" as a whole line. Such a packet asks
 # Grok Bot for a patch against that commit; the reply is read with -Action read -CopyCode.
 #
 # [[Claude Code | Claude Opus 5 | 2026-09-17 | 00:35 UTC | BEGIN]] focus guard + clipboard restore
@@ -155,7 +155,7 @@ switch ($Action) {
     # not anchored to the end of the file: packets carry the pre-staged diff after it.
     # [[Claude Code | Claude Opus 5 | 2026-09-19 | 06:40 UTC]]
     $isReview = $text -match "(?m)^VERDICT: ACCEPT \| CHANGES_REQUIRED \| SERIOUS_SAFETY_STOP bound to [0-9a-f]{40}\s*$"
-    $isAuthor = $text -match "(?m)^AUTHOR: PATCH-B64 bound to [0-9a-f]{40}\s*$"
+    $isAuthor = $text -match "(?m)^AUTHOR: PATCH bound to [0-9a-f]{40}\s*$"
     if (-not ($isReview -or $isAuthor)) {
       throw "packet must contain the exact-SHA VERDICT line or the AUTHOR line as a whole line"
     }
