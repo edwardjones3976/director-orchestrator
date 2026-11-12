@@ -17,19 +17,22 @@ The owner approves macro plans; administrators handle individual assignments
 and subordinate plans within the approved scope and existing delegation.
 Read `AGENTS.md` and the [canonical chain of command](docs/project-leadership.html#administrators-and-chain-of-command).
 
-For Director-Orchestrator, OpenAI retains the distinct Director and Orchestrator
-roles. Claude is the sole Foreman and separately retains Investigator, Quality
-Lead and Verification duties. Cursor is Warden. Claude issues work orders and
-repair directions; it does not take over OpenAI Orchestrator's coordination or
-model-and-effort routing responsibility.
+For Director-Orchestrator (owner appointment 2026-11-10/11): OpenAI is Director;
+Claude is Orchestrator; Cursor is sole Foreman; the local LLM (T7) is Warden;
+Antigravity is Secretary. Investigating, testing and checking claims are ordinary
+work in every role (mainly the Director's) and are not separate appointments.
+Independent exact-candidate review and the rule against approving one's own work
+remain unchanged. Claude owns workload admission, scheduling, concurrency and
+model/effort routing; Cursor issues Foreman work orders and repair directions and
+operates Git/GitHub under the existing gates.
 
-For every important task, OpenAI Orchestrator selects and reassesses the optimal
+For every important task, Claude Orchestrator selects and reassesses the optimal
 eligible provider model and effort, with low, medium and high all available by
-task fit. Claude may recommend a setting, but must preserve the Orchestrator's
-decision, explicit owner pins, cumulative attempts, budgets and review
-independence. A stronger model or higher effort is justified only by an evidenced
-reasoning or implementation limitation, not by missing inputs, unavailable
-tools, environment faults, permissions, quota or an ambiguous effect.
+task fit. Other providers may recommend a setting, but must preserve the
+Orchestrator's decision, explicit owner pins, cumulative attempts, budgets and
+review independence. A stronger model or higher effort is justified only by an
+evidenced reasoning or implementation limitation, not by missing inputs,
+unavailable tools, environment faults, permissions, quota or an ambiguous effect.
 
 Provider-owned repairs (owner directive 2026-11-08): the provider that finds a defect
 repairs it itself within its existing authority. A repair order exists only when
@@ -38,21 +41,21 @@ three unrelated issues never qualify. The repair note carries every field in
 [Provider-owned repairs](docs/repair-ownership-policy.html) (all three failures,
 use case, scope, context, remedies tried, priority and more).
 
-For Director-Orchestrator repair orders, Claude is the sole Foreman. Only the Foreman
-prescribes mandatory repair steps and
-approves procedure changes or evidence-based omissions; do not substitute a fix
-before the revised order. Unknown causes receive investigation-only orders.
-Every Foreman repair case requires Firecrawl or Perplexity research, normally
-at intake, with a mandatory checkpoint before a repair limit is reached if the
+For Director-Orchestrator repair orders, Cursor is the sole Foreman. Only the
+Foreman issues mandatory repair steps from qualifying notes and approves
+procedure changes or evidence-based omissions; do not substitute a fix before
+the revised order. Unknown causes receive investigation-only orders. Every
+Foreman repair case requires Firecrawl or Perplexity research, normally at
+intake, with a mandatory checkpoint before a repair limit is reached if the
 Foreman allows bounded initial checks. Supply applicable research receipts for
-reuse; the Foreman records completion and any delayed checkpoint.
-Ordinary non-repair assignments retain provider judgment. Follow the
+reuse; the Foreman records completion and any delayed checkpoint. Ordinary
+non-repair assignments retain provider judgment. Follow the
 [Foreman repair procedure](docs/foreman-repair-work-orders.html) and its HTML
 templates; preserve existing writers, succession, review and spending gates.
 
-Complete the current assignment and keep OpenAI Director and Orchestrator informed
-of evidence, blockers and next actions. Keep work within the issued order and
-explicit assignment authority.
+Complete the current assignment and keep OpenAI Director and Claude Orchestrator
+informed of evidence, blockers and next actions. Keep work within the issued
+order and explicit assignment authority.
 Preserve one writer per file, verified capabilities, independence, availability,
 budget and the current allocation profile. Do not require every lane to
 participate in every task.
