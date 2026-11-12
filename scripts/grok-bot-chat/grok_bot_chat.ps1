@@ -296,7 +296,11 @@ switch ($Action) {
             $k++
             $sentinel = "grok-bot-read-sentinel-" + [guid]::NewGuid().ToString("N")
             Set-Clipboard -Value $sentinel
-            $b.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+            # Grok Bot's "Copy code" button exposes TogglePattern, not InvokePattern (seen 2026-11-12).
+            $pat = $null
+            if ($b.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pat)) { $pat.Invoke() }
+            elseif ($b.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$pat)) { $pat.Toggle() }
+            else { throw "code block $k button supports neither Invoke nor Toggle" }
             $code = $sentinel
             for ($w = 0; $w -lt 30 -and $code -eq $sentinel; $w++) { Start-Sleep -Milliseconds 100; $code = Get-Clipboard -Raw }
             if ($code -eq $sentinel) { throw "code block $k did not reach the clipboard (is the window focused?)" }

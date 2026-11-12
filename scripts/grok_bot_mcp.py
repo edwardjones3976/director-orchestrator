@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 PROTOCOL = "2025-03-26"
-SCRIPT_SHA256 = "1a233e4779ee79a1f4cd3d4d79c37be42900d324409b3bea3cd30b7c7b6cd0d9"
+SCRIPT_SHA256 = "5b774d0d65ed9111d7388d05f5e31dbdb28b2df7b80b37d9d52e8b3a99e6aa50"
 SCRIPT = Path(os.environ.get("GROK_BOT_DISPATCH_SCRIPT", str(Path(__file__).resolve().parent / "grok-bot-chat" / "grok_bot_chat.ps1")))
 APP = Path(os.environ.get("GROK_BOT_EXECUTABLE", str(Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Grok Bot" / "Grok Bot.exe")))
 ARTIFACT_ROOT = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "director-orchestrator" / "grok-bot"

@@ -124,11 +124,16 @@ next "You" message, and writes their text to <code>&lt;digest&gt;.reply.txt</cod
 <p><code>-CopyCode</code> also saves each code block's exact text. Rendered message text is
 not byte-exact, so for a patch use this. It saves the owner's clipboard, focuses
 Grok Bot (the focus guard applies), and for each "Copy code" button in the reply
-sets a sentinel, invokes the button, waits for the clipboard to change, and writes
+sets a sentinel, presses the button through UI Automation (Grok Bot's button exposes
+TogglePattern, not InvokePattern; either is used), waits for the clipboard to change, and writes
 <code>&lt;digest&gt;.code-&lt;k&gt;.txt</code> with its SHA-256. The clipboard is restored afterwards.
 The MCP tool is <code>grok_bot_read_reply</code> (<code>digest</code>, <code>copy_code</code>).</p>
 <p>Limits: the transcript is virtualized, so a very long reply may scroll the
 sent message out of the tree and <code>read</code> then refuses; scroll back and retry.
+A code block is virtualized too: until it is scrolled into view, UI Automation shows only
+its first lines, and its text is split into syntax-highlight pieces without line breaks,
+so never rebuild a patch from rendered text. UI Automation <code>ScrollItemPattern</code> on
+the "Copy code" button brings it into view without keys or focus.
 <code>-CopyCode</code> needs an idle desktop like <code>paste</code>.</p>
 <h2 id="validation-record-2026-09-13-windows-11-real-app">Validation record (2026-09-13, Windows 11, real app)</h2>
 <p>Run from the repository root with the app open on the secondary display:</p>
