@@ -48,9 +48,13 @@ param(
   [switch]$CopyCode,
   [string]$ArtifactRoot = (Join-Path $env:LOCALAPPDATA "director-orchestrator\grok-bot"),
   [string]$Executable = "C:\Program Files\Grok Bot\Grok Bot.exe",
-  [int]$ShotX = 0, [int]$ShotY = -864, [int]$ShotW = 1536, [int]$ShotH = 864
+  # Screenshot region. Give all four to fix it; otherwise every shot covers the Grok Bot
+  # window itself (UI Automation bounding rectangle), so a changed display layout cannot
+  # make a preview show another app. With no Grok Bot window, the whole virtual screen.
+  [int]$ShotX, [int]$ShotY, [int]$ShotW, [int]$ShotH
 )
 $ErrorActionPreference = "Stop"
+$ShotGiven = @("ShotX", "ShotY", "ShotW", "ShotH" | Where-Object { $PSBoundParameters.ContainsKey($_) })
 New-Item -ItemType Directory -Force -Path $ArtifactRoot | Out-Null
 
 function Get-GrokBot {
@@ -62,11 +66,33 @@ function Get-GrokBot {
   return $all[0]
 }
 
+function Get-ShotRegion {
+  $given = $ShotGiven
+  if ($given.Count -eq 4) {
+    if ($ShotW -le 0 -or $ShotH -le 0) { throw "screenshot width and height must be positive" }
+    return @($ShotX, $ShotY, $ShotW, $ShotH)
+  }
+  if ($given.Count -ne 0) { throw "give all four of -ShotX -ShotY -ShotW -ShotH, or none" }
+  Add-Type -AssemblyName UIAutomationClient
+  $win = @(Get-Process -Name "Grok Bot" -ErrorAction SilentlyContinue |
+    Where-Object { $_.MainWindowHandle -ne 0 -and $_.Path -eq $Executable })
+  if ($win.Count -eq 1) {
+    $r = [System.Windows.Automation.AutomationElement]::FromHandle($win[0].MainWindowHandle).Current.BoundingRectangle
+    if (-not $r.IsEmpty -and $r.Width -ge 1 -and $r.Height -ge 1) {
+      return @([int][math]::Floor($r.X), [int][math]::Floor($r.Y), [int][math]::Ceiling($r.Width), [int][math]::Ceiling($r.Height))
+    }
+  }
+  Add-Type -AssemblyName System.Windows.Forms
+  $v = [System.Windows.Forms.SystemInformation]::VirtualScreen
+  return @($v.X, $v.Y, $v.Width, $v.Height)
+}
+
 function Invoke-Screenshot([string]$Path) {
   Add-Type -AssemblyName System.Drawing
-  $bmp = New-Object System.Drawing.Bitmap $ShotW, $ShotH
+  $x, $y, $w, $h = Get-ShotRegion
+  $bmp = New-Object System.Drawing.Bitmap $w, $h
   $g = [System.Drawing.Graphics]::FromImage($bmp)
-  try { $g.CopyFromScreen($ShotX, $ShotY, 0, 0, $bmp.Size) } finally { $g.Dispose() }
+  try { $g.CopyFromScreen($x, $y, 0, 0, $bmp.Size) } finally { $g.Dispose() }
   $bmp.Save($Path); $bmp.Dispose()
   return $Path
 }

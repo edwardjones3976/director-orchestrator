@@ -54,7 +54,7 @@ Do not edit Bitdefender's quarantine files directly or disable protection.</p>
 <h2 id="where-things-live">Where things live</h2>
 <p>All artifacts default to <code>%LOCALAPPDATA%\director-orchestrator\grok-bot\</code> —
 the packet copy, the preview and after screenshots, and the send receipt —
-never inside the repository. Screenshots capture a whole display, so they must
+never inside the repository. Screenshots can show other windows, so they must
 not land in a worktree. Override with <code>-ArtifactRoot</code> if needed.</p>
 <h2 id="steps-run-from-the-repository-root-in-git-bash">Steps (run from the repository root, in Git Bash)</h2>
 <ol>
@@ -207,8 +207,11 @@ sent message out of the tree and <code>read</code> then refuses; scroll back and
 touch the clipboard and SendKeys through a tool: Bitdefender flagged that
 command line as injection on 2026-09-12. Never <code>Add-Type</code> user32 P/Invoke
 (<code>keybd_event</code>, <code>SetForegroundWindow</code>), blocked as <code>CMD:Heur.BZC.ZFV.Boxter</code>.</li>
-<li>Screen geometry defaults to the secondary display at virtual origin
-<code>(0,-864)</code>; pass <code>-ShotX/-ShotY/-ShotW/-ShotH</code> if the window moves.</li>
+<li>Screenshots cover the Grok Bot window itself, from its UI Automation bounding
+rectangle (since 2026-11-12; the old fixed region <code>(0,-864)</code> showed another app
+after the displays were rearranged). Pass all four of <code>-ShotX/-ShotY/-ShotW/-ShotH</code>
+to fix a region; giving only some is refused. Without a Grok Bot window, the whole virtual
+screen is captured. A window lying on top of Grok Bot still appears in the shot.</li>
 <li>Read-only packets only. Grok Bot holds a live GitHub connection and could act.</li>
 <li>One packet at a time; wait for the VERDICT line before pasting the next.</li>
 </ul>
