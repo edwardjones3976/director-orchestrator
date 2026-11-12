@@ -60,6 +60,18 @@ class ActiveDocumentationTests(unittest.TestCase):
         ):
             self.assertNotIn(stale, staff)
 
+    def test_chain_of_command_chart_matches_the_appointments(self):
+        leadership = " ".join(read_document(ROOT / "docs/project-leadership.html").split())
+        for line in (
+            "Owner │ ▼ OpenAI Director",
+            "OpenAI Director ◄┄┄ Antigravity Secretary (logs and errands)",
+            "OpenAI Director ◄┄┄ Antigravity Secretary (logs and errands) │ ▼ Claude Orchestrator │ ▼ Cursor Foreman",
+            "Cursor Foreman ◄┄┄ Local T7 Warden (exact-head verdicts via LWB) │ ▼ Non-admin workers",
+            "The chart adds no authority beyond the text above",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(line, leadership)
+
     def test_mandatory_research_keeps_inter_provider_scope(self):
         leadership = " ".join(read_document(ROOT / "docs/project-leadership.html").split())
         self.assertIn(
