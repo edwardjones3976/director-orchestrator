@@ -22,7 +22,7 @@ owner ranks it among the top three ways to reach Grok Bot, above Computer Use.
 It is a coordination contact only: Grok Bot's reply is review evidence for the
 exact-SHA record, never merge, callback, or runtime authority (see
 <code>docs/provider-profiles/grok.yaml</code>, transport <code>grok-bot</code>).</p>
-<p>One script, five actions (<code>focus</code>, <code>paste</code>, <code>send</code>, <code>shot</code>, <code>clear</code>), every
+<p>One script, six actions (<code>focus</code>, <code>paste</code>, <code>send</code>, <code>shot</code>, <code>clear</code>, <code>read</code>), every
 failure a terminating error that stops before the keystroke that would send.
 No P/Invoke; COM <code>WScript.Shell</code> (AppActivate by <strong>process id</strong>, SendKeys),
 managed UI Automation (<code>UIAutomationClient</code>, to read which process owns
@@ -107,6 +107,29 @@ with the VERDICT line, typically 3-6 minutes:</p>
 Grok's line pins can run +/-2; it sometimes posts a self-correction message.</p>
 </li>
 </ol>
+<h2 id="author-packets-and-reading-the-reply">Author packets and reading the reply (added 2026-11-12)</h2>
+<p>Grok Bot can write code in its own sandbox; it cannot see local clones. An
+<strong>author packet</strong> asks it for a patch against an exact base commit. Instead of the
+VERDICT line, it carries the whole line
+<code>AUTHOR: PATCH-B64 bound to &lt;40-hex base commit&gt;</code>. Both <code>paste</code> and the MCP's
+<code>grok_bot_paste_review</code> accept either line; every other packet check (ASCII,
+at most 24 KB, under the artifact folder, no credential-like text) is unchanged.
+Paste, preview and send work exactly as for a review packet.</p>
+<p><code>-Action read -Digest &lt;sha256&gt;</code> reads Grok Bot's reply to a sent packet with
+UI Automation only; it types nothing. It needs the <code>&lt;digest&gt;.sent.json</code> receipt and
+the same Grok Bot process as at send. It finds the last "You" message containing
+the packet's first non-blank line, takes the message groups after it up to the
+next "You" message, and writes their text to <code>&lt;digest&gt;.reply.txt</code>.
+<code>-Expect &lt;regex&gt;</code> adds <code>expect_found=True|False</code>, which a wait loop can poll.</p>
+<p><code>-CopyCode</code> also saves each code block's exact text. Rendered message text is
+not byte-exact, so for a patch use this. It saves the owner's clipboard, focuses
+Grok Bot (the focus guard applies), and for each "Copy code" button in the reply
+sets a sentinel, invokes the button, waits for the clipboard to change, and writes
+<code>&lt;digest&gt;.code-&lt;k&gt;.txt</code> with its SHA-256. The clipboard is restored afterwards.
+The MCP tool is <code>grok_bot_read_reply</code> (<code>digest</code>, <code>copy_code</code>).</p>
+<p>Limits: the transcript is virtualized, so a very long reply may scroll the
+sent message out of the tree and <code>read</code> then refuses; scroll back and retry.
+<code>-CopyCode</code> needs an idle desktop like <code>paste</code>.</p>
 <h2 id="validation-record-2026-09-13-windows-11-real-app">Validation record (2026-09-13, Windows 11, real app)</h2>
 <p>Run from the repository root with the app open on the secondary display:</p>
 <table>

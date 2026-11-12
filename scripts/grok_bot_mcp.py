@@ -14,11 +14,14 @@ import sys
 from pathlib import Path
 
 PROTOCOL = "2025-03-26"
-SCRIPT_SHA256 = "32a92ae34b2df428d707dea1812c220ccb46cfb6e6e1f12d7f4397f94fa7834b"
+SCRIPT_SHA256 = "4c7667dd1a2e0d654be0405fa3e70238cfca07b31ae5dce846ee2d8a11f39400"
 SCRIPT = Path(os.environ.get("GROK_BOT_DISPATCH_SCRIPT", str(Path(__file__).resolve().parent / "grok-bot-chat" / "grok_bot_chat.ps1")))
 APP = Path(os.environ.get("GROK_BOT_EXECUTABLE", str(Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Grok Bot" / "Grok Bot.exe")))
 ARTIFACT_ROOT = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "director-orchestrator" / "grok-bot"
 VERDICT = re.compile(r"(?m)^VERDICT: ACCEPT \| CHANGES_REQUIRED \| SERIOUS_SAFETY_STOP bound to [0-9a-f]{40}\s*$")
+# An author packet asks Grok Bot for a patch against an exact base commit; its reply is read back
+# with grok_bot_read_reply (copy_code true saves each code block's exact text).
+AUTHOR = re.compile(r"(?m)^AUTHOR: PATCH-B64 bound to [0-9a-f]{40}\s*$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -53,7 +56,7 @@ def status() -> dict:
     }
 
 
-def dispatch(action: str, **options: str) -> dict:
+def dispatch(action: str, flags: tuple[str, ...] = (), **options: str) -> dict:
     ready, reason = script_ready()
     if not ready:
         raise ValueError(reason)
@@ -63,6 +66,7 @@ def dispatch(action: str, **options: str) -> dict:
                "-File", str(SCRIPT), "-Action", action, "-Executable", str(APP)]
     for key, value in options.items():
         command.extend([f"-{key}", value])
+    command.extend(f"-{flag}" for flag in flags)
     result = subprocess.run(command, capture_output=True, text=True, timeout=45, check=False)
     if result.returncode:
         # PowerShell errors can contain local packet paths. Keep the MCP error bounded.
@@ -80,8 +84,8 @@ def paste(packet_path: str) -> dict:
     if not 0 < len(raw) <= 24_000 or any(b > 127 for b in raw):
         raise ValueError("packet must be nonempty ASCII of at most 24 KB")
     text = raw.decode("ascii")
-    if not VERDICT.search(text):
-        raise ValueError("packet requires a whole-line exact-SHA VERDICT template")
+    if not (VERDICT.search(text) or AUTHOR.search(text)):
+        raise ValueError("packet requires a whole-line exact-SHA VERDICT template or AUTHOR line")
     if re.search(r"(?im)(?:api[_ -]?key|secret|password|authorization)\s*[:=]", text):
         raise ValueError("packet appears to contain credentials")
     return dispatch("paste", Packet=str(packet))
@@ -108,6 +112,16 @@ def send(digest: str, preview_sha256: str) -> dict:
     return dispatch("send", Digest=digest)
 
 
+def read_reply(digest: str, copy_code: bool) -> dict:
+    if not HEX64.fullmatch(digest):
+        raise ValueError("digest must be lowercase SHA-256")
+    if not isinstance(copy_code, bool):
+        raise ValueError("copy_code must be true or false")
+    if not (ARTIFACT_ROOT / f"{digest}.sent.json").is_file():
+        raise ValueError("that packet was never sent")
+    return dispatch("read", flags=("CopyCode",) if copy_code else (), Digest=digest)
+
+
 TOOLS = [
     ("grok_bot_status", {}, True, "Report desktop route readiness without input."),
     ("grok_bot_focus", {}, True, "Report current keyboard focus without input."),
@@ -117,6 +131,8 @@ TOOLS = [
      "Get the full-display paste preview path and SHA-256 for human inspection."),
     ("grok_bot_send_review", {"digest": {"type": "string"}, "preview_sha256": {"type": "string"}}, False,
      "Send a previously previewed review packet once to Grok Bot."),
+    ("grok_bot_read_reply", {"digest": {"type": "string"}, "copy_code": {"type": "boolean"}}, False,
+     "Read Grok Bot's reply to a sent packet without typing; copy_code saves each code block's exact text."),
 ]
 
 
@@ -127,6 +143,7 @@ def call(name: str, args: dict) -> dict:
         "grok_bot_paste_review": lambda: paste(args["packet_path"]),
         "grok_bot_review_preview": lambda: preview(args["digest"]),
         "grok_bot_send_review": lambda: send(args["digest"], args["preview_sha256"]),
+        "grok_bot_read_reply": lambda: read_reply(args["digest"], args["copy_code"]),
     }
     if name not in functions:
         raise KeyError("unknown Grok Bot tool")

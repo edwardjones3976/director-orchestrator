@@ -15,6 +15,14 @@
 #                                                       (abandon an unsent paste); never sends
 #   grok_bot_chat.ps1 -Action focus                  -> report which process owns keyboard focus;
 #                                                       no input, no clipboard
+#   grok_bot_chat.ps1 -Action read  -Digest <sha256> -> read the reply to a sent packet through UI
+#                                                       Automation (no keys); with -CopyCode, press each
+#                                                       "Copy code" button in the reply and save the exact
+#                                                       code text; the owner's clipboard is restored
+#
+# Author packets (2026-11-12): besides the review VERDICT line, paste accepts the author
+# line "AUTHOR: PATCH-B64 bound to <40-hex base commit>" as a whole line. Such a packet asks
+# Grok Bot for a patch against that commit; the reply is read with -Action read -CopyCode.
 #
 # [[Claude Code | Claude Opus 5 | 2026-09-17 | 00:35 UTC | BEGIN]] focus guard + clipboard restore
 # Two guards added after a keystroke meant for Grok Bot reached the owner's browser
@@ -33,9 +41,11 @@
 # %LOCALAPPDATA%\director-orchestrator\grok-bot\ — never in tracked source.
 [CmdletBinding()]
 param(
-  [Parameter(Mandatory)][ValidateSet("paste", "send", "shot", "clear", "focus")][string]$Action,
+  [Parameter(Mandatory)][ValidateSet("paste", "send", "shot", "clear", "focus", "read")][string]$Action,
   [string]$Packet,
   [string]$Digest,
+  [string]$Expect,
+  [switch]$CopyCode,
   [string]$ArtifactRoot = (Join-Path $env:LOCALAPPDATA "director-orchestrator\grok-bot"),
   [string]$Executable = "C:\Program Files\Grok Bot\Grok Bot.exe",
   [int]$ShotX = 0, [int]$ShotY = -864, [int]$ShotW = 1536, [int]$ShotH = 864
@@ -144,8 +154,10 @@ switch ($Action) {
     # The VERDICT template must be a whole line (nothing before or after it on that line). It is
     # not anchored to the end of the file: packets carry the pre-staged diff after it.
     # [[Claude Code | Claude Opus 5 | 2026-09-19 | 06:40 UTC]]
-    if ($text -notmatch "(?m)^VERDICT: ACCEPT \| CHANGES_REQUIRED \| SERIOUS_SAFETY_STOP bound to [0-9a-f]{40}\s*$") {
-      throw "packet must contain the exact-SHA VERDICT line as a whole line"
+    $isReview = $text -match "(?m)^VERDICT: ACCEPT \| CHANGES_REQUIRED \| SERIOUS_SAFETY_STOP bound to [0-9a-f]{40}\s*$"
+    $isAuthor = $text -match "(?m)^AUTHOR: PATCH-B64 bound to [0-9a-f]{40}\s*$"
+    if (-not ($isReview -or $isAuthor)) {
+      throw "packet must contain the exact-SHA VERDICT line or the AUTHOR line as a whole line"
     }
     $sha = [BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash(
       [Text.Encoding]::UTF8.GetBytes($text))).Replace("-", "").ToLower()
@@ -203,6 +215,77 @@ switch ($Action) {
     $ws.SendKeys("{ENTER}"); Start-Sleep -Seconds 3
     Write-Output "sent=$Digest"
     Write-Output ("after=" + (Invoke-Screenshot (Join-Path $ArtifactRoot "$Digest.after.png")))
+  }
+  "read" {
+    # Read-only for the conversation: no keys are sent and nothing is typed. The reply is found
+    # through UI Automation: the last message group from "You" that holds the packet's first line,
+    # then every following group up to the next "You" group. With -CopyCode, each "Copy code"
+    # button in those groups is invoked (InvokePattern, not a click) and the clipboard text saved;
+    # the browser only writes the clipboard for a focused window, so the window is activated and
+    # focus is proven first, and the owner's clipboard is restored afterwards.
+    if ($Digest -notmatch "^[0-9a-f]{64}$") { throw "-Digest must be the sha256 printed by paste" }
+    $receipt = Join-Path $ArtifactRoot "$Digest.sent.json"
+    $packetCopy = Join-Path $ArtifactRoot "$Digest.packet.txt"
+    if (-not (Test-Path $receipt)) { throw "packet $Digest was never sent; nothing to read" }
+    if (-not (Test-Path $packetCopy)) { throw "no packet copy for $Digest" }
+    $sent = Get-Content -Raw -Encoding UTF8 $receipt | ConvertFrom-Json
+    $first = ((Get-Content -Encoding UTF8 $packetCopy) | Where-Object { $_.Trim() } | Select-Object -First 1).Trim()
+    $process = Get-GrokBot
+    if ([int]$sent.pid -ne $process.Id) { throw "Grok Bot pid changed since the send ($($sent.pid) -> $($process.Id)); read it on screen" }
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+    $A = [System.Windows.Automation.AutomationElement]
+    $T = [System.Windows.Automation.TreeScope]
+    $root = $A::FromHandle($process.MainWindowHandle)
+    $groupCond = New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Group)
+    $groups = @($root.FindAll($T::Descendants, $groupCond) | Where-Object { $_.Current.ClassName -like "*sand-message*" })
+    $start = -1
+    for ($i = $groups.Count - 1; $i -ge 0; $i--) {
+      $n = $groups[$i].Current.Name
+      if ($n.StartsWith("You ") -and $n.Contains($first)) { $start = $i; break }
+    }
+    if ($start -lt 0) { throw "the sent packet is not in the visible transcript (first line '$first'); scroll to it and read again" }
+    $reply = @()
+    for ($i = $start + 1; $i -lt $groups.Count -and -not $groups[$i].Current.Name.StartsWith("You "); $i++) { $reply += $groups[$i] }
+    $textCond = New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text)
+    $lines = foreach ($g in $reply) { foreach ($e in $g.FindAll($T::Descendants, $textCond)) { $e.Current.Name } }
+    $replyText = ($lines -join "`n")
+    $replyPath = Join-Path $ArtifactRoot "$Digest.reply.txt"
+    [IO.File]::WriteAllText($replyPath, $replyText, (New-Object Text.UTF8Encoding $false))
+    Write-Output "reply_groups=$($reply.Count) reply_chars=$($replyText.Length) reply=$replyPath"
+    if ($Expect) { Write-Output ("expect_found=" + [bool]([regex]::IsMatch($replyText, $Expect))) }
+    if ($CopyCode) {
+      $btnCond = New-Object System.Windows.Automation.AndCondition(
+        (New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)),
+        (New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, "Copy code")))
+      $buttons = @(foreach ($g in $reply) { $g.FindAll($T::Descendants, $btnCond) })
+      Write-Output "code_blocks=$($buttons.Count)"
+      if ($buttons.Count -gt 0) {
+        $saved = Read-ClipboardText
+        try {
+          $null = Activate $process
+          Assert-GrokBotFocused $process
+          $k = 0
+          foreach ($b in $buttons) {
+            $k++
+            $sentinel = "grok-bot-read-sentinel-" + [guid]::NewGuid().ToString("N")
+            Set-Clipboard -Value $sentinel
+            $b.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+            $code = $sentinel
+            for ($w = 0; $w -lt 30 -and $code -eq $sentinel; $w++) { Start-Sleep -Milliseconds 100; $code = Get-Clipboard -Raw }
+            if ($code -eq $sentinel) { throw "code block $k did not reach the clipboard (is the window focused?)" }
+            $codePath = Join-Path $ArtifactRoot "$Digest.code-$k.txt"
+            [IO.File]::WriteAllText($codePath, $code, (New-Object Text.UTF8Encoding $false))
+            $h = [BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash(
+              [Text.Encoding]::UTF8.GetBytes($code))).Replace("-", "").ToLower()
+            Write-Output "code_$k=$codePath chars=$($code.Length) sha256=$h"
+          }
+        } finally {
+          $clip = Restore-ClipboardText $saved
+          Write-Output "clipboard=$clip"
+        }
+      }
+    }
   }
 }
 # [[Claude Code | Claude Opus 5 | 2026-09-12 | 17:20 UTC | END]]
