@@ -1,0 +1,2 @@
+# PLAN20 Case 11 frozen fixtures: preserve exact CRLF bytes on all platforms.
+tests/fixtures/plan20/case-11/** -text

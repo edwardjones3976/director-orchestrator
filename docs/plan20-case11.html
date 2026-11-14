@@ -18,12 +18,12 @@ candidate evidence. The entry does not call the inert baseline driver.</p>
 <h2>Run the entry</h2>
 <p>From the assigned isolated worktree in Windows Command Prompt:</p>
 <pre><code>set PYTHONPATH=src
-C:\Users\edwar\director-orchestrator\.venv-win\Scripts\python.exe -B -m unittest -v tests.test_plan20_case11</code></pre>
+%USERPROFILE%\director-orchestrator\.venv-win\Scripts\python.exe -B -m unittest -v tests.test_plan20_case11</code></pre>
 <p>The runtime used for this slice is Python 3.12.10. The entry needs the existing
 project dependencies, but no database, live model, provider call or service.
 Related coverage:</p>
-<pre><code>C:\Users\edwar\director-orchestrator\.venv-win\Scripts\python.exe -B -m unittest -v tests.test_plan20_case11 tests.test_primary_completion tests.test_packet_contracts
-C:\Users\edwar\director-orchestrator\.venv-win\Scripts\python.exe -B -m unittest -v tests.test_completion_gate_runtime</code></pre>
+<pre><code>%USERPROFILE%\director-orchestrator\.venv-win\Scripts\python.exe -B -m unittest -v tests.test_plan20_case11 tests.test_primary_completion tests.test_packet_contracts
+%USERPROFILE%\director-orchestrator\.venv-win\Scripts\python.exe -B -m unittest -v tests.test_completion_gate_runtime</code></pre>
 <h2>What the entry verifies</h2>
 <p>The byte-identical frozen input and expected-evidence documents live in
 <code>tests/fixtures/plan20/case-11/</code>. Their SHA-256 values are checked before
