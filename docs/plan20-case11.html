@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PLAN 20 Case 11 native completion entry</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<main>
+<h1>PLAN 20 Case 11: changed candidate</h1>
+<p>WO-20261113-008, under DIRECTOR-REBUILD-PLAN20-20261113. This first reviewable
+slice adds a native Python component regression entry for the existing
+<code>PrimaryCompletionServices.exact_sha_review</code> and
+<code>PrimaryCompletionServices.ci_security_completion</code> boundaries.
+No production policy change is needed: those boundaries already reject stale
+candidate evidence. The entry does not call the inert baseline driver.</p>
+<h2>Run the entry</h2>
+<p>From the assigned isolated worktree in Windows Command Prompt:</p>
+<pre><code>set PYTHONPATH=src
+C:\Users\edwar\director-orchestrator\.venv-win\Scripts\python.exe -B -m unittest -v tests.test_plan20_case11</code></pre>
+<p>The runtime used for this slice is Python 3.12.10. The entry needs the existing
+project dependencies, but no database, live model, provider call or service.
+Related coverage:</p>
+<pre><code>C:\Users\edwar\director-orchestrator\.venv-win\Scripts\python.exe -B -m unittest -v tests.test_plan20_case11 tests.test_primary_completion tests.test_packet_contracts
+C:\Users\edwar\director-orchestrator\.venv-win\Scripts\python.exe -B -m unittest -v tests.test_completion_gate_runtime</code></pre>
+<h2>What the entry verifies</h2>
+<p>The byte-identical frozen input and expected-evidence documents live in
+<code>tests/fixtures/plan20/case-11/</code>. Their SHA-256 values are checked before
+each test:</p>
+<ul>
+<li>Input: <code>0f145aaec0d4abcf6bbe288bd5f9288464ce22d1ab0cdcc7e473ad03b9452191</code>.</li>
+<li>Expected evidence: <code>baa75932e8e7496669ab37a4b55f9ee1e925851cf6a398cbc21520f11d832280</code>.</li>
+</ul>
+<p>A has a passed check and an ACCEPT verdict. A positive control first proves
+the native services accept A's matching test evidence. B then receives the same
+evidence: neither its checks nor its review authorize progress. The native
+decisions project to <code>checks=[]</code>, <code>verdict=null</code> and
+<code>releasable=false</code>, exactly matching the frozen expected result.
+Separate controls change only the Git head or only the result digest, and
+rebind B's ledger while leaving A's gate results intact. All remain blocked.
+Historical evidence is retained unchanged; discarding means excluding it from
+the active candidate's eligibility, not deleting receipts.</p>
+<h2>Evidence boundaries</h2>
+<p>The entry reuses the existing completion-service unit fixtures. Its
+VerifiedGateLedger and VerifiedGateResult instances are test-only stand-ins;
+this run does not authenticate a real reviewer, CI run or release. Synthetic
+40-character Git IDs and fixture SHA-256 content digests are distinct bindings.
+The positive A control is local test eligibility only.</p>
+<p>The original fixture remains <code>INERT_MODEL</code> with
+<code>baseline_result=NOT_RUN</code>. Native MODEL-RUN acceptance remains
+<strong>DEFERRED</strong>. Claude's independent exact-candidate verification is
+still required. Ranked trials, Local T7 Warden acceptance and rollout acceptance
+are separate and are not granted by these tests. No merge, deployment or public
+visibility change is part of this slice.</p>
+<p>Custody starts at Git commit
+<code>9cae2d1621812bce43905adced7e6b1ef77d01e5</code>, checkpoint 1947 and the
+retained custody note. The note's candidate-pin receipt
+<code>18f87c8181460c074f0632a38aa124c6a97f53a4596c3f217a6b45f95bf7cc77</code>
+is provenance, not selection or qualification of any ranked candidate.</p>
+</main>
+</body>
+</html>
