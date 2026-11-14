@@ -1,0 +1,8 @@
+---
+description: Owner directive 2026-11-13, scope and context discipline with OpenSpec, Beads and Ponytail
+alwaysApply: true
+---
+
+# Scope and context discipline
+
+Follow `docs/scope-and-context-discipline.html`. Read the assignment's change folder under `openspec/changes/` as the whole brief. Take one unblocked task from `bd ready` per fresh session and store what must survive a handoff with `bd remember`. Before writing code, walk the Ponytail ladder and stop at the first rung that solves the task. Work that is not on the task list is out of scope: stop and ask the issuer. These tools grant no authority and change no gate. Verify the host with `python scripts/check_scope_tools.py`.

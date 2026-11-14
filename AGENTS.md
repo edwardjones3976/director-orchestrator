@@ -444,6 +444,21 @@ no-multi-provider-debate and one-consolidated-update rules are removed by owner 
 [Agent Room](docs/agent-room.html). Host canonical:
 `%USERPROFILE%/Agent-Roles/communication-system.html`.
 
+## Scope and context discipline — owner directive, 2026-11-13
+
+Every provider follows [Scope and context discipline](docs/scope-and-context-discipline.html)
+on Director-Orchestrator engineering assignments. The assignment's change folder under
+`openspec/changes/` is the whole brief; work that is not on its task list is out of scope, so
+stop and ask the issuer. Take one unblocked task from `bd ready` per fresh session and keep
+what must survive a handoff with `bd remember`. Before writing code, walk the Ponytail ladder
+and stop at the first rung that solves the task: need to exist, already in this codebase,
+standard library, native platform feature, installed dependency, one line, then minimum new
+code. Never skip trust-boundary validation, data-loss handling, security or accessibility.
+Each provider installs the tools on its own host and verifies with
+`python scripts/check_scope_tools.py`. These tools record scope and working state only: they
+are not a second queue and grant no assignment, acceptance, merge, spending or deployment
+authority. Orders stay with the Foreman register and every deterministic gate is unchanged.
+
 ## Canonical HTML documentation
 
 Owner direction, 2026-10-03 Pacific: use HTML as the maintained source for the substantial majority of human-facing project documentation, plans, reports, staff records and handoffs. This is not a Markdown-source/HTML-output hybrid. Read [the HTML documentation policy](docs/html-documentation-policy.html) and use [the documentation library](docs/index.html). Keep only machine-required entry points, model prompt contracts and immutable historical evidence in required formats. Update links, consumers and tests together; preserve existing writers and all review/release gates.
