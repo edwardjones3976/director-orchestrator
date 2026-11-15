@@ -1,0 +1,21 @@
+﻿{
+    "schema":  "director-plan20-inert-input/1",
+    "case_id":  11,
+    "mode":  "INERT_MODEL",
+    "name":  "Changed candidate",
+    "acceptance_reference":  "Invalidate the affected checks and verdict after a candidate change.",
+    "input":  {
+                  "candidate_sha256":  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "checks":  [
+                                 {
+                                     "name":  "synthetic-check",
+                                     "candidate_sha256":  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                                     "passed":  true
+                                 }
+                             ],
+                  "verdict":  {
+                                  "candidate_sha256":  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                                  "decision":  "ACCEPT"
+                              }
+              }
+}

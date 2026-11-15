@@ -1,0 +1,14 @@
+﻿{
+    "schema":  "director-plan20-inert-expected/1",
+    "case_id":  11,
+    "mode":  "INERT_MODEL",
+    "expected":  {
+                     "checks":  [
+
+                                ],
+                     "verdict":  null,
+                     "releasable":  false
+                 },
+    "native_acceptance":  "DEFERRED",
+    "baseline_result":  "NOT_RUN"
+}
