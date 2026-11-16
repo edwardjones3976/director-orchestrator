@@ -193,6 +193,7 @@ from .models import (
     AssignmentKind,
     AssignmentOutcome,
     IntakeAuthentication,
+    NeutralIntake,
     ProviderName,
     SlackIntake,
     SlackStatusReceipt,
@@ -3712,12 +3713,17 @@ class DefaultPrimaryApplication:
 
     def create_intake(
         self,
-        intake: SlackIntake,
+        intake: SlackIntake | NeutralIntake,
         *,
         intake_authentication: IntakeAuthentication,
         authenticated_replay_identity: tuple[str, str] | None = None,
         on_dispatch_ready: Callable[[str], None] | None = None,
     ) -> TaskRecord:
+        if isinstance(intake, NeutralIntake):
+            raise ValueError(
+                "HOLD: neutral primary composition is unqualified; owner=Claude Orchestrator; "
+                "checkpoint=qualified neutral admission and delivery adapter review"
+            )
         task_id = "DIR-LG-" + secrets.token_hex(5).upper()
         record = TaskRecord(
             task_id=task_id,

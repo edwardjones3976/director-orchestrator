@@ -81,6 +81,8 @@ from .interactions import (
 )
 from .models import (
     IntakeAuthentication,
+    NeutralIntake,
+    canonical_opaque_identifier_digest,
     LeanExecutionLimits,
     TaskEffectEvidence,
     TaskRecord,
@@ -1398,13 +1400,30 @@ class TaskStore:
         return record, True
 
     def create_signed_slack_intake(
+        self, record: TaskRecord, *, nonce_digest: str, payload_digest: str,
+    ) -> tuple[TaskRecord, bool]:
+        return self.create_signed_intake(
+            record, nonce_digest=nonce_digest, payload_digest=payload_digest,
+        )
+
+    def create_signed_intake(
         self,
         record: TaskRecord,
         *,
         nonce_digest: str,
         payload_digest: str,
     ) -> tuple[TaskRecord, bool]:
-        """Atomically bind one paid Slack intake to its durable replay identity."""
+        """Atomically bind signed intake using the existing durable claim ledger."""
+
+        source_event_id = record.intake.source_event_id
+        if isinstance(record.intake, NeutralIntake):
+            if record.intake_authentication != IntakeAuthentication.NEUTRAL_GATEWAY_ATTESTED:
+                raise SlackIntakeReplayConflict("Neutral intake authentication mismatch")
+            # The historical table name is retained; neutral claims have a separate namespace.
+            source_event_id = "neutral-v2:" + canonical_opaque_identifier_digest(json.dumps(
+                [record.intake.provider, record.intake.source_event_id],
+                ensure_ascii=True, separators=(",", ":"),
+            ))
 
         if (
             len(nonce_digest) != 64
@@ -1423,14 +1442,14 @@ class TaskStore:
             source_claim = connection.execute(
                 """SELECT * FROM slack_intake_claims
                 WHERE source_event_id = ? ORDER BY claimed_at, nonce_digest LIMIT 1""",
-                (record.intake.source_event_id,),
+                (source_event_id,),
             ).fetchone()
 
             for claim in (nonce_claim, source_claim):
                 if claim is None:
                     continue
                 if (
-                    claim["source_event_id"] != record.intake.source_event_id
+                    claim["source_event_id"] != source_event_id
                     or claim["payload_digest"] != payload_digest
                 ):
                     raise SlackIntakeReplayConflict(
@@ -1455,7 +1474,7 @@ class TaskStore:
                         ) VALUES (?, ?, ?, ?, ?)""",
                         (
                             nonce_digest,
-                            record.intake.source_event_id,
+                            source_event_id,
                             payload_digest,
                             authoritative_claim["task_id"],
                             datetime.now(timezone.utc).isoformat(),
@@ -1465,7 +1484,7 @@ class TaskStore:
 
             legacy_task = connection.execute(
                 "SELECT * FROM tasks WHERE source_event_id = ?",
-                (record.intake.source_event_id,),
+                (source_event_id,),
             ).fetchone()
             if legacy_task is not None:
                 stored = self._record_from_row(connection, legacy_task)
@@ -1482,7 +1501,7 @@ class TaskStore:
                     ) VALUES (?, ?, ?, ?, ?)""",
                     (
                         nonce_digest,
-                        record.intake.source_event_id,
+                        source_event_id,
                         payload_digest,
                         stored.task_id,
                         datetime.now(timezone.utc).isoformat(),
@@ -1497,7 +1516,7 @@ class TaskStore:
                 ) VALUES (?, ?, ?, ?, ?, ?, 'complete')""",
                 (
                     record.task_id,
-                    record.intake.source_event_id,
+                    source_event_id,
                     record.status.value,
                     self._record_json_without_effect_projection(record),
                     record.created_at.isoformat(),
@@ -1521,7 +1540,7 @@ class TaskStore:
                 ) VALUES (?, ?, ?, ?, ?)""",
                 (
                     nonce_digest,
-                    record.intake.source_event_id,
+                    source_event_id,
                     payload_digest,
                     record.task_id,
                     datetime.now(timezone.utc).isoformat(),

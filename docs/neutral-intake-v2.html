@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PLAN20 M2 neutral intake source candidate</title>
+<main>
+<h1>Provider-neutral signed intake: source candidate</h1>
+<p>WO-20261115-015 adds a bounded <code>POST /v2/intake</code> source slice. It does not
+qualify a live adapter, complete M2, promote a framework, or authorize execution.</p>
+<h2>Request and proof</h2>
+<p>The strict JSON request contains <code>intake</code> and <code>gateway_proof</code>.
+Intake carries the original provider, actor_id, recipient_id (director-orchestrator),
+source_event_id, conversation_id, bounded text, received_at and deadline_at.
+Both timestamps require timezones; the deadline follows receipt. There are no caller role or
+administrator fields. Unknown fields and oversized text are rejected, never truncated.</p>
+<p>The existing configured gateway signing boundary is reused, with no new key or configuration.
+The existing bearer check remains necessary and insufficient. The gateway must independently
+establish the native actor and its mapping to the existing configured owner identity
+(currently named SLACK_OWNER_USER_ID). A provider label is signed provenance, never a role grant.
+This candidate does not qualify that mapping for a live workspace.</p>
+<p>Proof fields are version (director-neutral-intake-v2), issued_at (integer seconds), nonce and
+signature. HMAC-SHA256 uses the existing distinct gateway secret. Its canonical JSON envelope
+contains version, method POST, path /v2/intake, issued_at, nonce and body_digest. The body digest
+is SHA256 of the complete validated intake JSON. Canonical JSON uses ensure_ascii=true,
+sort_keys=true and separators comma/colon without spaces. Time and nonce limits match the
+established gateway protocol. Native actor, provider, recipient, event, conversation, text and
+deadline are consequently bound. Cross-transport signatures fail; /v1 signing bytes are unchanged.</p>
+<h2>Persistence and HOLD</h2>
+<p>The existing TaskStore signed-claim transaction (BEGIN IMMEDIATE) binds nonce, source, payload
+and task atomically. The historical slack_intake_claims table name is retained without a schema
+change; it does not determine authentication. Neutral task records use neutral_gateway_attested.
+The neutral source key is namespaced and derived from the native provider and event; the original
+unmodified identity and deadline remain in record JSON. Changed conversation, text or deadline on
+that event conflicts, including after restart. Exact duplicates and newly signed identical events
+return the original task. Neutral nonces have a distinct cryptographic namespace.</p>
+<p>With the rollback store active, a valid request returns HTTP 202 with the durable task in
+OWNER_DECISION_REQUIRED and an explicit HOLD naming Claude Orchestrator and the qualified
+neutral admission/delivery adapter review checkpoint. It schedules no background work, grants
+no standing authorization and reserves no execution budget. Existing engine recovery refuses
+neutral execution before planning or effects. These records are not a new queue.</p>
+<p>When primary activation or its shared PostgreSQL fence is configured, the route returns HTTP 503
+HOLD before task admission. Direct primary creation also refuses neutral requests. This avoids
+silently falling back around primary ownership. PostgreSQL claim classification and neutral
+primary composition remain unimplemented and require separately reviewed work.</p>
+<h2>Communication and acceptance limits</h2>
+<p>This slice accepts bounded quick-message text. The existing intake schemas have no evidence-package
+reference contract; package fields are rejected rather than fetched, inlined or truncated.
+Evidence-package intake remains an adapter/schema qualification dependency. A stored intake is
+not delivery, acknowledgment, substantive response or completion. No interaction transition is
+fabricated and no provider is contacted.</p>
+<p>Local fixtures cover authentication, domain and authority binding, atomic duplicate/conflict
+behavior, restart, deadlines and explicit composition holds. Independent Claude exact-byte review,
+native CI/security, eligible Foreman Git custody, PostgreSQL verification and a real workspace-to-owner
+request remain required. No source writer acceptance, merge or installation is implied.</p>
+</main></html>

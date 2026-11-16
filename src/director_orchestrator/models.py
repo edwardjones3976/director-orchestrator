@@ -125,6 +125,7 @@ class OwnerApprovalSource(StrEnum):
 class IntakeAuthentication(StrEnum):
     BEARER_DRY_RUN = "bearer_dry_run"
     SLACK_GATEWAY_ATTESTED = "slack_gateway_attested"
+    NEUTRAL_GATEWAY_ATTESTED = "neutral_gateway_attested"
 
 
 class RiskLevel(StrEnum):
@@ -379,6 +380,43 @@ def slack_status_text_digest(text: str) -> str:
 
     normalized = text.strip()
     return "sha256:" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+class NeutralIntake(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_event_id: str = Field(min_length=1, max_length=255)
+    provider: str = Field(min_length=1, max_length=64)
+    actor_id: str = Field(min_length=1, max_length=64)
+    recipient_id: Literal["director-orchestrator"]
+    conversation_id: str = Field(min_length=1, max_length=255)
+    text: str = Field(min_length=1, max_length=MAX_SLACK_INTAKE_TEXT)
+    received_at: datetime
+    deadline_at: datetime
+
+    @model_validator(mode="after")
+    def _bounded_times(self) -> NeutralIntake:
+        if self.received_at.tzinfo is None or self.deadline_at.tzinfo is None:
+            raise ValueError("Intake times must include a timezone")
+        if self.deadline_at <= self.received_at:
+            raise ValueError("Intake deadline must follow receipt time")
+        return self
+
+
+class NeutralIntakeProof(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal["director-neutral-intake-v2"] = "director-neutral-intake-v2"
+    issued_at: int = Field(strict=True, ge=0)
+    nonce: str = Field(pattern=r"^[A-Za-z0-9_-]{32,128}$")
+    signature: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class NeutralIntakeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    intake: NeutralIntake
+    gateway_proof: NeutralIntakeProof
 
 
 class SlackStatusReceipt(BaseModel):
@@ -1237,7 +1275,7 @@ class TaskRecord(BaseModel):
 
     task_id: str
     status: TaskStatus
-    intake: SlackIntake
+    intake: SlackIntake | NeutralIntake
     # Missing authentication authority always fails closed. Production Slack
     # intake must explicitly install its authenticated gateway attestation.
     intake_authentication: IntakeAuthentication = (
