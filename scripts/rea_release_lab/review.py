@@ -237,18 +237,52 @@ def _first_present(containers, key):
     return None
 
 
+def _extract_native_limits(side_evidence, normalized):
+    """Collect deduplicated native limitation strings from data and normalized_result."""
+    collected = []
+    seen = set()
+    found = False
+    for container in (side_evidence, normalized):
+        if isinstance(container, dict) and container.get("limitations") is not None:
+            raw_limits = container["limitations"]
+            if isinstance(raw_limits, list):
+                found = True
+                for item in raw_limits:
+                    if isinstance(item, str):
+                        if item not in seen:
+                            seen.add(item)
+                            collected.append(item)
+                    elif item not in collected:
+                        collected.append(item)
+    return collected if found else None
+
+
 def _extract_side_metadata(name, side_evidence):
     normalized = side_evidence.get("normalized_result") or {}
-    containers = (side_evidence, normalized)
+    if not isinstance(normalized, dict):
+        normalized = {}
+    graph = normalized.get("graph")
+    native_coverage = graph.get("coverage") if isinstance(graph, dict) else None
+    graph_coverage = (
+        native_coverage
+        if native_coverage is not None
+        else _first_present((side_evidence, normalized), "graph_coverage")
+    )
+    native_limits = _extract_native_limits(side_evidence, normalized)
+    limits = (
+        native_limits
+        if native_limits is not None
+        else _first_present((side_evidence, normalized), "limits")
+    )
     return {
         "evidence_id": side_evidence.get("evidence_id"),
         "analysis_file": f"{name}-analysis.json",
         "receipt_file": f"{name}-analysis.receipt.json",
         "root_artifact_sha256": normalized.get("root_artifact_sha256"),
-        "source_selection": _first_present(containers, "source_selection"),
-        "graph_coverage": _first_present(containers, "graph_coverage"),
-        "statistics": _first_present(containers, "statistics"),
-        "limits": _first_present(containers, "limits"),
+        "source_selection": _first_present((normalized, side_evidence), "source_selection"),
+        "graph_coverage": graph_coverage,
+        "statistics": _first_present((normalized, side_evidence), "statistics"),
+        "limits": limits,
     }
 
 
@@ -381,11 +415,36 @@ def review(left, right, left_tree, right_tree, output, enhanced=False, source_pa
                 "semantic relationships outside selected files remain unknown, while file-change coverage still uses all inventoried files."
             )
         seen_limits = set(result["limitations"])
-        for side_meta in sides.values():
-            for limit_text in side_meta.get("limits") or ():
-                if isinstance(limit_text, str) and limit_text not in seen_limits:
-                    seen_limits.add(limit_text)
-                    result["limitations"].append(limit_text)
+        missing_coverage_sides = []
+        missing_limits_sides = []
+        for side_name, side_meta in sides.items():
+            coverage = side_meta.get("graph_coverage")
+            if not isinstance(coverage, dict) or not coverage.get("status"):
+                missing_coverage_sides.append(side_name)
+            side_limits = side_meta.get("limits")
+            if side_limits is None:
+                missing_limits_sides.append(side_name)
+            else:
+                for limit_text in side_limits:
+                    if isinstance(limit_text, str) and limit_text not in seen_limits:
+                        seen_limits.add(limit_text)
+                        result["limitations"].append(limit_text)
+        if missing_coverage_sides:
+            msg = (
+                f"REA graph coverage unavailable for {', '.join(missing_coverage_sides)}; "
+                "graph coverage status remains unknown."
+            )
+            if msg not in seen_limits:
+                seen_limits.add(msg)
+                result["limitations"].append(msg)
+        if missing_limits_sides:
+            msg = (
+                f"REA limitations unavailable for {', '.join(missing_limits_sides)}; "
+                "upstream analysis limitations remain unknown."
+            )
+            if msg not in seen_limits:
+                seen_limits.add(msg)
+                result["limitations"].append(msg)
     result["elapsed_seconds"] = time.perf_counter() - started
     (output / "review.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     rows = "".join(

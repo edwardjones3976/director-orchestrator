@@ -55,6 +55,8 @@ def _create_disposable_inputs(base, *, same=False):
 def _fake_subprocess_factory(
     left, right, left_tree, right_tree,
     *, override_left_sha=None, fail_rea_ok=False, include_scope_metadata=False,
+    metadata_shape="native", coverage_status="complete",
+    coverage_limits=None, data_limitations=None, normalized_limitations=None,
 ):
     calls = []
     left_sha = override_left_sha or _sha256_bytes(left.read_bytes())
@@ -107,25 +109,57 @@ def _fake_subprocess_factory(
                 },
             }
             if include_scope_metadata:
-                data["source_selection"] = {
+                source_selection = {
                     "requested_paths": requested,
                     "unselected_files": 85 if requested else 0,
                 }
-                data["graph_coverage"] = {
-                    "status": "complete",
-                    "truncated": False,
+                graph_coverage = {
+                    "status": coverage_status,
+                    "truncated": coverage_status == "partial",
                     "omitted_count": None,
-                    "limits": [],
+                    "limits": list(coverage_limits) if coverage_limits is not None else [],
                 }
-                data["statistics"] = {
+                statistics = {
                     "relevant_files": 87,
                     "parsed_javascript_files": len(requested) if requested else 87,
                 }
-                data["limits"] = [
+                default_limits = [
                     "Caller-selected source analysis leaves 85 inventoried files outside analysis scope."
                     if requested
                     else "Static imports do not prove runtime execution."
                 ]
+                native_data_limits = list(data_limitations) if data_limitations is not None else list(default_limits)
+                native_norm_limits = (
+                    list(normalized_limitations)
+                    if normalized_limitations is not None
+                    else list(default_limits)
+                )
+                if metadata_shape in ("native", "both"):
+                    data["limitations"] = native_data_limits
+                    data["normalized_result"]["source_selection"] = source_selection
+                    data["normalized_result"]["graph"]["coverage"] = graph_coverage
+                    data["normalized_result"]["statistics"] = statistics
+                    data["normalized_result"]["limitations"] = native_norm_limits
+                if metadata_shape in ("legacy", "both"):
+                    data["source_selection"] = {
+                        "requested_paths": requested,
+                        "unselected_files": 999 if metadata_shape == "both" else (85 if requested else 0),
+                    }
+                    data["graph_coverage"] = {
+                        "status": "unknown" if metadata_shape == "both" else coverage_status,
+                        "truncated": False,
+                        "omitted_count": None,
+                        "limits": [],
+                    }
+                    data["statistics"] = {
+                        "relevant_files": 999 if metadata_shape == "both" else 87,
+                        "parsed_javascript_files": len(requested) if requested else 87,
+                    }
+                    data["limits"] = (
+                        ["Legacy alias limit should not override native limitations."]
+                        if metadata_shape == "both"
+                        else list(default_limits)
+                    )
             envelope = {"ok": not fail_rea_ok, "data": data}
             if stdout is not None:
                 stdout.write(json.dumps(envelope).encode("utf-8"))
@@ -439,6 +473,12 @@ class ReaReleaseReviewTest(unittest.TestCase):
                 self.assertIsNone(side["graph_coverage"])
                 self.assertIsNone(side["statistics"])
                 self.assertIsNone(side["limits"])
+            joined_limits = " ".join(report["limitations"]).lower()
+            self.assertIn("coverage", joined_limits)
+            self.assertIn("limitations", joined_limits)
+            self.assertIn("unavailable", joined_limits)
+            index_html = (output / "index.html").read_text(encoding="utf-8")
+            self.assertIn("unavailable", index_html.lower())
 
         with tempfile.TemporaryDirectory() as tmp_same:
             base_same = Path(tmp_same)
@@ -514,6 +554,108 @@ class ReaReleaseReviewTest(unittest.TestCase):
             with patch.object(review_mod.subprocess, "run", side_effect=fake_diffoscope):
                 report = review_mod.review(left, right, left_tree, right_tree, output)
             self.assertEqual(report["changed_paths"], [".webpack/sfw/a.js", ".webpack/sfw/b.js"])
+
+    def test_native_metadata_shape_budget_and_unknown_limitations_reach_report_and_html(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            left, right, left_tree, right_tree = _create_disposable_inputs(base)
+            output = base / "out-native-meta"
+            budget_limits = [
+                {
+                    "name": "javascript_semantic_alias_selections",
+                    "value": 512,
+                    "unit": "items",
+                },
+                {
+                    "name": "javascript_semantic_primitive_bytes",
+                    "value": 1048576,
+                    "unit": "bytes",
+                },
+            ]
+            data_lim = (
+                "Alias selection expansion was conservatively bounded "
+                "(maximum 512 additional selector states); selected paths remain unknown."
+            )
+            norm_lim = (
+                "Primitive string-byte budget exceeded (maximum 1048576 estimated JSON bytes) "
+                "<script>alert('x')</script> & unknown."
+            )
+            _, fake_run = _fake_subprocess_factory(
+                left, right, left_tree, right_tree,
+                include_scope_metadata=True,
+                metadata_shape="native",
+                coverage_status="partial",
+                coverage_limits=budget_limits,
+                data_limitations=[data_lim],
+                normalized_limitations=[data_lim, norm_lim],
+            )
+            with patch.object(review_mod.subprocess, "run", side_effect=fake_run):
+                report = review_mod.review(
+                    left, right, left_tree, right_tree, output, enhanced=True,
+                )
+
+            scope = report["analysis_scope"]
+            self.assertEqual(scope["semantic_relationship_coverage"], "partial")
+            for side_name in ("left", "right"):
+                side = scope["sides"][side_name]
+                self.assertEqual(side["graph_coverage"]["status"], "partial")
+                self.assertEqual(side["graph_coverage"]["limits"], budget_limits)
+                self.assertEqual(side["statistics"]["relevant_files"], 87)
+                self.assertEqual(side["limits"], [data_lim, norm_lim])
+                self.assertNotIn("graph", side)
+
+            self.assertIn(data_lim, report["limitations"])
+            self.assertIn(norm_lim, report["limitations"])
+
+            index_html = (output / "index.html").read_text(encoding="utf-8")
+            self.assertIn(data_lim, index_html)
+            self.assertIn("&lt;script&gt;alert(&#x27;x&#x27;)&lt;/script&gt; &amp; unknown.", index_html)
+            self.assertNotIn("<script>alert('x')</script>", index_html)
+            self.assertIn('<a href="left-analysis.json">left analysis</a>', index_html)
+            self.assertIn('<a href="right-analysis.json">right analysis</a>', index_html)
+            self.assertIn('<a href="rea-comparison.json">REA comparison</a>', index_html)
+
+    def test_native_metadata_precedence_and_legacy_alias_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            left, right, left_tree, right_tree = _create_disposable_inputs(base)
+
+            out_both = base / "out-both"
+            _, fake_both = _fake_subprocess_factory(
+                left, right, left_tree, right_tree,
+                include_scope_metadata=True,
+                metadata_shape="both",
+                coverage_status="partial",
+                data_limitations=["Native limitation wins."],
+                normalized_limitations=["Native limitation wins."],
+            )
+            with patch.object(review_mod.subprocess, "run", side_effect=fake_both):
+                both_report = review_mod.review(
+                    left, right, left_tree, right_tree, out_both, enhanced=True,
+                )
+            self.assertEqual(both_report["analysis_scope"]["semantic_relationship_coverage"], "partial")
+            left_both = both_report["analysis_scope"]["sides"]["left"]
+            self.assertEqual(left_both["graph_coverage"]["status"], "partial")
+            self.assertEqual(left_both["source_selection"]["unselected_files"], 0)
+            self.assertEqual(left_both["statistics"]["relevant_files"], 87)
+            self.assertEqual(left_both["limits"], ["Native limitation wins."])
+            self.assertNotIn("Legacy alias limit should not override native limitations.", both_report["limitations"])
+
+            out_legacy = base / "out-legacy"
+            _, fake_legacy = _fake_subprocess_factory(
+                left, right, left_tree, right_tree,
+                include_scope_metadata=True,
+                metadata_shape="legacy",
+                coverage_status="complete",
+            )
+            with patch.object(review_mod.subprocess, "run", side_effect=fake_legacy):
+                legacy_report = review_mod.review(
+                    left, right, left_tree, right_tree, out_legacy, enhanced=True,
+                )
+            self.assertEqual(legacy_report["analysis_scope"]["semantic_relationship_coverage"], "complete")
+            left_legacy = legacy_report["analysis_scope"]["sides"]["left"]
+            self.assertEqual(left_legacy["graph_coverage"]["status"], "complete")
+            self.assertEqual(left_legacy["limits"], ["Static imports do not prove runtime execution."])
 
 
 if __name__ == "__main__":
