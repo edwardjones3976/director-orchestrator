@@ -19,11 +19,13 @@ GitHub state and the site work board before acting; this page is an assignment
 plan, not evidence that a provider ran or that a PR passed its gates.</p>
 
 <h2>Leadership and team boundaries</h2>
-<p>OpenAI Director owns outcomes and priority arbitration. OpenAI Orchestrator
+<p>OpenAI Director owns outcomes and priority arbitration. Claude, as Orchestrator,
 coordinates overlap resolution, approved execution and integration sequencing,
-including task-fit provider/model/effort routing. Claude is the sole Foreman for
-intake, work orders and repair directions. Cursor is Warden for PR and issue
-tracking, review and disposition.
+including task-fit provider/model/effort routing. Cursor is the sole Foreman for
+repair intake, repair work orders and repair directions. Owner, 2026-11-11: Cursor Foreman also handles all
+GitHub and Git operations, including PR and issue tracking, disposition and merges.
+The local LLM (T7) is Warden for exact-head review and gate verdicts, which the
+Foreman posts through the local Warden GitHub bridge (runtime adoption pending).
 Each administrator leads two roster providers. Grok Bot remains a separate
 desktop contact and is available only through its guarded route; it is not a
 second independent xAI family. Perplexity and Firecrawl perform public research
@@ -66,7 +68,7 @@ every deterministic review, security, CI, budget, and merge gate still runs.</p>
 <tr><td><a href="https://github.com/edwardjones3976/director-orchestrator/issues/287">#287 Deferred scorecard P2s</a></td><td>Claude</td><td>Reconcile successor history, plan policy, intake claims, and payload rendering against the current #264 head.</td></tr>
 <tr><td><a href="https://github.com/edwardjones3976/director-orchestrator/issues/299">#299 Site coordination</a></td><td>Codex</td><td>Refresh exact-head claims, CI runner status, PR handoffs, and the generated board; do not alter unrelated project decisions in its history.</td></tr>
 <tr><td><a href="https://github.com/edwardjones3976/director-orchestrator/issues/313">#313 Trusted scorecard</a></td><td>Claude</td><td>Establish independent collectors for checks 07, 08, 11, 12, 15, 17, and 20 before 20/20 completion.</td></tr>
-<tr><td><a href="https://github.com/edwardjones3976/director-orchestrator/issues/316">#316 Antigravity headless dispatch</a></td><td>OpenAI Orchestrator / Claude Foreman</td><td>Keep authoring disabled; reconcile the existing five failed runs, then coordinate a bounded Claude-issued Foreman repair order with research checkpoint.</td></tr>
+<tr><td><a href="https://github.com/edwardjones3976/director-orchestrator/issues/316">#316 Antigravity headless dispatch</a></td><td>Claude Orchestrator / Cursor Foreman</td><td>Keep authoring disabled; reconcile the existing five failed runs, then coordinate a bounded Cursor-issued Foreman repair order with research checkpoint.</td></tr>
 </tbody>
 </table>
 
@@ -96,7 +98,7 @@ every deterministic review, security, CI, budget, and merge gate still runs.</p>
 The owner identified blackbox as the desktop runner host; this session is on
 blacktop. Blacktop showed no local GitHub runner service or process in the
 bounded diagnostic. Do not represent queued checks as passed or rerun blindly.
-OpenAI Orchestrator owns coordinating blackbox runner recovery and verifying a
+The Orchestrator (Claude since 10 November 2026) owns coordinating blackbox runner recovery and verifying a
 current-head check with the blackbox host operator. Every open draft PR remains
 CI-blocked until its required checks run and pass; do not infer that moving
 work to blacktop fixes the blackbox runner installation.

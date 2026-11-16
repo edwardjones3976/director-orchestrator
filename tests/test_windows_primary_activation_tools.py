@@ -1910,10 +1910,16 @@ Write-Output 'slot-checks-passed'
         self.assertIn("@AGENTS.md", visible)
         normalized = " ".join(claude.replace("**", "").split())
         self.assertIn("Claude is administrator #2", normalized)
-        self.assertIn("OpenAI retains the distinct Director and Orchestrator roles", normalized)
-        self.assertIn("Claude is the sole Foreman", normalized)
-        self.assertIn("Cursor is Warden", normalized)
-        self.assertIn("OpenAI Orchestrator selects and reassesses the optimal eligible provider model and effort", normalized)
+        # Owner appointment 2026-11-10: OpenAI Director; Claude Orchestrator;
+        # Cursor Foreman; local LLM (T7) Warden.
+        self.assertRegex(normalized, r"\bOpenAI\b[^.]{0,60}\bDirector\b")
+        self.assertRegex(normalized, r"\bClaude\b[^.]{0,60}\bOrchestrator\b")
+        self.assertRegex(normalized, r"\bCursor\b[^.]{0,60}\bForeman\b")
+        self.assertRegex(normalized, r"\b(?:local LLM|T7)\b[^.]{0,80}\bWarden\b")
+        for stale in ("Claude is the sole Foreman", "Cursor is Warden", "OpenAI Orchestrator",
+                      "OpenAI retains the distinct Director and Orchestrator roles"):
+            self.assertNotIn(stale, normalized)
+        self.assertIn("selects and reassesses the optimal eligible provider model and effort", normalized)
         self.assertIn("low, medium and high all available by task fit", normalized)
         self.assertNotIn("Claude the Director for completing Director-Orchestrator", normalized)
         self.assertNotIn("no standing director role", normalized.lower())

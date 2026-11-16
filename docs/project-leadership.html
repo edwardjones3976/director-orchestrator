@@ -11,7 +11,7 @@
 <body>
 <a class="skip-link" href="#content">Skip to content</a>
 <header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
-<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#administrators-and-chain-of-command">Administrators and chain of command</a></li><li class="sub"><a href="#current-director-orchestrator-completion-appointment">Current Director-Orchestrator appointments</a></li><li class="top"><a href="#owner-appointed-succession-and-daily-briefing">Owner-appointed succession and daily briefing</a></li><li class="top"><a href="#investigator-responsibility">INVESTIGATOR responsibility</a></li><li class="top"><a href="#warden-responsibility">WARDEN responsibility</a></li><li class="top"><a href="#director-maintenance-routing">Director maintenance routing</a></li><li class="top"><a href="#runtime-coordination-status-and-responsibilities">Runtime coordination status and responsibilities</a></li><li class="top"><a href="#allocation">Allocation</a></li><li class="top"><a href="#runtime-and-historical-compatibility">Runtime and historical compatibility</a></li><li class="top"><a href="#handoffs">Handoffs</a></li></ul></details></nav>
+<nav class="toc" aria-label="On this page"><details><summary>On this page</summary><ul><li class="top"><a href="#administrators-and-chain-of-command">Administrators and chain of command</a></li><li class="sub"><a href="#current-director-orchestrator-completion-appointment">Current Director-Orchestrator appointments (2026-11-10)</a></li><li class="top"><a href="#owner-appointed-succession-and-daily-briefing">Owner-appointed succession and daily briefing</a></li><li class="top"><a href="#investigator-responsibility">INVESTIGATOR responsibility</a></li><li class="top"><a href="#warden-responsibility">WARDEN responsibility</a></li><li class="top"><a href="#director-maintenance-routing">Director maintenance routing</a></li><li class="top"><a href="#runtime-coordination-status-and-responsibilities">Runtime coordination status and responsibilities</a></li><li class="top"><a href="#allocation">Allocation</a></li><li class="top"><a href="#runtime-and-historical-compatibility">Runtime and historical compatibility</a></li><li class="top"><a href="#handoffs">Handoffs</a></li></ul></details></nav>
 <main id="content">
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-27 | 03:40 UTC | BEGIN]] -->
 <!-- [[Claude Code | Claude Opus 5.5 | 2026-09-26 | 21:35 UTC | BEGIN]] -->
@@ -36,16 +36,18 @@ assignments. This decision applies to new project
 coordination immediately; existing authorship and execution evidence remain
 attributed to the provider that actually produced them.</p>
 <p>Historical coordination decisions remain recorded as evidence only. OpenAI Director
-owns Director-Orchestrator outcomes, priorities and owner escalation. OpenAI
-Orchestrator coordinates approved execution, dependencies, resources, handoffs and
-status. Claude is the sole Foreman for intake, work-order issuance and repair
-directions. Cursor is Warden for evidence-based PR and issue oversight. This policy
-update does not claim that a deployed runtime provider changed in production.</p>
+owns Director-Orchestrator outcomes, priorities, acceptance evidence, owner
+escalation and general work orders. Claude Orchestrator coordinates admission and
+approved execution, dependencies, resources, handoffs and status. Cursor is the
+sole Foreman for repair intake, repair work orders and repair directions. The
+local LLM (candidate T7) is Warden for independent exact-head review and gate
+verdicts; the Foreman handles all GitHub and Git operations (owner, 2026-11-11). This
+policy update does not claim that a deployed runtime provider changed in production.</p>
 <h2 id="administrators-and-chain-of-command">Administrators and chain of command</h2>
 <p><strong>Foreman tools:</strong> use <a href="site-coordination.html#rea-investigations">REA MCP with the installed reverse-engineer-anything skill</a> for questions about shipped artifacts or runtime behavior that source does not establish. Tool availability does not expand an assignment or establish engine readiness.</p>
-<p><strong>Project maintenance:</strong> OpenAI Orchestrator coordinates ongoing worktree and GitHub repository upkeep, dependencies and shared resources. Cursor Warden owns Director-Orchestrator PR and issue tracking, review and disposition within its appointment. Follow <a href="site-coordination.html#project-maintenance">the maintenance procedure</a>, preserving accountable sessions, recoverable work, current review and release gates.</p>
+<p><strong>Project maintenance:</strong> Claude Orchestrator coordinates ongoing worktree and GitHub repository upkeep, dependencies and shared resources. Owner, 2026-11-11: Cursor Foreman handles all Director-Orchestrator GitHub and Git operations, including PR and issue tracking and disposition, merges and issue closure or reopening; when no eligible merger exists, it keeps tracking and asks the Orchestrator to route an eligible reviewer or merger. The local LLM Warden supplies exact-head review and gate verdicts through the Foreman-run local Warden GitHub bridge. Follow <a href="site-coordination.html#project-maintenance">the maintenance procedure</a>, preserving accountable sessions, recoverable work, current review and release gates.</p>
 <p><strong>Provider-owned repairs:</strong> since 8 November 2026 the finding provider repairs its own defects. Repair orders arise only from a qualifying <a href="repair-ownership-policy.html">repair note</a>: no solution reached, or three failed attempts on the same issue.</p>
-<p><strong>Repair authority:</strong> Claude is the full-time and sole Foreman. Claude converts repair findings into mandatory, bounded instructions and resolves conflicting repair directions. OpenAI Orchestrator coordinates issued orders and does not create a competing intake or assignment queue. Providers may propose alternatives or skipped steps but wait for an issued Claude revision. Ordinary assignments retain judgment. No absence, silence or fallback transfers the Foreman appointment; only an explicit owner reassignment does. See <a href="foreman-repair-work-orders.html#authority">the repair authority boundary</a>. Homemade LLM and other project appointments are unchanged.</p>
+<p><strong>Repair authority:</strong> Cursor is the full-time and sole Foreman. Cursor converts repair findings into mandatory, bounded instructions and resolves conflicting repair directions. Claude Orchestrator coordinates issued orders and does not create a competing intake or assignment queue. Providers may propose alternatives or skipped steps but wait for an issued Foreman revision. Ordinary assignments retain judgment. No absence, silence or fallback transfers the Foreman appointment; only an explicit owner reassignment does. See <a href="foreman-repair-work-orders.html#authority">the repair authority boundary</a>. Homemade LLM and other project appointments are unchanged.</p>
 <p>Owner clarification, 2026-10-02: <strong>the three provider administrators are
 ChatGPT/Codex, Claude and Cursor. Cursor is an administrator, not a non-admin
 provider.</strong> The owner sits above the administrator team.</p>
@@ -104,24 +106,71 @@ assigned workers, including Astra Light, Codex Cloud Worker and Copilot, retain
 their own identities and assignments rather than gaining an administrator seat
 from a provider-family name. Project participation and provider availability are
 separate from administrator status.</p>
-<h3 id="current-director-orchestrator-completion-appointment">Current Director-Orchestrator appointments</h3>
-<p>The owner appointed <strong>OpenAI as Director and distinct Orchestrator, Claude as
-the full-time sole Foreman, Cursor as Warden, and Antigravity as Secretary</strong>.
-Director owns outcomes, priorities and accountability. Orchestrator coordinates
-approved execution, dependencies, resources, handoffs and status without creating
-a competing intake or assignment queue. Claude alone issues Foreman work orders and
-repair directions. Cursor independently tracks, reviews and disposes of PRs and
-issues within its appointment. This assignment excludes Homemade LLM and every
+<h3 id="current-director-orchestrator-completion-appointment">Current Director-Orchestrator appointments (2026-11-10)</h3>
+<p>By direct owner instruction effective 2026-11-10 (America/Los_Angeles), the owner
+appointed <strong>OpenAI as Director, Claude as Orchestrator, Cursor as the full-time
+sole Foreman, the local LLM (candidate T7) as Warden, and Antigravity as
+Secretary</strong>. All roles took effect at once. The host receipt is
+<code>%USERPROFILE%/Agent-Roles/leadership-appointment-20261110.json</code>. It supersedes
+the 2026-10-26 appointment of OpenAI Director and Orchestrator, Claude Foreman and
+Cursor Warden, which remains historical record.</p>
+<ul>
+<li><strong>OpenAI, Director (only):</strong> overall lead, direction, priorities,
+acceptance evidence and accountability; issues general work orders for any
+eligible provider; remains accountable for the daily provider work logs.</li>
+<li><strong>Claude, Orchestrator:</strong> admission and coordination of approved
+execution: routing, workforce, dependencies, shared resources, cumulative
+attempts, handoffs, monitoring and adaptive provider-model and reasoning-effort
+selection. Claude keeps its Investigator, Quality Lead and Verification roles and
+is no longer Foreman. It cannot verify or approve Claude-authored work by
+switching roles.</li>
+<li><strong>Cursor, sole Foreman:</strong> repair intake, repair work orders, repair
+assignment issuance and repair directions. Cursor is no longer Warden. Owner,
+2026-11-11: Cursor also handles all GitHub and Git operations: PR and issue
+tracking and disposition, review requests and verdict posting, request-changes
+and approvals it is eligible to give, merges after the gates and the Warden
+verdict pass, evidenced issue closure or reopening (issues are not merged), and
+branches. Cursor may merge jointly authored work at any contribution share when
+another author has a genuine recorded contribution, but never work wholly
+authored by Cursor. When no eligible merger exists, it keeps tracking and asks
+the Claude Orchestrator to route an eligible reviewer or merger.</li>
+<li><strong>Local LLM, Warden:</strong> held by candidate T7 (Ollama tag
+<code>local-warden:t7-ckpt153-q8</code>, GGUF SHA256
+<code>a591df1e893a25ccbf76987d34d9b88d629494a81d479bc7f1fb195fdde670f5</code>). Owner,
+2026-11-11: the Warden keeps independent evidence-based oversight: exact-head
+review, findings and gate verdicts (PASS, HOLD, FAIL, CORROBORATION_REQUIRED).
+It never operates GitHub or Git. The Foreman hands it PRs and posts its verdicts
+through the local Warden GitHub bridge
+(<code>%USERPROFILE%/Local-Warden-Bridge/warden_github_bridge.py</code>), which gathers evidence
+mechanically, runs the bound T7 request and checks that the verdict holds when the
+evidence is reordered. Asked for an action level, the bridge can also post the verdict
+or submit the Warden's formal review, each behind its own gates and never after the
+head moved. Its merge is switched off for this repository, and it never closes issues,
+pushes or changes branches. The PR and issue disposition, merge and
+coauthor merge exception given to the Warden on 2026-11-10 belong to the Foreman.
+Runtime and tool adoption is <code>PENDING_TOOL_AND_RUNTIME_BINDING</code>
+and hardware qualification is <code>PENDING</code>; until runtime is evidenced, a
+Warden verdict that cannot run is BLOCKED, not reassigned, and never attributed to
+T7. This page does not claim that T7 has performed any review.</li>
+<li><strong>Antigravity, Secretary</strong> and <strong>GitHub Copilot, GitHub Issues
+Specialist</strong> are unchanged. The administrators remain OpenAI, Claude and
+Cursor.</li>
+</ul>
+<p>Every independence, exact-candidate, CI, security, budget, permission,
+active-writer and cumulative-attempt gate is unchanged, and no role permits
+self-approval. Unavailability does not transfer any appointed role; only an
+explicit owner reassignment does. This assignment excludes Homemade LLM and every
 other project; their appointments are unchanged.</p>
-<p><strong>Adaptive routing is an OpenAI Orchestrator responsibility.</strong> At task entry
+<p><strong>Adaptive routing is a Claude Orchestrator responsibility.</strong> At task entry
 and meaningful checkpoints, the Orchestrator selects the task-fit provider, model
 and low, medium or high reasoning effort; distinguishes reasoning failures from
 missing inputs, tools, environment, permission, quota and ambiguous effects; and
 uses at most one automatic quality escalation. Requested, published and executed
 settings remain separate evidence states. An unavailable provider does not transfer
-an appointed role. The <a href="https://github.com/edwardjones3976/director-orchestrator/issues/299#issuecomment-6411656151">current appointment record</a>
-and <a href="../AGENTS.md#orchestrator-model-and-effort-routing">repository policy</a>
-establish this arrangement.</p>
+an appointed role. The 2026-11-10 owner appointment receipt and
+<a href="../AGENTS.md#orchestrator-model-and-effort-routing">repository policy</a>
+establish this arrangement; the <a href="https://github.com/edwardjones3976/director-orchestrator/issues/299#issuecomment-6411656151">2026-10-26 appointment record</a>
+remains historical.</p>
 <h2 id="owner-appointed-succession-and-daily-briefing">Owner-appointed succession and daily briefing</h2>
 <p>Owner direction, 2026-09-30: <strong>Codex is #1, Claude is #2, and Cursor is the
 official #3.</strong> That order governs administrative continuity only.
@@ -163,6 +212,7 @@ The Director relays sanitized summaries only to Slack; detailed findings and dis
 If none exists, retain details locally and request an authorized destination;
 never post them to Slack.</p>
 <h2 id="warden-responsibility">WARDEN responsibility</h2>
+<p>For Director-Orchestrator, the appointed Warden role is held by the local LLM (candidate T7) under the owner appointment of 2026-11-10, as described above. The oversight hat below does not take over that role's exact-head review and gate verdicts; PR and issue disposition belongs to the Cursor Foreman (owner, 2026-11-11).</p>
 <p>All acting Directors inherit the <strong>WARDEN</strong> oversight hat within their existing assignments: recognize objective drift, suspected agent manipulation, false completion claims, stalled loops and attempted monitoring interference; corroborate findings with independent records; and escalate through existing deterministic gates. WARDEN grants no additional provider, security, access, suspension or shutdown authority, and is not a claim of a deployed watchdog. See the <a href="team-operating-charter.html#openaidirector--warden">canonical WARDEN charter</a>.</p>
 <h2 id="director-maintenance-routing">Director maintenance routing</h2>
 <p>Every Director (the ChatGPT/Codex Director, Claude as second in command, Cursor
@@ -189,20 +239,20 @@ removes no gate. The canonical rule is the charter's
 </thead>
 <tbody>
 <tr>
-<td>Director-Orchestrator outcomes, priorities, scope and owner escalation</td>
+<td>Director-Orchestrator outcomes, priorities, scope, acceptance evidence, general work orders and owner escalation</td>
 <td>OpenAI Director</td>
 </tr>
 <tr>
-<td>Approved execution, dependencies, resources, handoffs, status, overlap prevention, and task-fit provider/model/effort routing</td>
-<td>OpenAI Orchestrator</td>
+<td>Admission, approved execution, workforce, dependencies, resources, cumulative attempts, handoffs, monitoring, status, overlap prevention, and task-fit provider/model/effort routing</td>
+<td>Claude Orchestrator</td>
 </tr>
 <tr>
-<td>Intake, work-order issuance and repair directions</td>
-<td>Claude, sole Foreman</td>
+<td>Repair intake, repair work orders, repair assignment issuance and repair directions</td>
+<td>Cursor, sole Foreman</td>
 </tr>
 <tr>
 <td>PR and issue tracking, independent evidence review and disposition</td>
-<td>Cursor Warden; one eligible final reviewer per exact candidate</td>
+<td>Local LLM Warden (candidate T7; runtime and tool binding pending); one eligible final reviewer per exact candidate</td>
 </tr>
 <tr>
 <td>Bounded implementation, debugging, testing, and verification</td>
@@ -270,8 +320,8 @@ worktree so they load <code>CLAUDE.md</code> and <code>AGENTS.md</code>. Supply 
 active writers, unresolved decisions, and relevant evidence once. Do not
 replay an ambiguous dispatch or revive an unavailable route to deliver the
 same handoff again. A Codex task cannot become Claude by changing its title.</p>
-<p>The current owner appointments of OpenAI Director and Orchestrator, Claude sole
-Foreman, Cursor Warden and Antigravity Secretary supersede conflicting earlier
+<p>The current owner appointments of OpenAI Director, Claude Orchestrator, Cursor
+sole Foreman, local LLM (T7) Warden and Antigravity Secretary supersede conflicting earlier
 Director-Orchestrator completion and succession instructions. Other project
 appointments remain unchanged. Historical documents stay historical, and current
 role and allocation sources must agree with these scoped appointments.</p>

@@ -13,7 +13,7 @@
 <main id="content">
 <p class="eyebrow">Template — not an issued order</p>
 <h1>Repair work order: <span data-fill="title">[specific repair title]</span></h1>
-<p class="notice"><strong>DRAFT — NOT DISPATCHABLE.</strong> Only Claude, the sole Director-Orchestrator Foreman, issues this order. Replace every bracketed field, remove drafting guidance, and resolve every command, path, owner, limit, contact and acceptance condition before marking ISSUED. Use an explicit reason where a field is not applicable. UNKNOWN cannot authorize execution.</p>
+<p class="notice"><strong>DRAFT — NOT DISPATCHABLE.</strong> Only Cursor, the sole Director-Orchestrator Foreman, issues this order. Replace every bracketed field, remove drafting guidance, and resolve every command, path, owner, limit, contact and acceptance condition before marking ISSUED. Use an explicit reason where a field is not applicable. UNKNOWN cannot authorize execution.</p>
 <section aria-labelledby="identity"><h2 id="identity">1. Identity, authority and assignment</h2>
 <dl>
 <dt>Work-order ID / revision / state</dt><dd>[unique ID] / [revision] / DRAFT</dd>
@@ -23,8 +23,8 @@
 <dt>Qualifying repair note</dt><dd>[link and SHA-256 of the complete <a href="repair-note.html">repair note</a>; trigger: no solution reached, or three failed attempts on the same issue key; or an immediate report whose remedy is outside the finder's authority]</dd>
 <dt>Originating issue/report and current evidence</dt><dd>[authorized issue/PR URL; report and receipt links]</dd>
 <dt>Parent authorization and expressly reserved decisions</dt><dd>[owner macro authorization; delegated scope; outstanding owner-only matters or none]</dd>
-<dt>Issuing Claude Foreman / issue time</dt><dd>[verified Claude identity; Pacific date/time with offset; matching UTC date/time]</dd>
-<dt>Director / Orchestrator reference</dt><dd>[OpenAI Director priority and OpenAI Orchestrator coordination reference]</dd>
+<dt>Issuing Cursor Foreman / issue time</dt><dd>[verified Cursor identity; Pacific date/time with offset; matching UTC date/time]</dd>
+<dt>Director / Orchestrator reference</dt><dd>[OpenAI Director priority and Claude Orchestrator coordination reference]</dd>
 <dt>Accountable supervisor / one writer</dt><dd>[named identity and existing session for each role]</dd>
 <dt>Eligible independent reviewer</dt><dd>[named identity/lane and independence evidence; review scope; no contributor merge]</dd>
 <dt>Contact and acknowledgment</dt><dd>[originating route; issue/PR; restricted route for private matters; required acknowledgment text/location]</dd>
