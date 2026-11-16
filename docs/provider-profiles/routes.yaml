@@ -48,6 +48,8 @@ endpoints:
     description: "GitHub Copilot lane: optional bounded quality-observation lane with no production authority."
   - id: "zai"
     description: "Z.ai lane: GLM models through the Claude Code executable on Z.ai's endpoint; assignment-scoped, disabled by default, never relabelled Claude."
+  - id: "grok-bot"
+    description: "Grok Bot is a separate entity and guarded desktop contact; its account, quota, readiness, receipts, and attempt history are not Grok evidence. Primary-runtime integration remains proposed."
   - id: "director"
     description: "The runtime Director control plane; executing provider is recorded separately from ChatGPT/Codex project leadership."
   - id: "owner"
@@ -614,21 +616,21 @@ routes:
     kind: "direct"
     direction: "director_to_provider"
     initiation: "director"
-    endpoints: { from: "director", to: "grok" }
-    providers_involved: [grok]
+    endpoints: { from: "director", to: "grok-bot" }
+    providers_involved: []
     carries:
-      - "nothing yet; no adapter, transport enum value, or configuration variable exists in this repository"
+      - "no primary-runtime dispatch; a separate guarded desktop MCP adapter exists"
     withheld_context: []
     authority: "none"
     status: "proposed"
-    default_config_state: "not_applicable"
+    default_config_state: "blocked"
     charter_basis:
       - document: "docs/team-operating-charter.html"
         anchor: "xAI API, Grok Build CLI, and Grok Bot are separate contacts"
     enforced_by: []
     prohibition_quote: null
     config: []
-    notes: "Named by the charter as a distinct contact. Documenting it here does not authorize it; an adapter would need its own owner-approved work order."
+    notes: "Separate Grok Bot entity, not a Grok endpoint. Its guarded desktop MCP adapter has separate input/send gates and anti-replay receipts; the PowerShell dispatcher is suspended. Primary integration remains proposed; no readiness, quota, attempt, or review-independence credit transfers from Grok."
 
   - route_id: "gemini-interactions-api"
     name: "Gemini Interactions API (Antigravity managed agent)"

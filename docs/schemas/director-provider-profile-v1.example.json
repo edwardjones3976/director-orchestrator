@@ -158,7 +158,7 @@
     "notes": [
       "Grok converses with Claude, Cursor, OpenAI, and every other lane through Agent Room threads once commissioned; work still moves only through Director-authored packets, declared dependency outcomes, review handoffs, and moderated debate turns.",
       "Grok never posts to the Slack thread; the Director relays a concise assignment-correlated summary.",
-      "Grok Bot, if ever implemented, would be a Director-to-Grok contact, not a peer channel."
+      "Grok Bot is a separate entity and desktop contact. Do not substitute its account, quota, response, or attempt evidence for Grok, or vice versa."
     ],
     "relay_rule": "work_handoffs_relay_through_director_conversation_through_agent_room",
     "uncontrolled_direct_channels_exist": false
@@ -356,7 +356,7 @@
     "verification_rule": "GET /health exposes readiness booleans only; never read or record allowlist, key, token, endpoint, or path values."
   },
   "identifiers": {
-    "alias_note": "The committee records the provider as xai. The xAI Responses API, the Grok Build CLI, and the not-yet-implemented Grok Bot are three distinct contacts of one lane; they never create a second quota or an independent reviewer.",
+    "alias_note": "The committee records Grok as xai. Grok and Grok Bot are separate entities: keep their accounts, quota observations, availability, receipts, and attempt histories separate. The conservative shared review-family policy remains unchanged and does not attest a serving model.",
     "backend_identity": "grok",
     "charter_workload_lane_key": "grok",
     "committee_member_key": "grok",
@@ -404,7 +404,7 @@
       "source": "docs/provider-setup.html, Grok primary Cursor-family profile"
     },
     {
-      "limitation": "Grok Bot is named by the charter as a distinct contact but has no adapter, transport enum value, or configuration variable in this repository.",
+      "limitation": "Grok Bot is a separate entity with a guarded desktop MCP adapter. It is not enrolled as a primary runtime transport; its PowerShell dispatcher is suspended under the owner freeze.",
       "source": "docs/team-operating-charter.html; src/director_orchestrator/interactions.py:ProviderTransport"
     },
     {
@@ -483,7 +483,7 @@
     "strategy_priority": "capability_routed_assignment",
     "summary": "Capability-routed provider lane across research, implementation, QA, and independent review when Grok did not materially author the candidate. Assignment authority remains bounded by verified transports, readiness, independence, and deterministic policy gates.",
     "team": "primary",
-    "transport_rule": "xAI API, Grok Build CLI, and Grok Bot are separate contacts; each may use only available capabilities and authority on that contact."
+    "transport_rule": "Grok API/Build and Grok Bot are separate entities; track usage independently and retain family/authority gates."
   },
   "schema_version": "director-provider-profile/v1",
   "source_of_truth": {
@@ -575,11 +575,11 @@
       "transport_kind_observed": null
     },
     {
-      "authority_note": "Named by the charter as a distinct contact. No adapter, enum value, or variable exists; documenting it here authorizes nothing.",
+      "authority_note": "Cross-reference to the separate Grok Bot entity, not a Grok transport. Its guarded desktop MCP adapter exists; primary-runtime enrollment remains proposed and its PowerShell dispatcher is suspended. This entry grants no authority.",
       "browser_policy": null,
       "config": [],
       "current_transport_constraints": [
-        "would require its own owner-approved work order, adapter, readiness profile, and separately authenticated credential"
+        "requires its own authorized task and verified desktop readiness; Grok account allowance or successful calls never establish Grok Bot readiness"
       ],
       "direction": "director_to_provider",
       "enum_value": null,

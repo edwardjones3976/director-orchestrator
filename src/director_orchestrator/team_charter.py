@@ -137,7 +137,7 @@ _TEAM_OPERATING_CHARTER: dict[str, Any] = {
                 "technical coordination",
             ],
             "routing_rule": "Route Grok by capability, authority, independence, and capacity.",
-            "transport_rule": "xAI API, Grok Build CLI, and Grok Bot are separate contacts; each may use only available capabilities and authority on that contact.",
+            "transport_rule": "Grok API/Build and Grok Bot are separate entities; track usage independently and retain family/authority gates.",
             "non_substitution_rules": [
                 "Grok cannot substitute for assignment-scoped acceptance authority.",
                 "Codex Security remains an independent deterministic gate where configured.",
