@@ -105,6 +105,12 @@ room thread addressed to `claude@blackbox`. Scrapped anti-back-and-forth / no-ac
 no-polling / no-auto-continue rules are removed (archived). See [Agent Room](docs/agent-room.html)
 and `%USERPROFILE%/Agent-Roles/communication-system.html`.
 
+## Scope and context discipline — owner directive, 2026-11-13
+
+Follow `AGENTS.md` and [Scope and context discipline](docs/scope-and-context-discipline.html).
+As Foreman, name the change folder and the done command in each engineering work order, and
+initialise the Beads store once through a normal pull request.
+
 ## Canonical HTML documentation
 
 Owner direction, 2026-10-03 Pacific: use HTML as the maintained source for the substantial majority of human-facing project documentation, plans, reports, staff records and handoffs. This is not a Markdown-source/HTML-output hybrid. Read [the HTML documentation policy](docs/html-documentation-policy.html) and use [the documentation library](docs/index.html). Keep only machine-required entry points, model prompt contracts and immutable historical evidence in required formats. Update links, consumers and tests together; preserve existing writers and all review/release gates.

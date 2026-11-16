@@ -1,0 +1,6 @@
+schema: spec-driven
+
+context: |
+  Follow AGENTS.md and docs/scope-and-context-discipline.html.
+  Name each change folder after its work-order id. A change may narrow an order, never widen it.
+  tasks.md names the done command for every task. No secrets or protected data in any artifact.
