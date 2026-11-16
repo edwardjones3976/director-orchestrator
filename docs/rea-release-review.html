@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>REA release reviewer (opt-in) · Director Orchestrator</title>
+<link rel="stylesheet" href="assets/documentation.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header"><a class="site-brand" href="index.html">Director Orchestrator</a><nav class="site-nav" aria-label="Project documentation"><a href="../README.html">Overview</a><a href="index.html">All documents</a><a href="project-leadership.html">Leadership</a><a href="provider-profiles/README.html">Providers</a></nav></header>
+
+<main id="content">
+<p class="eyebrow">Release inspection · Opt-in static lab</p>
+<h1 id="rea-release-reviewer">REA release reviewer (opt-in)</h1>
+<p class="lede">Opt-in CLI and Linux Docker qualification lab for comparing Electron ASAR release payloads with <code>diffoscope</code> and optional Reverse Engineer Anything (REA) static evidence.</p>
+
+<h2 id="opt-in-cli">Opt-in CLI and shared entry point</h2>
+<p>The project entry point <a href="../scripts/rea-release-review.py"><code>scripts/rea-release-review.py</code></a> delegates directly to <a href="../scripts/rea_release_lab/review.py"><code>scripts/rea_release_lab/review.py</code></a> (<code>main(argv=None)</code> -> <code>review(...)</code>). It accepts the five positional paths, the optional <code>--rea</code> switch, and repeatable <code>--source-path</code> selection:</p>
+<pre><code>python scripts/rea-release-review.py &lt;left&gt; &lt;right&gt; &lt;left_tree&gt; &lt;right_tree&gt; &lt;output&gt; [--rea] [--source-path PATH ...]</code></pre>
+<p>Selected-source example (forwarding exact inventoried relative paths to both REA analyses while keeping the default 120-second per-subprocess bound unchanged):</p>
+<pre><code>python scripts/rea-release-review.py left.asar right.asar left_tree right_tree out_dir --rea --source-path .webpack/main/index.js --source-path .webpack/renderer/main_window/preload.js</code></pre>
+<p>Before creating <code>output</code> or launching external tools, <code>review(...)</code> validates that <code>left</code> and <code>right</code> are regular files, <code>left_tree</code> and <code>right_tree</code> are directories without root or member symbolic links (or native junctions where supported), <code>output</code> does not already exist, and <code>output</code> is not inside either input tree. Any <code>--source-path</code> values require <code>--rea</code> and must be safe relative POSIX paths (rejecting empty, absolute, Windows-drive, backslash, or traversal segments before side effects). Flagless behavior and the default <code>timeout=120</code> subprocess bound remain unchanged. It writes <code>review.json</code> (schema <code>rea-release-review/v1</code>), <code>index.html</code>, and per-subprocess receipts (<code>*.receipt.json</code>, <code>*.json</code>, <code>*.stderr</code>).</p>
+
+<h2 id="source-scope-and-limits">Complete inventory, partial relationship scope, and native limits</h2>
+<p>File-change coverage and semantic relationship coverage are tracked separately in <code>review.json</code> (<code>analysis_scope</code>):</p>
+<ul>
+<li><strong>Complete artifact &amp; inventory identity:</strong> <code>left_sha256</code>, <code>right_sha256</code>, and each side's <code>normalized_result.root_artifact_sha256</code> always bind to the complete ASAR bytes (never a subset hash). With <code>--rea</code>, <code>inventory(...)</code> compares all files across <code>left_tree</code> and <code>right_tree</code>. Without <code>--rea</code>, <code>diffoscope_paths(...)</code> translates native <code>diffoscope</code> unified diffs and directory <code>file list</code> additions/removals into regular-file leaves inside the verified roots, without counting parent directories as changed files and while refusing escaping, absolute, or link/junction paths.</li>
+<li><strong>Partial semantic relationship scope:</strong> Passing repeatable <code>--source-path</code> forwards those exact paths to both <code>rea analyze-javascript-application</code> calls. Semantic relationships outside selected files remain <code>UNKNOWN</code>, and <code>analysis_scope.semantic_relationship_coverage</code> reports <code>partial</code> (or <code>unknown</code> if optional coverage metadata is absent; never relabeled <code>complete</code>). Native full-graph payloads stay in <code>left-analysis.json</code> and <code>right-analysis.json</code> rather than being duplicated in <code>review.json</code>, while <code>review.json</code> records <code>requested_source_paths</code>, per-side <code>source_selection</code>, <code>graph_coverage</code>, <code>statistics</code>, <code>limits</code>, and evidence links.</li>
+<li><strong>Unchanged control &amp; 120s bound:</strong> On an unchanged control (<code>same_artifact: true</code>), REA subprocesses are skipped and <code>analysis_scope.mode</code> is <code>skipped_identical_artifact</code>. Unscoped large releases (for example, large Electron/Webpack ASARs) can hit the default 120-second per-subprocess timeout and have not completed unscoped analysis.</li>
+</ul>
+
+<h2 id="verified-extraction">Verified extraction and ASAR companions</h2>
+<p>The caller supplies independently verified extracted trees (<code>left_tree</code> and <code>right_tree</code>); <code>review(...)</code> does not authenticate arbitrary trees against ASAR contents and executes no vendor application code. Companion ASAR files (<code>left</code> and <code>right</code>) are SHA-256 hashed in <code>review.json</code>. When <code>--rea</code> is passed and <code>left</code> differs from <code>right</code>, REA analyzes each companion archive statically via <code>rea analyze-javascript-application</code> and <code>rea compare-application-versions</code>, and <code>review(...)</code> verifies that each returned <code>normalized_result.root_artifact_sha256</code> matches the input artifact digest.</p>
+
+<h2 id="prerequisites-and-pins">Linux/Docker prerequisites and pinned versions</h2>
+<p>Full lab qualification runs on a Linux Docker host via <a href="../scripts/rea_release_lab/run_all.py"><code>scripts/rea_release_lab/run_all.py</code></a> with isolated containers (<code>--network none</code>, <code>--memory 2g</code>, <code>--cpus 2</code>, <code>--rm</code>, and owned <code>doa.rea-lab.run</code> / <code>doa.rea-lab.step</code> labels). The container definition in <a href="../scripts/rea_release_lab/Dockerfile"><code>scripts/rea_release_lab/Dockerfile</code></a> pins:</p>
+<table>
+<thead><tr><th scope="col">Component</th><th scope="col">Pinned version / source</th></tr></thead>
+<tbody>
+<tr><th scope="row">Base image</th><td><code>node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c</code></td></tr>
+<tr><th scope="row">Debian packages</th><td><code>diffoscope-minimal=240+deb12u1</code>, <code>procps</code>, <code>python3</code></td></tr>
+<tr><th scope="row">npm packages</th><td><code>rea-agents@6.9.0</code> and <code>@electron/asar@4.3.2</code> (installed with <code>--ignore-scripts --no-audit --no-fund --save-exact</code>)</td></tr>
+<tr><th scope="row">Lab precision patch</th><td><a href="../scripts/rea_release_lab/apply_rea_precision.py"><code>scripts/rea_release_lab/apply_rea_precision.py</code></a> (digest-bound 9-file patch writing <code>rea-lab-precision.json</code>)</td></tr>
+</tbody>
+</table>
+<p>Upstream references: <a href="https://www.npmjs.com/package/rea-agents/v/6.9.0">npm <code>rea-agents@6.9.0</code></a>, <a href="https://github.com/morluto/rea"><code>morluto/rea</code></a>, <a href="https://www.npmjs.com/package/agent-env">AgentEnv</a>, and <a href="https://diffoscope.org/"><code>diffoscope</code></a>. The exact upstream REA 6.9.0 MIT license notice (<code>Copyright (c) 2026 morluto</code>) is preserved in <a href="../scripts/rea_release_lab/REA-LICENSE.txt"><code>scripts/rea_release_lab/REA-LICENSE.txt</code></a>; installed dependencies retain their native notices.</p>
+
+<h2 id="benchmark-and-control">Owned-fixture benchmark and unchanged control</h2>
+<p><a href="../scripts/rea_release_lab/benchmark.py"><code>scripts/rea_release_lab/benchmark.py</code></a> builds owned Electron ASAR fixtures (<code>baseline</code>, <code>candidate</code>, and an identical <code>control</code> copy of <code>baseline</code>) and compares <code>diffoscope</code> against <code>diffoscope+rea</code> across repetitions. On an unchanged control, <code>same_artifact</code> is <code>true</code>, <code>changed_paths</code> is empty, and <code>--rea</code> skips REA subprocesses.</p>
+
+<h2 id="agentenv-checks">AgentEnv export, startup, final-state, and fidelity checks</h2>
+<p>Qualification separates AgentEnv checks into distinct stages rather than treating a single pass as end-to-end proof:</p>
+<ul>
+<li><strong>Export (<code>agentenv-export</code>):</strong> <code>rea environment-build</code> exports an AgentEnv bundle from recorded HTTP traffic (<code>training.har</code>).</li>
+<li><strong>Fidelity (<code>agentenv-fidelity</code>):</strong> <code>rea inspect-web-network-capture</code> and <code>rea environment-compare</code> verify held-out recording agreement (<code>summary.agreement == 1</code>) against <code>probe.har</code>.</li>
+<li><strong>Startup (<code>framework-smoke</code>):</strong> <code>agent-env run &lt;bundle&gt; --task smoke</code> checks container/server startup after <code>prepare_agentenv.py</code>.</li>
+<li><strong>Final state (<code>framework-workflow</code>):</strong> <a href="../scripts/rea_release_lab/agentenv_verify.py"><code>scripts/rea_release_lab/agentenv_verify.py</code></a> exercises a scripted folder create/rename/read/delete workflow and verifies both the restored final state and a negative-control assertion.</li>
+</ul>
+
+<h2 id="rapid-timestamps">Rapid timestamp guarantee and limitations</h2>
+<p>The digest-bound patch in <a href="../scripts/rea_release_lab/apply_rea_precision.py"><code>scripts/rea_release_lab/apply_rea_precision.py</code></a> replaces millisecond-truncated interval comparisons with exact <code>OffsetDateTimeInstant</code> coordinates (<code>StateRecordChronology</code>) and <code>timing.end</code> checks. <a href="../scripts/rea_release_lab/rapid_checks.py"><code>scripts/rea_release_lab/rapid_checks.py</code></a> verifies unpaced same-millisecond HTTP captures (<code>injected_pause_seconds: 0</code>) as well as synthetic disjoint, overlap, missing-duration, and unusable-duration cases; <a href="../scripts/rea_release_lab/mcp_stdio_check.py"><code>scripts/rea_release_lab/mcp_stdio_check.py</code></a> verifies the same interval-withholding and unusable-duration limitations over stdio MCP.</p>
+<p>Limitations: unconfirmed writes with missing or unusable completion durations remain withheld rather than guessed, and ordinary host Python unit tests in <a href="../tests/test_rea_release_review.py"><code>tests/test_rea_release_review.py</code></a> use mocked external tools and an isolated subprocess for lab discovery without running Docker, live providers, or network calls.</p>
+
+<h2 id="costs-and-gates">Known versus unpriced costs and unchanged release gates</h2>
+<p>Each static review records <code>model_calls: 0</code>, <code>incremental_model_cost_usd: 0</code>, and <code>infrastructure_cost_usd: null</code>. The benchmark summary records <code>incremental_model_calls: 0</code>, <code>incremental_model_cost_usd: 0</code>, <code>infrastructure_cost_usd: null</code>, and <code>codex_authoring_cost_usd: null</code>, noting that tool timings exclude installation, shared extraction, and authoring. Zero per-review model calls does not make authoring, Docker/CI compute, or qualification free; unpriced infrastructure and authoring costs remain <code>UNKNOWN</code> unless separately measured.</p>
+<p><strong>Epistemic and governance boundaries:</strong></p>
+<ul>
+<li>Static relationships do not establish runtime behavior, universal runtime correctness is not claimed, and file-change coverage does not establish semantic or runtime accuracy.</li>
+<li>Unscoped large releases are not claimed completed, and no new Cloud qualification is claimed.</li>
+<li>This opt-in command grants no automatic model execution, deployment, installation, or approval; existing release controller, <a href="site-coordination.html">site coordination</a>, CI, and Warden gates remain unchanged.</li>
+<li>Existing local native Node/AgentEnv source is unchanged and remains reusable by per-file hashes; affected reviewer, CLI, fixture, and real comparison checks require fresh execution results and independent review.</li>
+</ul>
+</main>
+<footer class="site-footer">Canonical HTML · Director-Orchestrator · Documentation is not evidence of deployment or live qualification.</footer>
+<script src="assets/documentation.js" defer></script>
+</body>
+</html>
