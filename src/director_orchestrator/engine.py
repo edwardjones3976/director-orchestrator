@@ -139,6 +139,7 @@ from .models import (
     DiscussionPhase,
     DirectorPlan,
     IntakeAuthentication,
+    NeutralIntake,
     ProviderName,
     ProviderContactAttempt,
     ReviewDecision,
@@ -2940,6 +2941,9 @@ class OrchestrationEngine:
             # durable state. A later resume retries the same recovery entry.
             return
         if record is None:
+            return
+        if isinstance(record.intake, NeutralIntake):
+            # No qualified neutral execution/delivery adapter exists in this candidate.
             return
         try:
             if not self._settle_not_created_dispatches(record):

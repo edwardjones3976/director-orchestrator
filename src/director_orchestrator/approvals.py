@@ -38,6 +38,9 @@ from .models import (
     ReviewVerdict,
     SlackGatewayProof,
     SlackIntake,
+    NeutralIntake,
+    NeutralIntakeProof,
+    NeutralIntakeRequest,
     SlackStatusReceipt,
     TaskEffectEvidence,
     TaskRecord,
@@ -195,6 +198,55 @@ def verify_slack_intake_attestation(
         raise StaleApproval("Slack intake attestation signature is invalid")
     return (
         _canonical_digest({"nonce": nonce}),
+        _canonical_digest(intake.model_dump(mode="json")),
+    )
+
+
+def _neutral_intake_payload(intake: NeutralIntake, proof: NeutralIntakeProof) -> bytes:
+    return json.dumps(
+        {"version": proof.version, "method": "POST", "path": "/v2/intake",
+         "issued_at": proof.issued_at, "nonce": proof.nonce,
+         "body_digest": _canonical_digest(intake.model_dump(mode="json"))},
+        ensure_ascii=True, separators=(",", ":"), sort_keys=True,
+    ).encode("utf-8")
+
+
+def build_neutral_intake_proof(
+    secret: str, shared_secret: str, intake: NeutralIntake, *,
+    issued_at: int | None = None, nonce: str | None = None,
+) -> NeutralIntakeProof:
+    if len(secret) < _SLACK_GATEWAY_MIN_SECRET_LENGTH:
+        raise StaleApproval("Neutral gateway signing secret is not securely configured")
+    if shared_secret and hmac.compare_digest(secret, shared_secret):
+        raise StaleApproval("Gateway signing secret must be distinct")
+    proof = NeutralIntakeProof(
+        issued_at=issued_at if issued_at is not None else int(datetime.now(timezone.utc).timestamp()),
+        nonce=nonce or secrets.token_urlsafe(32), signature="0" * 64,
+    )
+    return proof.model_copy(update={"signature": hmac.new(
+        secret.encode("utf-8"), _neutral_intake_payload(intake, proof), hashlib.sha256,
+    ).hexdigest()})
+
+
+def verify_neutral_intake_proof(
+    secret: str, shared_secret: str, request: NeutralIntakeRequest, *,
+    expected_actor_id: str, now: int | None = None,
+) -> tuple[str, str]:
+    """Gateway provenance is not role authority or a standing execution grant."""
+    intake, proof = request.intake, request.gateway_proof
+    if not owner_identity_matches(intake.actor_id, expected_actor_id):
+        raise StaleApproval("Neutral intake actor is not authorized")
+    current = now if now is not None else int(datetime.now(timezone.utc).timestamp())
+    age = current - proof.issued_at
+    if age < -_SLACK_GATEWAY_FUTURE_SKEW_SECONDS or age > _SLACK_GATEWAY_PROOF_TTL_SECONDS:
+        raise StaleApproval("Neutral intake proof is expired or not yet valid")
+    expected = build_neutral_intake_proof(
+        secret, shared_secret, intake, issued_at=proof.issued_at, nonce=proof.nonce,
+    )
+    if not hmac.compare_digest(proof.signature, expected.signature):
+        raise StaleApproval("Neutral intake proof signature is invalid")
+    return (
+        _canonical_digest({"domain": proof.version, "nonce": proof.nonce}),
         _canonical_digest(intake.model_dump(mode="json")),
     )
 

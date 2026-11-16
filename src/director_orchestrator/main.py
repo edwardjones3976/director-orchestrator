@@ -79,6 +79,7 @@ from .approvals import (
     SLACK_STATUS_RECEIPT_SIGNATURE_HEADER,
     task_effect_key,
     verify_slack_intake_attestation,
+    verify_neutral_intake_proof,
     verify_slack_status_receipt_attestation,
     verify_slack_gateway_proof,
 )
@@ -109,6 +110,7 @@ from .models import (
     ClaudeCallback,
     ContactObservationsReport,
     IntakeAuthentication,
+    NeutralIntakeRequest,
     ManualRunCompletion,
     OracleRecoveryApproval,
     OwnerApproval,
@@ -840,6 +842,36 @@ def intake(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if created:
         background.add_task(engine.run, stored.task_id)
+    return stored
+
+
+@app.post("/v2/intake", response_model=TaskRecord, status_code=202, dependencies=[Depends(require_auth)])
+def neutral_intake(payload: NeutralIntakeRequest) -> TaskRecord:
+    try:
+        replay = verify_neutral_intake_proof(
+            settings.slack_gateway_secret, settings.shared_secret, payload,
+            expected_actor_id=settings.slack_owner_user_id,
+        )
+    except StaleApproval as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    hold = ("HOLD: neutral live composition is unqualified; owner=Claude Orchestrator; "
+            "checkpoint=qualified neutral admission and delivery adapter review")
+    # Never bypass the shared primary fence by admitting into the rollback store.
+    if primary_default_activation is not None or settings.langgraph_primary_postgres_dsn:
+        raise HTTPException(status_code=503, detail=hold)
+    record = TaskRecord(
+        task_id=f"DIR-{secrets.token_hex(5).upper()}",
+        status=TaskStatus.OWNER_DECISION_REQUIRED,
+        intake=payload.intake,
+        intake_authentication=IntakeAuthentication.NEUTRAL_GATEWAY_ATTESTED,
+        message=hold,
+    )
+    try:
+        stored, _ = store.create_signed_intake(
+            record, nonce_digest=replay[0], payload_digest=replay[1],
+        )
+    except SlackIntakeReplayConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return stored
 
 
