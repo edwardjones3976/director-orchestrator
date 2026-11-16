@@ -112,7 +112,7 @@ def _fake_subprocess_factory(
                     "unselected_files": 85 if requested else 0,
                 }
                 data["graph_coverage"] = {
-                    "status": "partial" if requested else "complete",
+                    "status": "complete",
                     "truncated": False,
                     "omitted_count": None,
                     "limits": [],
@@ -410,7 +410,7 @@ class ReaReleaseReviewTest(unittest.TestCase):
                 self.assertEqual(side["analysis_file"], f"{side_name}-analysis.json")
                 self.assertEqual(side["source_selection"]["requested_paths"], selected)
                 self.assertEqual(side["source_selection"]["unselected_files"], 85)
-                self.assertEqual(side["graph_coverage"]["status"], "partial")
+                self.assertEqual(side["graph_coverage"]["status"], "complete")
                 self.assertNotIn("graph", side)
             self.assertIn("graph", json.loads((output / "left-analysis.json").read_text(encoding="utf-8"))["data"]["normalized_result"])
             index_html = (output / "index.html").read_text(encoding="utf-8")
