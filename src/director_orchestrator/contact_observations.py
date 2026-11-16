@@ -26,7 +26,7 @@ Honesty rules (owner direction 2026-10-28, request-provider-coverage):
 Contact isolation: every contact reads only receipt files its own shapes
 match (its provider-lane directory and its filename prefixes), and a JSON
 receipt that carries a ``provider`` value is used only when that value
-matches the contact. Grok Bot (xAI family, Slack bot contact) has no
+matches the contact. Grok Bot (desktop contact; conservative xAI policy family) has no
 receipt-writing route at all (its dispatcher route writes screenshots under
 the OS profile directory, never under the receipts root) and never reads
 direct-Grok ``grok``/``xai`` receipts; ZCode has no dispatcher route and
@@ -225,7 +225,7 @@ _CONTACT_SPECS: tuple[ContactSpec, ...] = (
         receipt_providers=frozenset({"grok-bot"}),
         receipt_shapes=(),
         note=(
-            "Grok Bot (xAI family) is a separate contact from direct Grok. Its "
+            "Grok Bot is a separate entity and desktop contact from Grok. Its "
             "dispatcher route writes no receipts under the receipts root (chat "
             "artifacts land in the OS profile directory, outside this reader), so "
             "it honestly stays not-observed; it never reads direct-Grok grok or "

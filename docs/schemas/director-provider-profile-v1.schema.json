@@ -642,7 +642,7 @@
     },
     "endpoint": {
       "type": "string",
-      "enum": ["openai", "claude", "cursor", "grok", "antigravity", "perplexity", "firecrawl", "github-copilot", "zai", "director", "owner", "slack_thread", "github", "n8n", "host_bridge", "browser_ui", "acceptance_registry", "all_providers"]
+      "enum": ["openai", "claude", "cursor", "grok", "antigravity", "perplexity", "firecrawl", "github-copilot", "zai", "director", "owner", "slack_thread", "github", "n8n", "host_bridge", "browser_ui", "acceptance_registry", "all_providers", "grok-bot"]
     },
     "route": {
       "type": "object",
