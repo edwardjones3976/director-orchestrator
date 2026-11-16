@@ -56,6 +56,7 @@ These suites read `LANGGRAPH_RUNTIME_POSTGRES_TEST_DSN` and fail rather than ski
 - `tests/test_primary_default.py`
 - `tests/test_primary_effect_gateways.py`
 - `tests/test_primary_effects.py`
+- `tests/test_primary_neutral_claims_postgres.py`
 - `tests/test_primary_provider_evidence.py`
 - `tests/test_primary_scorecard_evidence.py`
 - `tests/test_primary_staging_controls.py`

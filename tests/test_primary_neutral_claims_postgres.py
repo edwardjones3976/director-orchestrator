@@ -136,7 +136,7 @@ class PrimaryNeutralClaimsPostgresTests(unittest.TestCase):
                 f"UPDATE {self.schema}.director_primary_intake_auth_claim SET task_id='changed'",
                 f"DELETE FROM {self.schema}.director_primary_intake_auth_claim",
             ):
-                with self.assertRaises(psycopg.errors.RaiseException), connection.transaction():
+                with self.assertRaises(psycopg.errors.RestrictViolation), connection.transaction():
                     connection.execute(statement)
         self.assertEqual(rows, self.rows())
 
