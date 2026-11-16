@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Neutral primary authenticated claims</title>
+<main><h1>Neutral primary authenticated claims</h1>
+<p>WO-20261116-004 revision1 implements a durable store prerequisite only.
+Primary neutral ingress remains held. This source change does not enable admission,
+graph execution, standing grants, native delivery, or any live route.</p>
+<h2>Store contract</h2>
+<p><code>claim_authenticated_primary_intake</code> retains the existing keyword
+arguments and <code>(task_id, created)</code> result. Omitted authentication class
+means <code>slack_gateway_attested</code>; Slack digests and exact-nonce replay
+behavior remain unchanged. A fresh Slack nonce for the same source still conflicts.</p>
+<p>A verified neutral caller supplies <code>authentication_class=neutral_gateway_attested</code>,
+original <code>source_provider</code> and <code>source_event_id</code>, verified
+<code>nonce_digest</code>, full signed intake <code>payload_digest</code>, and a proposed
+task ID. The store trusts the upstream verifier; it does not verify signatures or
+map actors to owners. Bearer and unknown authentication classes are refused.</p>
+<p>Neutral event identity is <code>document_digest</code> of the object with
+<code>domain=director-primary-neutral-source/v2</code>, <code>provider</code> and
+<code>source_event_id</code>. Neutral nonce identity uses a separate object with
+<code>domain=director-primary-neutral-nonce/v2</code>, <code>provider</code> and
+<code>nonce_digest</code>. The event key excludes actor, conversation, body and
+deadline so changes to those signed fields conflict on the same event. An optional
+supplied idempotency digest must equal the derived event key. Payload is the digest
+of the complete signed intake, including original actor and timestamps, excluding
+proof metadata such as a fresh nonce or proof issuance time. No digest is rewritten
+into Slack fields.</p>
+<p>Exact neutral replay returns the original task with <code>created=false</code>.
+An identical event with a fresh nonce appends an alias to the original nonce,
+preserving payload and authentication class. Reusing any canonical or alias nonce
+for another event or payload conflicts. Different providers have separate event
+and nonce domains. Reusing a task ID for a different source conflicts. Claims can
+exist without graph projections; replay never confers permission to repeat a grant,
+reservation or dispatch. The coordinator only forwards these fields after its
+existing active-generation check.</p>
+<h2>Installed schema upgrade</h2>
+<p>The existing versioned control-plane setup runs the claim v2 constraint migration
+inside its DDL transaction and schema advisory lock, following the existing guarded
+constraint migration convention. It does not rely on CREATE TABLE IF NOT EXISTS.
+The new nullable <code>original_nonce_digest</code> column marks this additive claim
+schema. Existing v1 rows retain all original values and timestamps, with a null
+alias reference. Source/task unique constraints become canonical-only unique indexes;
+a composite foreign key binds each alias to the same nonce/source/body/task/class
+tuple. Aliases are permitted only for the neutral authentication class.
+The existing append-only update/delete guard remains installed.</p>
+<p>All DDL and indexes commit together. Failure after the constraint migration rolls
+back its column, constraints and indexes as well as other setup changes. Repeated
+setup recognizes the installed column and leaves the claim history unchanged.
+Claim operations take transaction-scoped source, nonce and proposed task advisory
+locks in sorted numeric key order before reading either identity. Concurrent fresh
+nonces for one event select one canonical task; conflicts do not append history.</p>
+<h2>Receiver fact and replay timing</h2>
+<p>The existing canonical claim <code>created_at</code> is the database-owned first
+authenticated store receipt time. It is already correlated with the original source
+digest, task ID, nonce digest and signed payload digest; no historical timestamp is
+backfilled. <code>read_authenticated_primary_intake(task_id)</code> returns that
+canonical fact as <code>receiver_received_at</code>, even without a graph projection.
+The value is timezone-aware and represents the PostgreSQL transaction start at the
+authenticated store boundary. It does not measure time spent in the gateway before
+that boundary. Sender <code>received_at</code> remains a distinct signed body field.</p>
+<p>The canonical time survives commit followed by response loss, process restart and
+replay. Fresh-nonce aliases have their own database <code>created_at</code> for replay
+receipt; the original timestamp is read only from the canonical row. Exact replay
+does not add a second receipt or alter the original. These facts do not backfill
+historical trials or establish ranked timing credit.</p>
+<h2>Verification and remaining gates</h2>
+<p>Focused real-Postgres coverage is in
+<code>tests/test_primary_neutral_claims_postgres.py</code>, with existing Slack coverage
+in <code>tests/test_primary_authenticated_ingress_postgres.py</code>. Tests exercise
+clean setup, an exact installed v1 table and rows, idempotent restarts, injected
+upgrade failure rollback, both classes, domain separation, payload conflicts,
+nonce aliases, concurrent races, and orphan-claim receipt stability. They do not
+invoke native dispatch, grants or reservations.</p>
+<p>Local Postgres execution is NOT_RUN: test DSN is unset and the documented local
+PowerShell lane is frozen. No replacement database is authorized. Real database
+tests must run in approved CI on the exact pushed follow-on head, followed by
+independent Claude source/test review and the remaining release gates. Source
+implementation, local checks and test collection are not acceptance or M2 completion.</p>
+</main></html>
