@@ -1046,6 +1046,40 @@ def _base_control_plane_ddl(schema: str) -> tuple[str, ...]:
         )
         """,
         f"""
+        DO $migration$ BEGIN
+            -- Claim schema v2: canonical v1 rows remain byte-for-byte unchanged.
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = '{schema}'
+                  AND table_name = 'director_primary_intake_auth_claim'
+                  AND column_name = 'original_nonce_digest') THEN
+                ALTER TABLE {schema}.director_primary_intake_auth_claim
+                    ADD COLUMN original_nonce_digest text;
+                ALTER TABLE {schema}.director_primary_intake_auth_claim
+                    DROP CONSTRAINT director_primary_intake_auth_claim_idempotency_key_digest_key,
+                    DROP CONSTRAINT director_primary_intake_auth_claim_task_id_key,
+                    DROP CONSTRAINT director_primary_intake_auth_claim_authentication_class_check;
+                ALTER TABLE {schema}.director_primary_intake_auth_claim
+                    ADD CONSTRAINT director_primary_intake_auth_claim_authentication_class_check
+                    CHECK (authentication_class IN ('slack_gateway_attested', 'neutral_gateway_attested')),
+                    ADD CONSTRAINT director_primary_intake_auth_claim_alias_check
+                    CHECK (original_nonce_digest IS NULL OR
+                        (authentication_class = 'neutral_gateway_attested' AND original_nonce_digest <> nonce_digest)),
+                    ADD CONSTRAINT director_primary_intake_auth_claim_binding_key
+                    UNIQUE (nonce_digest, idempotency_key_digest, payload_digest, task_id, authentication_class),
+                    ADD CONSTRAINT director_primary_intake_auth_claim_original_fkey
+                    FOREIGN KEY (original_nonce_digest, idempotency_key_digest, payload_digest, task_id, authentication_class)
+                    REFERENCES {schema}.director_primary_intake_auth_claim
+                        (nonce_digest, idempotency_key_digest, payload_digest, task_id, authentication_class);
+                CREATE UNIQUE INDEX director_primary_intake_auth_claim_source_v2
+                    ON {schema}.director_primary_intake_auth_claim (idempotency_key_digest)
+                    WHERE original_nonce_digest IS NULL;
+                CREATE UNIQUE INDEX director_primary_intake_auth_claim_task_v2
+                    ON {schema}.director_primary_intake_auth_claim (task_id)
+                    WHERE original_nonce_digest IS NULL;
+            END IF;
+        END $migration$
+        """,
+        f"""
         CREATE TABLE IF NOT EXISTS {schema}.director_primary_slack_status_receipt (
             source_event_id text PRIMARY KEY,
             receipt_id text NOT NULL UNIQUE,
@@ -2502,68 +2536,125 @@ class PostgresConditionalClaimStore(AcceptanceJournal):
         self,
         *,
         nonce_digest: str,
-        idempotency_key_digest: str,
+        idempotency_key_digest: str | None = None,
         payload_digest: str,
         task_id: str,
+        authentication_class: str = "slack_gateway_attested",
+        source_provider: str | None = None,
+        source_event_id: str | None = None,
     ) -> tuple[str, bool]:
-        """Atomically claim Slack nonce and source identity before graph creation."""
+        """Bind a verified intake before graph creation; this confers no execution authority.
+
+        Neutral event and nonce keys are derived here, in separate domains, from
+        original provider/event identity and the verified nonce digest. Payload
+        is the digest of the complete signed intake, excluding proof metadata.
+        """
 
         _require_digest(nonce_digest, "nonce_digest")
+        if authentication_class == "neutral_gateway_attested":
+            for value, name, maximum in ((source_provider, "source_provider", 64),
+                                          (source_event_id, "source_event_id", 255)):
+                if not isinstance(value, str) or not 1 <= len(value) <= maximum:
+                    raise ValueError(f"{name} is required for neutral intake")
+            source_digest = document_digest({
+                "domain": "director-primary-neutral-source/v2",
+                "provider": source_provider, "source_event_id": source_event_id,
+            })
+            if idempotency_key_digest is not None and idempotency_key_digest != source_digest:
+                raise PostgresControlPlaneError("neutral intake source digest conflicts with original identity")
+            idempotency_key_digest = source_digest
+            nonce_digest = document_digest({
+                "domain": "director-primary-neutral-nonce/v2",
+                "provider": source_provider, "nonce_digest": nonce_digest,
+            })
+        elif authentication_class != "slack_gateway_attested" or source_provider is not None or source_event_id is not None:
+            raise ValueError("unsupported authenticated intake class or source fields")
         _require_digest(idempotency_key_digest, "idempotency_key_digest")
         _require_digest(payload_digest, "payload_digest")
         _require_id(task_id, "task_id")
         schema = self._schema
         with self._pool.connection() as connection:
             with connection.transaction():
-                self._optional_row(
-                    connection,
-                    "SELECT pg_advisory_xact_lock(%(key)s)",
-                    {"key": _advisory_key("authenticated-intake", schema, nonce_digest)},
-                )
-                existing = self._optional_row(
+                # Sort actual lock keys so source/nonce cross-races cannot deadlock.
+                for key in sorted({
+                    _advisory_key("authenticated-intake", schema, nonce_digest),
+                    _advisory_key("authenticated-intake-source", schema, idempotency_key_digest),
+                    _advisory_key("authenticated-intake-task", schema, task_id),
+                }):
+                    self._optional_row(connection, "SELECT pg_advisory_xact_lock(%(key)s)", {"key": key})
+                parameters = {
+                    "nonce_digest": nonce_digest,
+                    "idempotency_key_digest": idempotency_key_digest,
+                    "payload_digest": payload_digest,
+                    "task_id": task_id,
+                    "authentication_class": authentication_class,
+                }
+                nonce_claim = self._optional_row(
                     connection,
                     f"""
-                    SELECT nonce_digest, idempotency_key_digest, payload_digest, task_id
+                    SELECT *
                     FROM {schema}.director_primary_intake_auth_claim
                     WHERE nonce_digest = %(nonce_digest)s
-                       OR idempotency_key_digest = %(idempotency_key_digest)s
                     """,
-                    {
-                        "nonce_digest": nonce_digest,
-                        "idempotency_key_digest": idempotency_key_digest,
-                    },
+                    parameters,
                 )
-                if existing is not None:
-                    if (
-                        str(existing["nonce_digest"]) != nonce_digest
-                        or str(existing["idempotency_key_digest"])
-                        != idempotency_key_digest
-                        or str(existing["payload_digest"]) != payload_digest
+                source_claim = self._optional_row(connection, f"""
+                    SELECT * FROM {schema}.director_primary_intake_auth_claim
+                    WHERE idempotency_key_digest = %(idempotency_key_digest)s
+                      AND original_nonce_digest IS NULL
+                    """, parameters)
+                for existing in (nonce_claim, source_claim):
+                    if existing is not None and (
+                        existing["idempotency_key_digest"] != idempotency_key_digest
+                        or existing["payload_digest"] != payload_digest
+                        or existing["authentication_class"] != authentication_class
+                        or (authentication_class == "slack_gateway_attested"
+                            and existing["nonce_digest"] != nonce_digest)
                     ):
                         raise PostgresControlPlaneError(
                             "authenticated intake replay identity conflicts with durable authority"
                         )
-                    return str(existing["task_id"]), False
+                if nonce_claim is not None:
+                    return str(nonce_claim["task_id"]), False
+                if source_claim is not None:
+                    parameters["task_id"] = str(source_claim["task_id"])
+                elif self._optional_row(connection, f"""
+                    SELECT task_id FROM {schema}.director_primary_intake_auth_claim
+                    WHERE task_id = %(task_id)s AND original_nonce_digest IS NULL
+                    """, parameters) is not None:
+                    raise PostgresControlPlaneError("authenticated intake task identity conflicts with durable authority")
+                parameters["original_nonce_digest"] = source_claim["nonce_digest"] if source_claim else None
                 row = self._one_row(
                     connection,
                     f"""
                     INSERT INTO {schema}.director_primary_intake_auth_claim (
                         nonce_digest, idempotency_key_digest, payload_digest,
-                        task_id, authentication_class
+                        task_id, authentication_class, original_nonce_digest
                     ) VALUES (
                         %(nonce_digest)s, %(idempotency_key_digest)s,
-                        %(payload_digest)s, %(task_id)s, 'slack_gateway_attested'
+                        %(payload_digest)s, %(task_id)s, %(authentication_class)s,
+                        %(original_nonce_digest)s
                     ) RETURNING task_id
                     """,
-                    {
-                        "nonce_digest": nonce_digest,
-                        "idempotency_key_digest": idempotency_key_digest,
-                        "payload_digest": payload_digest,
-                        "task_id": task_id,
-                    },
+                    parameters,
                     missing="authenticated intake claim was not recorded",
                 )
-                return str(row["task_id"]), True
+                return str(row["task_id"]), source_claim is None
+
+    def read_authenticated_primary_intake(self, task_id: str) -> Mapping[str, Any] | None:
+        """Read the original durable receiver fact even when graph creation failed.
+
+        created_at is database-owned first authenticated store receipt time,
+        distinct from sender received_at and later alias receipt timestamps.
+        """
+        _require_id(task_id, "task_id")
+        with self._pool.connection() as connection:
+            return self._optional_row(connection, f"""
+                SELECT task_id, nonce_digest, idempotency_key_digest, payload_digest,
+                       authentication_class, created_at AS receiver_received_at
+                FROM {self._schema}.director_primary_intake_auth_claim
+                WHERE task_id = %(task_id)s AND original_nonce_digest IS NULL
+                """, {"task_id": task_id})
 
     def resolve_primary_slack_thread_binding(
         self, *, channel_id: str, thread_ts: str, deadline: float | None = None,

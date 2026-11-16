@@ -48,6 +48,9 @@ class PrimaryAuthenticatedIngressPostgresTests(unittest.TestCase):
                 task_id="task-1",
             ),
         )
+        original = dict(store.read_authenticated_primary_intake("task-1"))
+        self.assertEqual("slack_gateway_attested", original["authentication_class"])
+        self.assertEqual(payload, original["payload_digest"])
         self.assertEqual(
             ("task-1", False),
             store.claim_authenticated_primary_intake(
@@ -64,6 +67,14 @@ class PrimaryAuthenticatedIngressPostgresTests(unittest.TestCase):
                 payload_digest=payload,
                 task_id="task-conflict",
             )
+        with self.assertRaisesRegex(PostgresControlPlaneError, "conflicts"):
+            store.claim_authenticated_primary_intake(
+                nonce_digest="sha256:" + "e" * 64,
+                idempotency_key_digest=source,
+                payload_digest=payload,
+                task_id="fresh-slack-nonce",
+            )
+        self.assertEqual(original, dict(store.read_authenticated_primary_intake("task-1")))
 
 
 if __name__ == "__main__":

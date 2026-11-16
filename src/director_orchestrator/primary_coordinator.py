@@ -444,18 +444,26 @@ class PrimaryTaskCoordinator:
         self,
         *,
         nonce_digest: str,
-        idempotency_key_digest: str,
+        idempotency_key_digest: str | None = None,
         payload_digest: str,
         task_id: str,
+        authentication_class: str = "slack_gateway_attested",
+        source_provider: str | None = None,
+        source_event_id: str | None = None,
     ) -> tuple[str, bool]:
         """Reserve the authenticated replay identity before any graph exists."""
 
         self._require_active_generation()
+        source = {}
+        if authentication_class != "slack_gateway_attested" or source_provider is not None or source_event_id is not None:
+            source = dict(authentication_class=authentication_class,
+                          source_provider=source_provider, source_event_id=source_event_id)
         return self._store.claim_authenticated_primary_intake(
             nonce_digest=nonce_digest,
             idempotency_key_digest=idempotency_key_digest,
             payload_digest=payload_digest,
             task_id=task_id,
+            **source,
         )
 
     def resolve_slack_thread_binding(
