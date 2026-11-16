@@ -62,7 +62,7 @@ roles:
   - Grok cannot review or approve its own work.
   - Capability parity does not bypass assignment scope or deterministic gates.
   family: "cursor"
-  transport_rule: "The xAI API and Grok Build CLI are Grok contacts. Grok Bot is a separate entity with its own account, quota, readiness, receipts, and attempt history; conservative review-family and authority gates remain unchanged."
+  transport_rule: "Grok API/Build and Grok Bot are separate entities; track usage independently and retain family/authority gates."
   routing_rule: "Route Grok by capability, authority, independence, and capacity."
   committee:
     member: true

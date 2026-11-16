@@ -483,7 +483,7 @@
     "strategy_priority": "capability_routed_assignment",
     "summary": "Capability-routed provider lane across research, implementation, QA, and independent review when Grok did not materially author the candidate. Assignment authority remains bounded by verified transports, readiness, independence, and deterministic policy gates.",
     "team": "primary",
-    "transport_rule": "The xAI API and Grok Build CLI are Grok contacts. Grok Bot is a separate entity with its own account, quota, readiness, receipts, and attempt history; conservative review-family and authority gates remain unchanged."
+    "transport_rule": "Grok API/Build and Grok Bot are separate entities; track usage independently and retain family/authority gates."
   },
   "schema_version": "director-provider-profile/v1",
   "source_of_truth": {
