@@ -104,18 +104,19 @@ Use its dedicated HTML order and report templates, existing repair register and
 receipts. Do not reopen completed repairs or run a new campaign to validate the
 procedure. This is operating guidance, not a runtime-policy or permission change.
 
-## INVESTIGATOR responsibility
+## Investigation and evidence checks
 
-OpenAI/Director members also act as **INVESTIGATOR** under the
-[canonical charter](docs/team-operating-charter.html#openaidirector--investigator): identify and document
-issues and suggested solutions, then hand them off through the acting Director's
-task thread or an existing PR/issue, when the assignment authorizes communication.
-An INVESTIGATOR handoff is evidence, not an assignment; act only within your
-current assignment. Do not directly fix an investigated issue unless separately assigned that fix,
-and do not take over the ongoing assignment. Record disposition with the finding;
-The Director relays sanitized summaries only to Slack; detailed findings and disposition stay in the existing authorized PR/issue.
-If none exists, retain details locally and request an authorized destination;
-never post them to Slack.
+Owner direction, 2026-11-12: the Investigator, Quality Lead and Verification role
+labels are retired. Investigating, testing and checking claims are ordinary work
+in every role (mainly the Director's), not separate appointments. Hand findings
+through the acting Director's task thread or an existing PR/issue when authorized;
+a finding handoff is evidence, not an assignment. Do not directly fix an
+investigated issue unless separately assigned that fix, and do not take over the
+ongoing assignment. Record disposition with the finding. The Director relays
+sanitized summaries only to Slack; detailed findings stay in the authorized
+PR/issue. Independent exact-candidate review and the rule against approving one's
+own work are unchanged. See the
+[charter note](docs/team-operating-charter.html#openaidirector--investigator).
 
 ## WARDEN responsibility
 
